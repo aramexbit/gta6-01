@@ -39,6 +39,14 @@ const S = {
   started: false, paused: false, over: false,
   mode: 'foot',           // 'foot' | 'car'
   money: 0, wanted: 0, wantedTimer: 0, heat: 0,
+  health: 100,            // Mateo's health (foot cops / heli can hurt him)
+  busted: false,
+  /* Vice City-style police clocks (see sim.js updatePolice):
+     footTimer/carTimer = spawn cadence, calmT = seconds with no cop
+     within 40 m (decay), foughtT = seconds since the player last
+     fought a cop (1★ cops only fight back after this). */
+  footTimer: 0, carTimer: 0, calmT: 0, foughtT: 99, heliLockT: 0, heliLock2T: 0,
+  policeStatus: 'PATROL', // PATROL | OBSERVING | PURSUIT | RAMMING | ARREST | HELI LOCK
   mission: 0,             // stage index 0..7
   ammo: 12, emp: 1, smoke: 3,
   carHealth: 100, speedKmh: 0,
@@ -152,12 +160,48 @@ function loadSave() {
   try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return s; } catch (e) { return null; }
 }
 function setWanted(n) {
+  const before = S.wanted;
   S.wanted = Math.max(0, Math.min(5, n));
+  if (S.wanted !== before) S.calmT = 0;
   if (S.wanted > 0) say(pick([
     'Kira: The whole bay just lit up. Lose them, Mateo!',
     'Kira: Stars on you — keep moving, do not let them box you in!',
     'Kira: Sunset Bay PD is on the radio about you. Drive!',
   ]));
+}
+/* Damage Mateo on foot (cop punch / cop shot / heli fire). */
+function hurtPlayer(dmg) {
+  if (S.over || S.busted) return;
+  S.health = Math.max(0, S.health - dmg);
+  beep(90, 0.15, 'sawtooth', 0.12);
+  if (S.health <= 0) wasted();
+}
+function wasted() {
+  S.health = 100;
+  S.money = S.money > 100 ? S.money - 100 : 0;
+  setWanted(0);
+  clearCops();
+  playerMesh.position.set(-118, 0, 20);
+  if (S.mode === 'car') { S.mode = 'foot'; playerMesh.visible = true; S.drivenCar = null; }
+  S.yaw = 0; S.pitch = 0.18;
+  say('Mateo, you are patched up. That cost us $100 — stay out of their reach next time.');
+  toast('WASTED — TREATED · $100 FEE', 3500);
+  saveGame();
+}
+/* Busted: a 1★ foot cop stood next to Mateo for 2.2 s (Vice City arrest). */
+function busted() {
+  S.busted = true;
+  S.money = S.money > 100 ? S.money - 100 : 0;
+  setWanted(0);
+  clearCops();
+  playerMesh.position.set(-118, 0, 20);
+  if (S.mode === 'car') { S.mode = 'foot'; playerMesh.visible = true; S.drivenCar = null; }
+  S.yaw = 0; S.pitch = 0.18;
+  S.health = 100;
+  say('Kira: Busted?! $100 bail, Mateo. Walk it off — and do not let them get that close again.');
+  toast('BUSTED — $100 BAIL', 3500);
+  saveGame();
+  setTimeout(() => { S.busted = false; }, 1000);
 }
 function completeStage() {
   const m = MISSIONS[S.mission];

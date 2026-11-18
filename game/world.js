@@ -10,25 +10,44 @@ renderer.setPixelRatio(1);
 renderer.shadowMap.enabled = !params.has('flat');
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.5;
 $('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(C.indigo);
-scene.fog = new THREE.Fog(0x8a5a8a, 120, 420);
+/* Golden-hour sky dome: vertical gradient indigo -> magenta -> orange -> sun
+   (locked palette; no pure white/black). Rendered on a big backside sphere
+   so the horizon always glows like the concept mockups. */
+(function buildSky() {
+  const cv = document.createElement('canvas'); cv.width = 4; cv.height = 256;
+  const g = cv.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0.00, '#120458'); gr.addColorStop(0.38, '#5A1A6E');
+  gr.addColorStop(0.58, '#FF2A6D'); gr.addColorStop(0.74, '#FF9900');
+  gr.addColorStop(0.88, '#FFB347'); gr.addColorStop(1.00, '#E8D9A0');
+  g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+  const tex = new THREE.CanvasTexture(cv);
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(760, 24, 16),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false }));
+  scene.add(sky);
+  scene.background = new THREE.Color(C.indigo);
+})();
+scene.fog = new THREE.Fog(0xE89A6A, 150, 520);
 
-const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 900);
+const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 1600);
 camera.position.set(-110, 6, 40);
 
-const sunLight = new THREE.DirectionalLight(0xFFB347, 1.6);
-sunLight.position.set(-180, 55, -60);
+/* Low golden-hour sun: long shadows, warm key light. */
+const sunLight = new THREE.DirectionalLight(0xFFC46B, 2.6);
+sunLight.position.set(-260, 70, -80);
 sunLight.castShadow = true;
-sunLight.shadow.mapSize.set(512, 512);
+sunLight.shadow.mapSize.set(1024, 1024);
 sunLight.shadow.camera.left = -160; sunLight.shadow.camera.right = 160;
 sunLight.shadow.camera.top = 160; sunLight.shadow.camera.bottom = -160;
-sunLight.shadow.camera.far = 500;
+sunLight.shadow.camera.far = 600;
 scene.add(sunLight);
-scene.add(new THREE.HemisphereLight(0x8a7bd8, 0x2E5E6E, 0.75));
+scene.add(new THREE.HemisphereLight(0xC9A8E8, 0x2E5E6E, 1.2));
+/* Warm bounce so shadowed faces never go black. */
+scene.add(new THREE.AmbientLight(0x8A5A6A, 0.5));
 
 /* 3-step toon gradient map */
 const gradData = new Uint8Array([90, 160, 255, 255]);
@@ -74,7 +93,7 @@ function box(w, h, d, mat, x, y, z, parent, noShadow) {
   (parent || world).add(m); return m;
 }
 function buildWorld() {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(CITY * 2 + 60, CITY * 2 + 60), toon(0x3a2a3a));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(CITY * 2 + 60, CITY * 2 + 60), toon(0x4A3644));
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; world.add(ground);
   const beach = new THREE.Mesh(new THREE.PlaneGeometry(46, CITY * 2 + 60), toon(C.pastel));
   beach.rotation.x = -Math.PI / 2; beach.position.set(-CITY - 38, 0.05, 0); beach.receiveShadow = true; world.add(beach);
@@ -90,10 +109,15 @@ function buildWorld() {
   dg.fillStyle = '#FFB347'; dg.fillRect(6, 6, 4, 34);
   const dashTex = new THREE.CanvasTexture(dashCv);
   dashTex.wrapS = dashTex.wrapT = THREE.RepeatWrapping;
-  const roadMat = toon(C.asphalt);
+  const roadMat = toon(0x2E2622);
+  const walkMat = toon(0x8A6A72); // sidewalks: lighter strips so streets read at golden hour
   for (const x of ROAD_X) {
     const r = new THREE.Mesh(new THREE.PlaneGeometry(12, CITY * 2), roadMat);
     r.rotation.x = -Math.PI / 2; r.position.set(x, 0.1, 0); r.receiveShadow = true; world.add(r);
+    for (const s of [-8.4, 8.4]) {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(4.5, CITY * 2), walkMat);
+      w.rotation.x = -Math.PI / 2; w.position.set(x + s, 0.07, 0); w.receiveShadow = true; world.add(w);
+    }
     const dt2 = dashTex.clone(); dt2.needsUpdate = true; dt2.repeat.set(1, 38);
     const dash = new THREE.Mesh(new THREE.PlaneGeometry(1.4, CITY * 2),
       new THREE.MeshBasicMaterial({ map: dt2, transparent: true }));
@@ -102,15 +126,19 @@ function buildWorld() {
   for (const z of ROAD_Z) {
     const r = new THREE.Mesh(new THREE.PlaneGeometry(CITY * 2, 12), roadMat);
     r.rotation.x = -Math.PI / 2; r.position.set(0, 0.1, z); r.receiveShadow = true; world.add(r);
+    for (const s of [-8.4, 8.4]) {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(CITY * 2, 4.5), walkMat);
+      w.rotation.x = -Math.PI / 2; w.position.set(0, 0.07, z + s); w.receiveShadow = true; world.add(w);
+    }
     const dt2 = dashTex.clone(); dt2.needsUpdate = true; dt2.repeat.set(38, 1);
     const dash = new THREE.Mesh(new THREE.PlaneGeometry(CITY * 2, 1.4),
       new THREE.MeshBasicMaterial({ map: dt2, transparent: true }));
     dash.rotation.x = -Math.PI / 2; dash.position.set(0, 0.14, z); world.add(dash);
   }
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(15, 32),
+  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(22, 32),
     new THREE.MeshBasicMaterial({ color: C.sun, fog: false }));
-  sunDisc.position.set(-320, 30, -40); sunDisc.lookAt(0, 20, 0); world.add(sunDisc);
-  const sunGlow = glowSprite(C.sun, 110); sunGlow.position.set(-310, 32, -40); world.add(sunGlow);
+  sunDisc.position.set(-320, 26, -40); sunDisc.lookAt(0, 20, 0); world.add(sunDisc);
+  const sunGlow = glowSprite(C.sun, 150); sunGlow.position.set(-310, 28, -40); world.add(sunGlow);
   const cloudMat = toon(C.pink);
   for (let i = 0; i < 14; i++) {
     const cl = new THREE.Group();
@@ -282,26 +310,67 @@ function makeCar(color, isPolice, name, profileId) {
   scene.add(g);
   return g;
 }
+/* Slim realistic humanoid (NOT a Roblox box): real human proportions —
+   narrow shoulders (~0.58 m), long legs (~0.95 m), small proportional head
+   (r 0.17), total height ~1.85 m. Limbs are Groups pivoted at the
+   shoulder/hip so the swing rotates naturally, like a rigged
+   Three.js Soldier/Xbot walk cycle (arms counter-swing the legs,
+   swing amplitude eases in/out instead of snapping). */
+function limb(w, len, mat, px, py, pz, parent) {
+  const pivot = new THREE.Group();
+  pivot.position.set(px, py, pz);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, len, w), mat);
+  m.position.y = -len / 2; m.castShadow = true;
+  pivot.add(m); parent.add(pivot);
+  return pivot;
+}
 function makePerson(jacket, pants) {
   const g = new THREE.Group();
-  const body = box(0.9, 1.1, 0.5, toon(jacket), 0, 1.35, 0, g);
-  addOutline(body, C.asphalt, 1.06);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), toon(0xC98a5a));
-  head.position.y = 2.15; head.castShadow = true; g.add(head);
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.33, 10, 8, 0, Math.PI * 2, 0, 1.4), toon(C.asphalt));
-  hair.position.y = 2.2; g.add(hair);
-  const legL = box(0.32, 0.85, 0.32, toon(pants || C.indigo), -0.22, 0.43, 0, g);
-  const legR = box(0.32, 0.85, 0.32, toon(pants || C.indigo), 0.22, 0.43, 0, g);
-  const armL = box(0.24, 0.9, 0.24, toon(jacket), -0.58, 1.35, 0, g);
-  const armR = box(0.24, 0.9, 0.24, toon(jacket), 0.58, 1.35, 0, g);
-  g.userData = { legL, legR, armL, armR, walkPhase: rnd() * 6 };
+  const jacketMat = toon(jacket), pantsMat = toon(pants || C.indigo);
+  const skinMat = toon(0xC98a5a);
+  // torso: slim, tapered (narrow shoulders)
+  const body = box(0.58, 0.62, 0.32, jacketMat, 0, 1.26, 0, g);
+  addOutline(body, C.asphalt, 1.05);
+  // white tee peeking under the jacket
+  box(0.2, 0.5, 0.03, toon(C.cream), 0, 1.22, 0.17, g);
+  // head: proportional, with hair cap
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), skinMat);
+  head.position.y = 1.74; head.castShadow = true; g.add(head);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.175, 12, 10, 0, Math.PI * 2, 0, 1.5), toon(C.asphalt));
+  hair.position.y = 1.755; g.add(hair);
+  // long legs, pivoted at the hip (y 0.95)
+  const legL = limb(0.17, 0.92, pantsMat, -0.11, 0.95, 0, g);
+  const legR = limb(0.17, 0.92, pantsMat, 0.11, 0.95, 0, g);
+  // slim arms, pivoted at the shoulder (y 1.52)
+  const armL = limb(0.13, 0.72, jacketMat, -0.36, 1.52, 0, g);
+  const armR = limb(0.13, 0.72, jacketMat, 0.36, 1.52, 0, g);
+  // hands
+  for (const a of [armL, armR]) {
+    const h = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), skinMat);
+    h.position.y = -0.74; a.add(h);
+  }
+  g.userData = { legL, legR, armL, armR, torso: body, head, walkPhase: rnd() * 6,
+    swing: 0, bobY: 0 };
   scene.add(g);
+  return g;
+}
+/* Mateo Vega: orange bomber jacket, white tee, dark jeans, white sneakers. */
+function makeMateo() {
+  const g = makePerson(C.orange, 0x23233A);
+  const shoeMat = toon(C.cream);
+  for (const leg of [g.userData.legL, g.userData.legR]) {
+    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.09, 0.32), shoeMat);
+    shoe.position.set(0, -0.94, 0.05); shoe.castShadow = true;
+    leg.add(shoe);
+  }
+  // bomber collar + sleeve cuffs
+  box(0.6, 0.1, 0.34, toon(0x8A4A00), 0, 1.56, 0, g);
   return g;
 }
 
 /* ---------- entities ---------- */
 buildWorld();
-const playerMesh = makePerson(C.orange, C.indigo); // Mateo, orange bomber jacket
+const playerMesh = makeMateo(); // Mateo Vega — slim, orange bomber, white sneakers
 playerMesh.position.set(-118, 0, 20);
 const playerCar = makeCar(C.magenta, false, 'SCARLET ARROW', 'sports');
 playerCar.position.set(-104, 0, -24); playerCar.rotation.y = Math.PI / 2;
@@ -337,32 +406,76 @@ const police = [];
 for (let i = 0; i < 5; i++) {
   const pc = makeCar(0, true, 'UNIT P-' + String(3 + i * 4).padStart(2, '0'), 'cop');
   pc.visible = false; pc.position.set(200, -50, 200);
-  pc.userData.status = 'EN ROUTE'; pc.userData.ramTimer = 0;
+  pc.userData.status = 'PATROL'; pc.userData.ramTimer = 0;
   pc.userData.speed = 0;
+  /* police[0..1] = patrol units: always on the road, lane-following like
+     traffic; they only join a pursuit at wanted >= 2.
+     police[2..4] = pursuit reinforcements, spawned in at wanted >= 2. */
+  pc.userData.patrol = i < 2;
+  pc.userData.vertical = false; pc.userData.road = 0; pc.userData.along = 0;
+  pc.userData.dir = 1; pc.userData.cruise = 9 + rnd() * 3; pc.userData.turnDecided = false;
   police.push(pc);
 }
-/* helicopter */
-const heli = new THREE.Group();
-(function buildHeli() {
-  const body = box(3.2, 1.6, 5.5, toon(0xD8D8E8), 0, 0, 0, heli);
-  box(1.6, 1.0, 1.6, new THREE.MeshBasicMaterial({ color: C.indigo }), 0, 0.2, 2.2, heli);
-  const rotor = box(9, 0.12, 0.5, toon(C.asphalt), 0, 1.2, 0, heli);
-  const tail = box(0.5, 0.5, 4, toon(0xD8D8E8), 0, 0.3, -4.2, heli);
+/* Foot cops (Vice City rules): navy uniform, cap. Pool of 3, spawned in
+   28–42 m from the player at wanted >= 1 (max 1/2/3 by wanted level). */
+const copPeds = [];
+for (let i = 0; i < 3; i++) {
+  const cp = makePerson(0x2A3A6E, 0x1F2A4A);
+  // police cap
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.07, 10), toon(0x1F2A4A));
+  cap.position.y = 1.88; cp.add(cap);
+  const badge = box(0.1, 0.12, 0.03, toon(C.sun), -0.14, 1.42, 0.17, cp);
+  badge.castShadow = false;
+  cp.visible = false; cp.position.set(200, -50, 200);
+  cp.userData.isCop = true; cp.userData.status = 'PATROL';
+  cp.userData.closeT = 0; cp.userData.attackCd = 0; cp.userData.aimT = 0;
+  cp.userData.speed = 0; cp.userData.dist = 999;
+  copPeds.push(cp);
+}
+/* helicopter — built by a factory so the 5★ second heli is identical.
+   Shaped to read as a heli from below: slate-blue body, glass nose,
+   tail boom + fin, skids, and a translucent rotor disc (reads from any
+   angle, unlike a single edge-on blade box). */
+function makeHeli() {
+  const h = new THREE.Group();
+  const bodyMat = toon(0x5A6A9A);
+  box(2.6, 1.5, 4.2, bodyMat, 0, 0, 0.4, h);
+  box(1.7, 1.0, 1.4, new THREE.MeshBasicMaterial({ color: C.indigo }), 0, 0.15, 2.4, h); // glass nose
+  box(2.7, 0.35, 4.3, toon(C.sun), 0, -0.45, 0.4, h); // belly stripe
+  const rotor = new THREE.Group();
+  const bladeMat = toon(C.asphalt);
+  box(8.6, 0.1, 0.45, bladeMat, 0, 0, 0, rotor);
+  box(0.45, 0.1, 8.6, bladeMat, 0, 0, 0, rotor);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(4.4, 24),
+    new THREE.MeshBasicMaterial({ color: 0x8A9AC8, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
+  disc.rotation.x = -Math.PI / 2; rotor.add(disc);
+  rotor.position.y = 1.15; h.add(rotor);
+  box(0.5, 0.5, 4.2, bodyMat, 0, 0.35, -3.6, h); // tail boom
+  box(0.18, 1.6, 1.0, toon(C.policeRed), 0, 0.8, -5.4, h); // tail fin
+  const skidMat = toon(C.asphalt);
+  for (const sx of [-1.1, 1.1]) {
+    box(0.12, 0.12, 3.4, skidMat, sx, -1.05, 0.4, h);
+    box(0.1, 0.5, 0.1, skidMat, sx, -0.8, 1.4, h);
+    box(0.1, 0.5, 0.1, skidMat, sx, -0.8, -0.6, h);
+  }
   const lb = new THREE.Group();
   const r = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.5), new THREE.MeshBasicMaterial({ color: C.policeRed }));
   r.position.x = -0.5; lb.add(r);
   const b = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.5), new THREE.MeshBasicMaterial({ color: C.policeBlue }));
   b.position.x = 0.5; lb.add(b);
-  lb.position.y = -0.9; heli.add(lb);
-  heli.userData = { rotor, lightbar: lb, angle: 0 };
+  lb.position.y = -0.9; h.add(lb);
+  h.userData = { rotor, lightbar: lb, angle: 0, orbitR: 40, height: 20 };
   const spot = new THREE.SpotLight(0xFFF2C9, 3.5, 90, 0.28, 0.5);
-  spot.position.set(0, -0.5, 0); heli.add(spot);
-  heli.userData.spot = spot;
+  spot.position.set(0, -0.5, 0); h.add(spot);
+  h.userData.spot = spot;
   const cone = new THREE.Mesh(new THREE.ConeGeometry(7, 34, 16, 1, true),
     new THREE.MeshBasicMaterial({ color: 0xFFF2C9, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
-  cone.position.y = -17; cone.rotation.x = Math.PI; heli.add(cone);
-  heli.visible = false; scene.add(heli);
-})();
+  cone.position.y = -17; cone.rotation.x = Math.PI; h.add(cone);
+  h.visible = false; scene.add(h);
+  return h;
+}
+const heli = makeHeli();
+const heli2 = makeHeli(); // second heli, wanted >= 5 only
 /* mission beacon */
 const beacon = new THREE.Group();
 const beaconCyl = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 30, 16, 1, true),

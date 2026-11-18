@@ -113,17 +113,31 @@ function shoot() {
   }
   S.ammo--; $('ammo').textContent = '[' + S.ammo + '/12]';
   gunshot(); muzzle.intensity = 6; setTimeout(() => { muzzle.intensity = 0; }, 60);
-  // hitscan: nearest police in the camera-forward cone within 40 m
+  S.foughtT = 0; // the player fought first — 1★ cops may now fight back
+  // hitscan: nearest police (car or foot cop) in the camera-forward cone within 40 m
   const dir = V3(-Math.sin(S.yaw), 0, -Math.cos(S.yaw));
-  let hit = null, hd = 40;
+  let hit = null, hd = 40, hitCop = null;
   for (const pc of police) {
     if (!pc.visible) continue;
     const d = dist2d(playerMesh.position, pc.position);
     if (d > 40) continue;
     const to = V3(pc.position.x - playerMesh.position.x, 0, pc.position.z - playerMesh.position.z).normalize();
-    if (to.dot(dir) > 0.86 && d < hd) { hd = d; hit = pc; }
+    if (to.dot(dir) > 0.86 && d < hd) { hd = d; hit = pc; hitCop = null; }
   }
-  if (hit) {
+  for (const cp of copPeds) {
+    if (!cp.visible) continue;
+    const d = dist2d(playerMesh.position, cp.position);
+    if (d > 40) continue;
+    const to = V3(cp.position.x - playerMesh.position.x, 0, cp.position.z - playerMesh.position.z).normalize();
+    if (to.dot(dir) > 0.86 && d < hd) { hd = d; hit = null; hitCop = cp; }
+  }
+  if (hitCop) {
+    const u = hitCop.userData;
+    u.angry = true; u.hp = (u.hp === undefined ? 100 : u.hp) - 34;
+    toast('HIT COP!', 900);
+    if (u.hp <= 0) { hitCop.visible = false; hitCop.position.set(200, -50, 200); setWanted(Math.max(S.wanted, 2)); }
+    else setWanted(Math.max(S.wanted, 2));
+  } else if (hit) {
     hit.userData.health -= 34;
     toast('HIT ' + hit.userData.name + '!', 900);
     if (hit.userData.health <= 0) { hit.visible = false; hit.position.set(200, -50, 200); setWanted(S.wanted + 1); }
@@ -153,7 +167,7 @@ function loop() {
 }
 window.__PIERHEAT = S;
 window.__PIERHEAT_CAM = camera;
-window.__PIERHEAT_DEBUG = { MISSIONS, playerPos, setWanted, completeStage, traffic, police, peds, playerCar, playerMesh, heli, beacon };
+window.__PIERHEAT_DEBUG = { MISSIONS, BUILDINGS, playerPos, setWanted, completeStage, traffic, police, copPeds, peds, playerCar, playerMesh, heli, heli2, beacon, clearCops, copsNearCount, hurtPlayer, busted };
 
 /* ---------- start / continue / pause wiring ---------- */
 function startGame(fromSave) {
@@ -179,7 +193,8 @@ $('btn-start').addEventListener('click', () => startGame(false));
 $('btn-continue').addEventListener('click', () => startGame(true));
 $('btn-resume').addEventListener('click', togglePause);
 $('btn-restart').addEventListener('click', () => {
-  S.mission = 0; S.money = 0; S.wanted = 0; S.carHealth = 100; S.ammo = 12;
+  S.mission = 0; S.money = 0; S.wanted = 0; S.carHealth = 100; S.ammo = 12; S.health = 100;
+  clearCops();
   S.mode = 'foot'; playerMesh.visible = true; playerMesh.position.set(-118, 0, 20);
   playerCar.position.set(-104, 0, -24); playerCar.userData.owned = false;
   S.drivenCar = null; S.over = false;
@@ -195,7 +210,7 @@ addEventListener('resize', () => {
 function snapCamBehindCar(car) {
   const ang = S.carYaw;
   const nudged = roadCenterNudge(car.position.x + Math.sin(ang) * 6.5, car.position.z + Math.cos(ang) * 6.5, car);
-  camera.position.set(nudged.x, 2.9, nudged.z);
+  camera.position.set(nudged.x, 3.4, nudged.z);
   camTarget.set(car.position.x - Math.sin(ang) * 6, 1.4, car.position.z - Math.cos(ang) * 6);
   camera.lookAt(camTarget);
 }
@@ -205,7 +220,7 @@ function stagePoliceAt(spots) {
     pc.visible = true;
     pc.position.set(spots[i][0], 0, spots[i][1]);
     pc.userData.status = 'PURSUIT'; pc.userData.dist = spots[i][2] || 25;
-    pc.userData.speed = 20; pc.userData.vx = 0; pc.userData.vz = 0;
+    pc.userData.speed = 10; pc.userData.vx = 0; pc.userData.vz = 0;
   }
 }
 function applyShot() {
@@ -218,7 +233,7 @@ function applyShot() {
     playerMesh.visible = false;
     // east lane (x=-37) heading +Z: buildings sit 10 m+ off the camera side, not 3 m
     playerCar.position.set(-37, 0, -40); S.carYaw = Math.PI; playerCar.rotation.y = Math.PI;
-    playerCar.userData.vx = 0; playerCar.userData.vz = 30; S.carSpeed = 30;
+    playerCar.userData.vx = 0; playerCar.userData.vz = 20; S.carSpeed = 20;
     S.mission = 2; S.money = 18450; S.wanted = 4; S.carHealth = 72;
     playerCar.userData.health = 72;
     // oncoming traffic in the west lane (x=-43, heading -Z toward the player) + one car far ahead in-lane
@@ -232,8 +247,10 @@ function applyShot() {
       u.vx = 0; u.vz = u.dir * 12;
     }
     // police flank in from the sides, ahead — visible in frame, converging, not head-on
-    stagePoliceAt([[-52, -22, 16], [-22, -28, 22]]);
-    heli.userData.angle = 2.02; // heli ahead-left, in frame
+    stagePoliceAt([[-52, -4, 38], [-22, -10, 34]]);
+    // heli BIG in frame: close high orbit ahead-right, above the palms
+    heli.userData.orbitR = 26; heli.userData.height = 14; heli.userData.angle = 1.2;
+    heli.scale.setScalar(1.4);
     snapCamBehindCar(playerCar);
     say('Almost there — left at the pier! We can lose them near the boardwalk.');
   } else if (SHOT === 'street') {
@@ -250,6 +267,21 @@ function applyShot() {
       p.position.set(crowd[i][0], 0, crowd[i][1]);
       p.rotation.y = 0;
     }
+    // 1★ foot cop OBSERVING on the sidewalk ahead — walks toward Mateo, never rams.
+    // Stands apart from the crowd (right side, 12 m out) so he reads clearly.
+    const cop = copPeds[0];
+    cop.visible = true;
+    cop.position.set(-66, 0, 12);
+    cop.rotation.y = Math.PI;
+    cop.userData.status = 'OBSERVING'; cop.userData.dist = 12;
+    cop.userData.closeT = 0; cop.userData.attackCd = 99; cop.userData.aimT = 0;
+    cop.userData.patrol = { vertical: true, road: -80, along: 12, dir: 1, side: 8.5 };
+    // one patrol car cruising the road (PATROL ONLY at 1 star — no pursuit)
+    const pc0 = police[0];
+    pc0.visible = true; pc0.userData.status = 'PATROL';
+    pc0.userData.vertical = true; pc0.userData.road = -80; pc0.userData.along = -30;
+    pc0.userData.dir = 1; pc0.userData.speed = pc0.userData.cruise = 10;
+    pc0.position.set(-77, 0, -30); pc0.rotation.y = Math.PI;
     // traffic passing on the road beside the sidewalk
     for (let i = 0; i < 2; i++) {
       const c = traffic[i], u = c.userData;
@@ -267,8 +299,8 @@ function applyShot() {
     playerMesh.visible = false;
     // on road z=40, in the -X lane (z=37), heading west — the pier beacon is ahead-left
     playerCar.position.set(-104, 0, 37); S.carYaw = Math.PI / 2; playerCar.rotation.y = Math.PI / 2;
-    playerCar.userData.vx = -Math.sin(Math.PI / 2) * 22; playerCar.userData.vz = -Math.cos(Math.PI / 2) * 22;
-    S.carSpeed = 22;
+    playerCar.userData.vx = -Math.sin(Math.PI / 2) * 18; playerCar.userData.vz = -Math.cos(Math.PI / 2) * 18;
+    S.carSpeed = 18;
     S.mission = 2; S.money = 18450; S.wanted = 3; S.carHealth = 85;
     playerCar.userData.health = 85;
     // oncoming lane (z=43) streams past; one car far ahead in-lane
@@ -282,8 +314,9 @@ function applyShot() {
       u.vx = u.dir * 12; u.vz = 0;
     }
     // police flank in from the sides, ahead of the car
-    stagePoliceAt([[-118, 52, 24], [-122, 24, 18]]);
-    heli.userData.angle = 2.48; // heli ahead of the car, in frame
+    stagePoliceAt([[-140, 52, 38], [-146, 24, 34]]);
+    heli.userData.orbitR = 26; heli.userData.height = 14; heli.userData.angle = 3.5;
+    heli.scale.setScalar(1.4);
     snapCamBehindCar(playerCar);
     say('Almost there — left at the pier! We can lose them near the boardwalk.');
   }

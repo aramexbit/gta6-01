@@ -1091,7 +1091,7 @@ function makeMateo() {
     model.traverse((o) => {
       if (!o.isMesh || !o.material) return;
       if (o.material.name && o.material.name.startsWith('Mateo')) o.material.envMapIntensity = 0;
-      if (o.material.name === 'Human.shoes04') { o.material.map = null; o.material.needsUpdate = true; }
+      if (o.material.name === 'Human.shoes04') { o.material.map = null; o.material.color.set(0xFFFFFF); o.material.needsUpdate = true; }
     });
     root.add(model);
     /* Thin beard only: the short01 crop hair is already in the GLB
@@ -1115,8 +1115,54 @@ function makeMateo() {
       beard.position.set(0, 0.005, 0.07); beard.scale.set(1, 0.5, 0.45);
       headBone.add(beard);
     }
+    /* v3.3.2 — burnt-orange collar: the jacket ends at y 1.58, so the
+       neck/trapezius (skin, faceted MakeHuman gores) shows above the
+       collar as pale strips down the back (round-3 diagnosis #3). A
+       flared collar band on the Neck bone (+Y up the neck, same frame
+       as the beard) covers the neck base and upper trapezius. Colour
+       via THREE.Color('#E8960F') so the sRGB hex is converted to
+       linear — never write sRGB numbers raw into a linear field (the
+       v3.3.1 jeans gamma bug). */
+    const neckBone = findBone('mixamorig:Neck');
+    if (neckBone) {
+      const collarMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#E8960F'), roughness: 0.9, metalness: 0 });
+      collarMat.envMapIntensity = 0;
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.12, 0.13, 20, 1, true), collarMat);
+      collar.position.set(0, 0.005, 0);
+      neckBone.add(collar);
+    }
     const handBone = findBone('mixamorig:RightHand');
     if (handBone) loadPistol(handBone, mt);
+    /* v3.3.2 — dark sneaker soles: the shoes04 texture is near-black,
+       so the code drops the map and the off-white base renders — but at
+       screenshot size the small pale shoes read as bare feet
+       (round-3 diagnosis #5). A dark sole slab under each shoe,
+       parented to the Foot bone so it tracks the stride, makes the
+       sneakers read. The slab is 0.14 x 0.05 x 0.30 — thick enough to
+       show as a dark band from the front, back and side — and the shoe
+       upper is forced pure white (the off-white base rendered
+       cream/skin-tone under the warm sun). The local transform is computed at runtime from
+       the bone's own matrices (never from hand-measured Euler angles):
+       the slab is axis-aligned in model space, centred under the shoe
+       footprint (ankle x +/-0.197, footprint z centre 0.078). */
+    const soleMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#1A1A1E'), roughness: 0.85, metalness: 0 });
+    soleMat.envMapIntensity = 0;
+    const soleGeo = new THREE.BoxGeometry(0.14, 0.05, 0.30);
+    model.updateWorldMatrix(true, true);
+    for (const side of ['Left', 'Right']) {
+      const footBone = findBone('mixamorig:' + side + 'Foot');
+      if (!footBone) continue;
+      const ankleX = side === 'Left' ? 0.197 : -0.197;
+      const sole = new THREE.Mesh(soleGeo, soleMat);
+      footBone.updateWorldMatrix(true, false);
+      const bq = new THREE.Quaternion(); footBone.getWorldQuaternion(bq);
+      const mq = new THREE.Quaternion(); model.getWorldQuaternion(mq);
+      sole.quaternion.copy(bq).invert().multiply(mq);
+      const wp = model.localToWorld(new THREE.Vector3(ankleX, 0.023, 0.078));
+      footBone.worldToLocal(wp);
+      sole.position.copy(wp);
+      footBone.add(sole);
+    }
     const mixer = new THREE.AnimationMixer(model);
     const byName = (re) => gltf.animations.find((a) => re.test(a.name));
     mt.mixer = mixer;

@@ -188,3 +188,96 @@ clean (verified jacket-only) and its rest/aim clearance is +0.05,
 so it is NOT poke-through. The jacket back was also pushed out
 32 mm radial (surgery2, `/tmp/v331/surgery2.py`, 550 verts) for
 margin in the aim pose. Reported honestly — see the v3.3.1 handoff.
+
+## v3.3.2 — the skirt, fixed for real (18 Nov 2026)
+
+The v3.3.1 fixes were WRONG in both directions (proven by an
+independent measurement round, round 3, plus this session's own
+per-component plane-section analysis of mateo.glb):
+
+- **Cause #1 — GAMMA (the skirt's main cause).** v3.3's jeans factor
+  [0.017, 0.017, 0.042] linear was the CORRECT linear value for sRGB
+  #23233A dark navy. v3.3.1 "fixed" it by writing the sRGB numbers
+  [0.137, 0.137, 0.227] raw into the linear field, so the jeans
+  rendered as light grey-blue #686883 — a waist-to-ankle light mass
+  that reads as a skirt. v3.3.1 made it BRIGHTER, not darker. Fix:
+  factor restored to linear [0.0168, 0.0168, 0.0423]. Rule: never
+  write sRGB numbers raw into a linear field; in Three.js use
+  `new THREE.Color('#23233A')` (auto-converts).
+- **Cause #2 — ENVELOPE TUBE (the skirt's geometry).** The jeans mesh
+  is THREE coincident walls. Per-component section tests at y=0.5:
+  comp0 (1337 verts) and comp1 (922 verts) are TWO SEPARATE LEG
+  TUBES (gap 0.176 m at y=0.5, 0.284 m at y=0.2); comp2 (694 verts)
+  is ONE enclosing tube spanning both legs (single section loop
+  x -0.243..+0.243). The body mesh has the same structure (legs in
+  the two big comps + a 740-vert envelope tube). The v3.3.1 "397 web
+  triangles" were only the crotch tip of that tube — degenerating
+  them changed nothing, which is why the render never changed. Fix
+  (`/tmp/v332/surgery332.py`, real index rebuild, not degeneration):
+  the envelope's triangles below y=0.85 are DELETED (its hip band
+  y>=0.85 is kept: real jeans are one piece at the hips), plus the
+  midline web triangles below 0.85 and all degenerate triangles.
+  Jeans 6194 -> 4748 tris, body 36972 -> 35976 tris; jeans triangles
+  crossing x=0 below y=0.85: 0 (was 14+12+13 per band + the tube).
+  A stray 5.4 cm cube at the model origin (12 tris, a modeling
+  artifact rendering as a skin lump between the boots) is deleted too
+  (`/tmp/v332/surgery332b.py`). File 3,399,932 -> 4,320,932 B
+  (orphaned old index buffers stay in the file; game/ budget is 48 MiB).
+- **Cause #3 — jacket red, not orange.** Factor [0.484, 0.048,
+  0.0037] linear = sRGB #B93E0C, but under the magenta sunset + ACES
+  it renders red. First shift (sRGB #CC5A12) still rendered hue
+  ~11 deg (red-orange) in the browser probe. Fix: factor shifted to
+  amber sRGB #E8960F -> linear [0.807, 0.305, 0.005] (the sunset +
+  ACES shift hue down ~15-20 deg, so the base must be amber for the
+  render to read burnt orange ~25-30 deg); the collar matches
+  (`new THREE.Color('#E8960F')`). Verified in-game, not in Blender.
+- **Cause #4 — pale bars on the back.** NOT hair (short01 texture
+  is near-black, RGB 18) and NOT holes in the jacket (0 uncovered
+  cells on a 1 cm rasterization). It is the BODY's skin poking
+  THROUGH the jacket's back: a fine rasterization (interpolated
+  triangle surfaces, 1 cm grid) found 67 cells where the body's back
+  surface is further back than the jacket's at the same (x, y) —
+  trapezius y 1.505-1.565, x +/-0.055 (up to 3.5 cm through) and
+  lumbar y 1.205-1.265, x +/-0.075-0.125 (up to 1.5 cm). Proven by
+  the hide test in the browser: the bars VANISH when the body mesh
+  is hidden (`bars-nobody.jpg`). The jacket's and body's skin weights
+  at the scapulae are nearly identical (Spine2-dominant), so the
+  poke-through is static (present in idle too), not a walk-swing
+  artifact. Fix (`/tmp/v332/surgery332d.py` + `surgery332e.py`, index
+  rebuild): delete the body triangles whose surface is behind the
+  jacket's back (pass 1: 482 tris by a vertex rule; pass 2: 8 more by
+  a per-cell surface rule). Body 36972 -> 35486 tris; poke-through
+  cells after: **0**. The deleted triangles are only visible from the
+  back, where the jacket covers them. (Pass 1's first write omitted
+  the 'JSON' chunk tag — repaired by `/tmp/v332/repair332d.py`; pass
+  2 writes the chunk at its real length. Both passes wrote the new
+  index bufferView with byteLength = tris*4 instead of indices*4 —
+  the GLB then failed in Three.js (`Invalid typed array length:
+  106458`); fixed by `/tmp/v332/fix332f.py`, which audits every
+  accessor and sets each bufferView's byteLength to the max its
+  accessors need. Lesson: a GLB index bufferView's byteLength is
+  count*componentSize, not triangleCount*4.)
+- **Cause #5 — the neck strip.** The neck/trapezius skin shows above
+  the collar (the jacket ends at y 1.58) + faceted MakeHuman gore
+  shading. Fix (runtime, `world.js`): a flared burnt-orange collar
+  (CylinderGeometry 0.075/0.12/0.13) on the Neck bone covers the
+  neck base and upper trapezius.
+- **Cause #6 — shoes read as bare feet.** The shoes04 texture averages
+  RGB (33,33,34), near-black; dropping the map makes the off-white
+  base render, but under the warm sun it renders cream/skin-tone and
+  reads as bare feet (front/back/side probes). Fix: shoe upper forced
+  pure white (GLB factor [1,1,1,1] + `world.js` sets
+  `material.color` white where the map is dropped) and dark sole
+  slabs (0.14 x 0.05 x 0.30, #1A1A1E) parented to the Foot bones,
+  thick enough to read as a dark band from the front, back and side.
+  Sole local transform computed at runtime from the bones' own
+  matrices (foot bind pos +/-0.197, 0.074, 0.010; footprint centre
+  z 0.078).
+- **SPLAY deliberately NOT applied.** Measured leg gap at y=0.5 is
+  0.176 m (not <0.05 m), and the Blender bone test shows no clean
+  single-axis splay for this rig (local Z+6deg also swings the foot
+  5 cm backward; Z-6deg crosses the legs 15 cm inward). Separation is
+  verified in the browser probe instead; splay is added only if the
+  probe shows the legs merging.
+- Verification is browser-only (Playwright probes 1.5-2 m, front /
+  back / side, idle + mid-stride walk): `gta6-01-probe-v332.mjs`.

@@ -1066,7 +1066,79 @@ function mateoFire() {
 }
 function mateoUpdate(dt) {
   const mt = playerMesh.userData.mateo;
-  if (mt && mt.ready) mt.mixer.update(dt);
+  if (mt && mt.ready) {
+    mt.mixer.update(dt);
+    /* v3.3.3 — HAND FIX, locomotion only (idle/walk/run). Aim/fire keep
+       the authored grip. See mateoFixHands below. */
+    if (mt.current === 'idle' || mt.current === 'walk' || mt.current === 'run') mateoFixHands();
+    /* v3.3.3 — the pistol is parented to the wrist, so while walking
+       it reads as a floating grey plank, not a gripped weapon. Hide
+       it during locomotion; it shows for aim/fire, when it must read. */
+    if (mt.pistol) mt.pistol.visible = (mt.current === 'aim' || mt.current === 'fire');
+  }
+}
+/* v3.3.3 — HAND FIX (18 Nov 2026, measured in the browser, round-4
+   diagnosis). Baseline idle: palms face UP like trays (palm normal
+   88 deg from the thigh, 29 deg from straight up), fingers point
+   sideways, forearms bare skin from elbow to wrist. Causes, all
+   measured, not guessed:
+   (a) The MPFB hand's bind pose has the palm facing sideways (+X in
+       hand space), 90 deg off the Mixamo/Xbot convention, and the
+       retargeted clips barely rotate the wrist (idle: Hand 9-14 deg,
+       ForeArm 8-13 deg) — so the bind orientation survives into the
+       pose. Fix: pronate each ForeArm bone by a FIXED local-Y rotation
+       (mirrored: Left +90 deg, Right -90 deg), post-multiplied after
+       every mixer update — exactly the correction verified in the
+       browser probe (mateo-hands-B-foreY90.jpg): fingers point down,
+       palms face the thighs. Rotating the Hand bone instead was tried
+       and rejected (fingers swing up; the pistol, a RightHand child,
+       reads as a floating plank).
+       That turned out to be HALF the fix. The stable palm metric
+       (palmLocal from the bind finger/thumb directions, not the
+       thumb-flip cross product) showed foreY90 alone leaves the
+       fingers pointing down-FORWARD (only 64-75% down) because the
+       wrist itself is bent ~40 deg in the clip. A second rotation of
+       the HAND bone about its own long axis (local Y, mirrored
+       Left +45 / Right -45 deg) swings the curled fingers to point
+       straight down (93-97% down) while the palm stays 29-37 deg
+       from the thigh — probe mateo-hands-F-handY45.jpg. Going to
+       +90 deg puts the palm 69-78 deg off (backwards); -45 deg leaves
+       the fingers pointing up-forward. So +45 deg it is.
+   (b) The idle clip holds a CONSTANT uniform finger curl on every
+       joint (~42-47 deg), which reads as a stiff fan. Fix: damp each
+       finger joint's rotation halfway back toward its bind pose
+       (bind = straight fingers). The bind quaternions are captured at
+       load, before the mixer ever runs.
+   (c) The jacket shell ends at the elbow (43-44% of forearm vertices
+       are >3 cm from any jacket vertex), so the forearm reads as a
+       bare-skin paddle. Fix: orange sleeve cylinders on the ForeArm
+       bones (see makeMateo), same pattern as the v3.3.2 collar. */
+const _fixQ = new THREE.Quaternion();
+function mateoFixHands() {
+  const mt = playerMesh.userData.mateo;
+  if (!mt || !mt.ready) return;
+  if (mt.foreL) mt.foreL.quaternion.multiply(mt.foreCorrL);
+  if (mt.foreR) mt.foreR.quaternion.multiply(mt.foreCorrR);
+  /* Second half of the fix (see (a) above): rotate each Hand bone
+     about its own long axis so the fingers hang straight down. */
+  if (mt.handL) mt.handL.quaternion.multiply(mt.handCorrL);
+  if (mt.handR) mt.handR.quaternion.multiply(mt.handCorrR);
+  if (mt.fingerBind) {
+    for (const key of Object.keys(mt.fingerBind)) {
+      const rec = mt.fingerBind[key];
+      _fixQ.copy(rec.bone.quaternion);
+      rec.bone.quaternion.slerpQuaternions(rec.bind, _fixQ, 0.5);
+    }
+  }
+  /* Adduction AFTER the damping (damping would halve it otherwise):
+     pull each finger toward the middle finger so the hand reads as
+     fingers together, not a claw fan. Thumb toward the index. */
+  if (mt.fingerAdduct) {
+    for (const key of Object.keys(mt.fingerAdduct)) {
+      const rec = mt.fingerAdduct[key];
+      rec.bone.quaternion.premultiply(rec.corr);
+    }
+  }
 }
 function makeMateo() {
   const g = new THREE.Group();
@@ -1163,6 +1235,85 @@ function makeMateo() {
       sole.position.copy(wp);
       footBone.add(sole);
     }
+    /* v3.3.3 — HAND FIX setup (see mateoFixHands). The model is still
+       at bind pose here: the mixer is created below and has never run,
+       so these quaternions are the true bind pose.
+       (a) Pronation corrections, mirrored per side (probe-verified:
+       foreY Left +90 / Right -90 about the bone's local Y, which
+       points elbow->wrist — proven by the probe: the forearm's local
+       Y equals the elbow->wrist direction).
+       (b) Finger bind quaternions for the curl damping.
+       (c) Jacket sleeves to the wrist: an orange cylinder on each
+       ForeArm bone (local +Y = elbow->wrist), spanning -0.03..0.29
+       so it overlaps the jacket at the elbow and reaches the wrist. */
+    mt.foreL = findBone('mixamorig:LeftForeArm');
+    mt.foreR = findBone('mixamorig:RightForeArm');
+    mt.handL = findBone('mixamorig:LeftHand');
+    mt.handR = findBone('mixamorig:RightHand');
+    mt.foreCorrL = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    mt.foreCorrR = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
+    mt.handCorrL = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4);
+    mt.handCorrR = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 4);
+    mt.fingerBind = {};
+    for (const side of ['Left', 'Right']) {
+      for (const f of ['Index', 'Middle', 'Ring', 'Pinky', 'Thumb']) {
+        for (let j = 1; j <= 3; j++) {
+          const b = findBone(`mixamorig:${side}Hand${f}${j}`);
+          if (b) mt.fingerBind[side + f + j] = { bone: b, bind: b.quaternion.clone() };
+        }
+      }
+    }
+    if (mt.foreL || mt.foreR) {
+      const sleeveMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#E8960F'), roughness: 0.9, metalness: 0 });
+      sleeveMat.envMapIntensity = 0;
+      const sleeveGeo = new THREE.CylinderGeometry(0.042, 0.058, 0.32, 12);
+      for (const fb of [mt.foreL, mt.foreR]) {
+        if (!fb) continue;
+        const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat);
+        sleeve.position.set(0, 0.13, 0);
+        fb.add(sleeve);
+      }
+    }
+    /* v3.3.3 (2) — finger adduction: the bind pose holds the fingers
+       SPREAD (index-to-pinky ~29 deg in Hand space; the clip curl
+       does not close the fan, so the 0.5 curl damping alone leaves a
+       claw). Measure each finger's direction in the Hand bone's
+       local space at bind and store a fixed rotation that pulls it
+       toward the middle finger (index/ring/pinky 100% — parallel
+       fingers; the knuckle spacing keeps them from intersecting —
+       thumb 80% toward the index). Applied to the first joint of each
+       finger in mateoFixHands, after the curl damping. The pistol
+       is hidden during locomotion in mateoUpdate (it is parented to
+       the wrist, so while walking it reads as a floating grey plank
+       at the wrist, not a gripped weapon); it shows for aim/fire,
+       which is when it must read. */
+    const _adduct = (a, b, k) => {
+      const axis = new THREE.Vector3().crossVectors(a, b);
+      const ang = a.angleTo(b) * k;
+      if (axis.lengthSq() < 1e-8 || ang < 0.01) return new THREE.Quaternion();
+      return new THREE.Quaternion().setFromAxisAngle(axis.normalize(), ang);
+    };
+    mt.fingerAdduct = {};
+    for (const side of ['Left', 'Right']) {
+      const hand = findBone(`mixamorig:${side}Hand`);
+      if (!hand) continue;
+      const dirOf = (f) => {
+        const b = findBone(`mixamorig:${side}Hand${f}1`);
+        const t = findBone(`mixamorig:${side}Hand${f}3`);
+        if (!b || !t) return null;
+        const bp = new THREE.Vector3(); b.getWorldPosition(bp);
+        const tp = new THREE.Vector3(); t.getWorldPosition(tp);
+        return hand.worldToLocal(tp).sub(hand.worldToLocal(bp)).normalize();
+      };
+      const dMid = dirOf('Middle');
+      const dIdx = dirOf('Index');
+      if (!dMid || !dIdx) continue;
+      for (const [f, k, ref] of [['Index', 1.0, dMid], ['Ring', 1.0, dMid], ['Pinky', 1.0, dMid], ['Thumb', 0.8, dIdx]]) {
+        const d = dirOf(f);
+        const j1 = findBone(`mixamorig:${side}Hand${f}1`);
+        if (d && j1) mt.fingerAdduct[side + f] = { bone: j1, corr: _adduct(d, ref, k) };
+      }
+    }
     const mixer = new THREE.AnimationMixer(model);
     const byName = (re) => gltf.animations.find((a) => re.test(a.name));
     mt.mixer = mixer;
@@ -1204,6 +1355,10 @@ function loadPistol(handBone, mt) {
     grip.position.set(0, -0.02, 0.01);
     handBone.add(grip);
     mt.pistol = grip;
+    grip.visible = false;
+    /* v3.3.3 — hidden by default: the pistol only shows for aim/fire
+       (mateoUpdate toggles it). At spawn the game is idle/locomotion,
+       where the wrist-parented pistol reads as a floating plank. */
     // lighten the gunmetal so the pistol reads against the dark road at
     // dusk (the stock P226 materials are near-black #28292a/#414241 and
     // vanish in the mission shot). Two-tone: light slide, darker grip.

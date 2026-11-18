@@ -281,3 +281,76 @@ per-component plane-section analysis of mateo.glb):
   probe shows the legs merging.
 - Verification is browser-only (Playwright probes 1.5-2 m, front /
   back / side, idle + mid-stride walk): `gta6-01-probe-v332.mjs`.
+
+## v3.3.3 — the hands (18 Nov 2026, hands only, no rebuild)
+
+Round-4 diagnosis (independent, measured in the browser, verified by
+the parent from `mateo-front-1-zoom2.jpg`): both hands held at waist
+height, PALMS UP like trays, fingers straight and fanned like a
+fan, thumbs sticking out sideways; forearms bare skin from the elbow
+to the wrist. Three measured causes, three fixes — all in `world.js`
+(`mateoUpdate` + `mateoFixHands` + the `makeMateo` GLB callback),
+locomotion only (idle/walk/run); aim/fire keep the authored grip.
+
+- **Cause (a) — the wrist is never rotated.** The MPFB hand's bind
+  pose has the palm facing sideways (+X in hand space), 90 deg off
+  the Mixamo/Xbot convention, and the retargeted clips barely rotate
+  the wrist (idle: Hand 9-14 deg, ForeArm 8-13 deg), so the bind
+  orientation survives into the pose. The "FK error 1.51 deg" claim
+  does not cover palm direction. Fix, probe-verified in two steps:
+  (1) pronate each ForeArm bone by a FIXED local-Y rotation,
+  mirrored Left +90 / Right -90 deg, post-multiplied after every
+  mixer update — probe `mateo-hands-B-foreY90.jpg`: fingers point
+  down, palms face the thighs (stable palm metric: 11-19 deg from
+  medial, vs 88 deg baseline). (2) That alone leaves the fingers
+  pointing down-FORWARD (only 64-75% down) because the wrist itself
+  is bent ~40 deg in the clip, so a second rotation of the HAND
+  bone about its own long axis (local Y, mirrored Left +45 /
+  Right -45 deg) swings the curled fingers to point straight down
+  (93-97% down) while the palm stays 29-37 deg from the thigh —
+  probe `mateo-hands-F-handY45.jpg`. +90 deg puts the palm 69-78
+  deg off (backwards); -45 deg leaves the fingers pointing
+  up-forward. The palm metric that decided this is STABLE: the
+  palm normal in Hand space is computed ONCE at bind from the
+  middle-finger and thumb directions and transformed by the hand
+  bone's world quaternion at runtime. The earlier thumb-flip
+  cross-product metric (palm = cross(finger, thumb) from live joint
+  positions) is UNRELIABLE once the thumb is adducted — the thumb
+  points along the fingers, the cross product goes degenerate, and
+  the "medial" angle swings 20-30 deg for the same pose. Do not use
+  it again.
+- **Cause (b) — the fan.** The bind pose holds the fingers SPREAD
+  (index-to-pinky ~29 deg in Hand space, tip spread 9.6 cm); the
+  clip's uniform curl does not close it, so damping the curl alone
+  leaves a claw. Fix: (1) damp each finger joint's rotation halfway
+  back toward its bind pose (bind = straight fingers; the idle clip
+  holds a constant ~42-47 deg uniform curl on every joint) — bind
+  quaternions captured at load, before the mixer ever runs;
+  (2) adduction: each finger's direction in Hand space at bind is
+  measured, and a fixed rotation pulls it toward the middle finger
+  (index/ring/pinky 100% — parallel fingers; the knuckle spacing
+  keeps them from intersecting — thumb 80% toward the index),
+  premultiplied onto the first joint after the damping (damping
+  would halve it otherwise). Tip spread 9.6 -> 7.9 cm at 70-80%,
+  and the fingers hang parallel at 100%. Verified by
+  `gta6-01-probe-v333-verify.mjs`.
+- **Cause (c) — bare forearms.** 43-44% of forearm vertices are
+  >3 cm from any jacket vertex; the jacket shell ends at the elbow.
+  Fix: orange (#E8960F) sleeve cylinders on the ForeArm bones
+  (local +Y = elbow->wrist, proven: the forearm's local Y equals
+  the elbow->wrist direction), 0.042/0.058 x 0.32, centred at
+  y=0.13 (spans -0.03..0.29; the forearm bone is 0.258 m, so the
+  sleeve reaches the wrist). Same pattern as the v3.3.2 collar.
+- **Pistol during locomotion.** The pistol is parented to the wrist,
+  so while walking it reads as a floating grey plank at the wrist,
+  not a gripped weapon. Fix: `grip.visible = false` by default in
+  `loadPistol`, and `mateoUpdate` shows it only for aim/fire —
+  which is when it must read. The aim pose and grip are untouched.
+- Verification is browser-only: `gta6-01-probe-v333-handsclose.mjs`
+  (camera 1 m, front + side + back, idle + mid-stride walk + aim).
+  Pass: palms face the thighs, fingers together pointing straight
+  down with a light curl, no flat tray, orange sleeves to the
+  wrist, pistol reads when aiming. Remaining nits (NOT in scope):
+  the finger joints read as pale knuckle caps at 1 m, and the aim
+  hands are blocky white around the pistol — both are the MPFB
+  mesh/material, not the pose.

@@ -1,5 +1,19 @@
-// PIER HEAT — Sunset Bay v3.3.2: hand-in program for make.fun gta6-01.
-// v3.3.2 (18 Nov 2026): Mateo FIXED for real this time — the v3.3.1
+// PIER HEAT — Sunset Bay v3.3.3: hand-in program for make.fun gta6-01.
+// v3.3.3 (18 Nov 2026): HANDS ONLY — no rebuild. Round-4 diagnosis
+// (independent, measured in the browser) found the idle/walk hands
+// holding palms-up like trays at waist height: the MPFB hand's bind
+// pose has the palm facing sideways, 90 deg off the Mixamo/Xbot
+// convention, and the retargeted clips barely rotate the wrist
+// (idle: Hand 9-14 deg, ForeArm 8-13 deg). Fix, probe-verified
+// (mateo-hands-B-foreY90.jpg): a fixed mirrored pronation of the
+// ForeArm bones (Left +90 deg / Right -90 deg about local Y) applied
+// after every mixer update for idle/walk/run only, plus finger-curl
+// damping halfway toward the bind pose, plus orange sleeve cylinders
+// on the ForeArm bones so the forearm is no longer bare skin from
+// elbow to wrist. Aim/fire keep the authored grip (trigger finger
+// extended, right fist). Everything else is v3.3.2 unchanged: two
+// separate jeans legs (skirt gone), burnt-orange jacket, bright
+// golden hour, soft sprite clouds, top-rank chase shot.
 // "fixes" were wrong in both directions, proven by an independent
 // measurement round (round 3) plus this session's own component/section
 // analysis of mateo.glb:

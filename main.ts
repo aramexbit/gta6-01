@@ -1,6 +1,8 @@
-// PIER HEAT — Sunset Bay v3.1: hand-in program for make.fun gta6-01.
-// v3.1: Ocean Drive art-deco pass, slim two-segment Mateo, heli framing,
-// live police distances, closer chase cam, brighter sunset ground.
+// PIER HEAT — Sunset Bay v3.2: hand-in program for make.fun gta6-01.
+// v3.2: civilian Xbot Mateo (replaces military Soldier.glb), three
+// districts with podium+tower buildings + window textures, 4 palm
+// variants, KayKit CC0 street furniture, calmer exposure (1.0),
+// camera raycast vs cars, pier railings/lamps, animated sea.
 // Copies game/ and screenshots/ from this repository to /output (or
 // MAKEFUN_OUTPUT_DIR outside the grader) and writes /output/dossier.json
 // with buildDossier from vendor/makefun-game.ts.

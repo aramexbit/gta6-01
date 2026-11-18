@@ -184,6 +184,7 @@ function loop() {
   updateTraffic(dt);
   updatePeds(dt);
   updatePolice(dt);
+  updateSea(dt);
   updateMissions(dt);
   updateCamera(dt, keys);
   updateHUD();
@@ -302,7 +303,7 @@ function applyShot() {
        above it, inside the vertical FOV with the raised chase
        look-target (see sim.js updateCamera). Orbit + height bob are
        frozen during shots (updateHeli) so it cannot drift out. */
-    heli.userData.orbitR = 21.5; heli.userData.height = 7.5; heli.userData.angle = 1.98;
+    heli.userData.orbitR = 24; heli.userData.height = 6.5; heli.userData.angle = 1.98;
     heli.scale.setScalar(1.4);
     snapCamBehindCar(playerCar, 2.6);
     clearNearPlayer(-117, -40, 12); clearNearPlayer(-126, -4, 12); clearNearPlayer(-108, -10, 12);

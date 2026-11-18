@@ -36,6 +36,39 @@ function cameraClearDist(px, py, pz, dx, dy, dz, dist) {
   }
   return dist;
 }
+/* v3.2: the same march, against CARS (Leonida camera/index.ts: the
+   chase-cam raycast covers the STATIC + VEHICLE groups — v3.1 only
+   tested buildings, so the camera clipped straight through the police
+   car in the user's image-80.png). Every visible car is a 2.2 m
+   radius, 1.9 m tall cylinder; the driven car itself is excluded. */
+function cameraClearCars(px, py, pz, dx, dy, dz, dist) {
+  const driven = S.drivenCar || playerCar;
+  const cars = [];
+  for (const c of [...traffic, ...police]) if (c.visible && c !== driven) cars.push(c);
+  if (S.mode === 'foot' && playerCar.visible) cars.push(playerCar);
+  const steps = 16;
+  for (let i = 1; i <= steps; i++) {
+    const t = (i / steps) * dist;
+    const x = px + dx * t, y = py + dy * t, z = pz + dz * t;
+    if (y > 1.9) continue;
+    for (const c of cars) {
+      /* A pursuer glued to the player's bumper (RAMMING, 4-5 m) must
+         NOT collapse the chase cam into the player car: ignore cars
+         whose centre is within 4.5 m of the pivot, and never pull the
+         camera closer than 3 m — a brief clip through the pursuer
+         beats losing the whole shot. */
+      const pdx = c.position.x - px, pdz = c.position.z - pz;
+      if (pdx * pdx + pdz * pdz < 4.5 * 4.5) continue;
+      const ddx = x - c.position.x, ddz = z - c.position.z;
+      if (ddx * ddx + ddz * ddz < 2.3 * 2.3) return Math.max(3.0, t - 0.6);
+    }
+  }
+  return dist;
+}
+function cameraClear(px, py, pz, dx, dy, dz, dist) {
+  return Math.min(cameraClearDist(px, py, pz, dx, dy, dz, dist),
+    cameraClearCars(px, py, pz, dx, dy, dz, dist));
+}
 /* Mass-weighted car-vs-car separation + impulse. a, b are car meshes. */
 function collideCars(a, b) {
   const ua = a.userData, ub = b.userData;
@@ -132,7 +165,7 @@ let footSpeed = 0;
    and re-entering the aim state is locked 0.33 s (minTimeToReturnToAimState).
    Ped.cs:560-576: speed comes from the animation's root motion, not the
    input — the state picks the clip, the clip's authored speed moves Mateo.
-   (Soldier.glb clips are in-place Mixamo clips with no root translation to
+   (Xbot.glb clips are in-place Mixamo clips with no root translation to
    extract, so each state's speed is its authored value below — the
    structure is the SA Unity one: input -> state -> clip -> speed.)
    JumpState.cs: jump = JUMP_launch -> JUMP_glide -> JUMP_land, re-entry
@@ -883,7 +916,7 @@ function updateCamera(dt, keys) {
     const dist = Math.max(5.0, 6.2 - speed * 0.04);
     const pivot = V3(car.position.x, 1.4, car.position.z);
     const eyeDir = V3(Math.sin(ang), 0, Math.cos(ang)); // behind the car
-    const clear = cameraClearDist(car.position.x, 2.9, car.position.z, eyeDir.x, 0, eyeDir.z, dist);
+    const clear = cameraClear(car.position.x, 2.9, car.position.z, eyeDir.x, 0, eyeDir.z, dist);
     const nudged = roadCenterNudge(car.position.x + Math.sin(ang) * clear, car.position.z + Math.cos(ang) * clear, car);
     const want = V3(nudged.x, 2.9, nudged.z);
     camera.position.x = damp(camera.position.x, want.x, 4, dt);
@@ -911,8 +944,13 @@ function updateCamera(dt, keys) {
     // third-person orbit: mouse yaw/pitch around the avatar
     const pivot = V3(playerMesh.position.x, 1.6, playerMesh.position.z);
     const cp = Math.cos(S.pitch);
-    const dirX = Math.sin(S.yaw) * cp, dirY = Math.sin(S.pitch), dirZ = Math.cos(S.yaw) * cp;
-    const clear = cameraClearDist(pivot.x, pivot.y, pivot.z, dirX, dirY, dirZ, 5);
+    /* ?facecheck=1 (street shot only): put the camera AHEAD of Mateo so
+       he walks toward it — the front-view probe for the civilian check
+       (jacket/tee/hair/beard). Normal play is unaffected. */
+    const faceCheck = params.has('facecheck') && SHOT === 'street';
+    const side = faceCheck ? -1 : 1;
+    const dirX = Math.sin(S.yaw) * cp * side, dirY = Math.sin(S.pitch), dirZ = Math.cos(S.yaw) * cp * side;
+    const clear = cameraClear(pivot.x, pivot.y, pivot.z, dirX, dirY, dirZ, 5);
     const eye = V3(pivot.x + dirX * clear, Math.max(1.0, pivot.y + dirY * clear), pivot.z + dirZ * clear);
     camera.position.x = damp(camera.position.x, eye.x, 7, dt);
     camera.position.y = damp(camera.position.y, eye.y, 7, dt);

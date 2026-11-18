@@ -13,8 +13,10 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 /* v3.2: exposure 1.35 -> 1.0. The bright sun + high exposure washed
    every sun-facing surface to near-white (sand read as a white sheet
    in the user's image-80.png, the Scarlet Arrow read pale pink).
-   Golden hour stays warm, but nothing may clip to white now. */
-renderer.toneMappingExposure = 1.0;
+   Golden hour stays warm, but nothing may clip to white now.
+   v3.3.1: 1.0 -> 1.15 — the v3.3 frame read as night; the extra stop
+   of exposure lifts the streets and facades back into daylight. */
+renderer.toneMappingExposure = 1.15;
 $('game').appendChild(renderer.domElement);
 
 /* ---------- v3.3 PBR textures (Poly Haven, CC0) + HDRI environment ----------
@@ -96,7 +98,7 @@ function initComposer() {
       ' float m = max(max(c.r, c.g), c.b);' +
       ' float k = smoothstep(uT, uT + 0.25, m);' +
       ' gl_FragColor = vec4(c * k, 1.0); }',
-      { tD: { value: null }, uT: { value: 0.72 } });
+      { tD: { value: null }, uT: { value: 0.8 } });
     composer.blur = quad(
       'uniform sampler2D tD; uniform vec2 uDir; varying vec2 vUv;' +
       'void main(){ vec3 c = texture2D(tD, vUv).rgb * 0.227027;' +
@@ -110,14 +112,14 @@ function initComposer() {
       'vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }' +
       'void main(){ vec3 c = texture2D(tD, vUv).rgb + texture2D(tB, vUv).rgb * uBloom;' +
       ' c = aces(c * 1.0);' +                       // filmic tone map (renderer tonemapping is off while composing)
-      ' c = pow(c, vec3(1.0/1.12));' +             // gentle lift of the mids
+      ' c = pow(c, vec3(1.0/1.05));' +             // v3.3.1: gentler lift (was 1/1.12) — bright golden hour, not night
       ' float l = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(vec3(l), c, 1.08);' + // +saturation
-      ' vec2 d = vUv - 0.5; c *= 1.0 - dot(d, d) * 0.28;' + // vignette
+      ' vec2 d = vUv - 0.5; c *= 1.0 - dot(d, d) * 0.14;' + // v3.3.1 vignette 0.28 -> 0.14 — the heavy corners read as night
       // NO pow(1/2.2) here: the renderer (outputColorSpace srgb) encodes
       // linear -> sRGB once on the final quad. (The old pow() double-encoded
       // and blew the cars/crosswalk out to white — found 18 Nov 2026.)
       ' gl_FragColor = vec4(c, 1.0); }',
-      { tD: { value: null }, tB: { value: null }, uBloom: { value: 0.35 } });
+      { tD: { value: null }, tB: { value: null }, uBloom: { value: 0.3 } });
     composer.ok = true;
     renderer.toneMapping = THREE.NoToneMapping; // ACES now lives in the composite shader
   } catch (e) { composer.ok = false; }
@@ -172,24 +174,26 @@ function renderFrame() {
 initComposer();
 
 const scene = new THREE.Scene();
-/* Golden-hour sky dome: vertical gradient indigo -> magenta -> orange -> sun
-   (locked palette; no pure white/black). Rendered on a big backside sphere
-   so the horizon always glows like the concept mockups. */
+/* v3.3.1 GOLDEN HOUR — bright, not night (user, 18 Nov 2026): the v3.3
+   grade (deep indigo sky + low sun + heavy vignette) read as night in
+   play. The sky is now a bright sunset: soft dusky-blue zenith fading
+   through lavender and pink to a warm orange horizon, the sun sits
+   higher and stronger, and the haze is pale peach. */
+const skyStops = [[0.00, '#2E4A7C'], [0.28, '#6A5AA8'], [0.48, '#C94F7C'],
+  [0.66, '#FF7A3D'], [0.84, '#FFB347'], [1.00, '#FFE3A1']];
 (function buildSky() {
   const cv = document.createElement('canvas'); cv.width = 4; cv.height = 256;
   const g = cv.getContext('2d');
   const gr = g.createLinearGradient(0, 0, 0, 256);
-  gr.addColorStop(0.00, '#120458'); gr.addColorStop(0.38, '#5A1A6E');
-  gr.addColorStop(0.58, '#FF2A6D'); gr.addColorStop(0.74, '#FF9900');
-  gr.addColorStop(0.88, '#FFB347'); gr.addColorStop(1.00, '#E8D9A0');
+  for (const [at, col] of skyStops) gr.addColorStop(at, col);
   g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
   const tex = new THREE.CanvasTexture(cv);
   const sky = new THREE.Mesh(new THREE.SphereGeometry(760, 24, 16),
     new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false }));
   scene.add(sky);
-  scene.background = new THREE.Color(C.indigo);
+  scene.background = new THREE.Color(0x2E4A7C);
 })();
-scene.fog = new THREE.Fog(0xE89A6A, 150, 520);
+scene.fog = new THREE.Fog(0xF2B183, 180, 620);
 
 const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 1600);
 /* v3.2: start-screen camera sits mid-road on Ocean Drive (was -110, 6,
@@ -197,20 +201,21 @@ const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 16
    title). Palms line x=-132 and x=-108; the road centre is clear. */
 camera.position.set(-116, 5.5, 36);
 
-/* Low golden-hour sun: long shadows, warm key light. (v3.2: sun 1.6 ->
-   1.25, hemisphere 1.0 -> 0.7 — v3.1 washed every sun-facing surface
-   to near-white; see the exposure note above.) */
-const sunLight = new THREE.DirectionalLight(0xFFC46B, 1.25);
-sunLight.position.set(-260, 70, -80);
+/* Low golden-hour sun: long shadows, warm key light. v3.3.1: sun 1.25 ->
+   1.6 and higher (was 70, now 110) + hemisphere 0.7 -> 0.95 with a
+   lighter sky tint + ambient 0.35 -> 0.5 — the v3.3 scene read as night
+   because the key/fill were too dim against the dark sky dome. */
+const sunLight = new THREE.DirectionalLight(0xFFC46B, 1.6);
+sunLight.position.set(-240, 110, -60);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(1024, 1024);
 sunLight.shadow.camera.left = -160; sunLight.shadow.camera.right = 160;
 sunLight.shadow.camera.top = 160; sunLight.shadow.camera.bottom = -160;
 sunLight.shadow.camera.far = 600;
 scene.add(sunLight);
-scene.add(new THREE.HemisphereLight(0xC9A8E8, 0x8A5A3A, 0.7));
+scene.add(new THREE.HemisphereLight(0xB9C8F0, 0x9A6A4A, 0.95));
 /* Warm bounce so shadowed faces never go black. */
-scene.add(new THREE.AmbientLight(0x8A5A6A, 0.35));
+scene.add(new THREE.AmbientLight(0x9A7A7A, 0.5));
 
 /* 3-step toon gradient map */
 const gradData = new Uint8Array([90, 160, 255, 255]);
@@ -254,12 +259,12 @@ function windowTexture(kind, litRatio) {
 }
 const WIN_TEX = {};
 function winMat(kind) {
-  if (!WIN_TEX[kind]) WIN_TEX[kind] = windowTexture(kind, kind === 'glass' ? 0.55 : 0.45);
+  if (!WIN_TEX[kind]) WIN_TEX[kind] = windowTexture(kind, kind === 'glass' ? 0.28 : 0.20); // v3.3.1: bright golden hour, not dusk (was 0.55/0.45)
   const t = WIN_TEX[kind];
   const glass = kind === 'glass';
   return new THREE.MeshStandardMaterial({
     map: t.map, emissiveMap: t.emissiveMap, emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.85, roughness: glass ? 0.35 : 0.9, metalness: glass ? 0.6 : 0.0,
+    emissiveIntensity: 0.6, roughness: glass ? 0.35 : 0.9, metalness: glass ? 0.6 : 0.0,
   });
 }
 /* Per-building facade material: the shared window canvas is cloned (cheap
@@ -267,7 +272,7 @@ function winMat(kind) {
    ~3 m tall whatever the building's size, then tinted with the district
    palette so no two buildings share one flat colour. */
 function winMatFor(kind, w, h, tint) {
-  const t = WIN_TEX[kind] || (WIN_TEX[kind] = windowTexture(kind, kind === 'glass' ? 0.55 : 0.45));
+  const t = WIN_TEX[kind] || (WIN_TEX[kind] = windowTexture(kind, kind === 'glass' ? 0.28 : 0.20)); // v3.3.1: bright golden hour (was 0.55/0.45)
   const glass = kind === 'glass';
   const map = t.map.clone(); map.needsUpdate = true;
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
@@ -428,17 +433,43 @@ function buildWorld() {
     const c = new THREE.Mesh(new THREE.PlaneGeometry(4, 12), crossEW);
     c.rotation.x = -Math.PI / 2; c.position.set(x + 10, 0.13, 0); world.add(c);
   }
+  /* v3.3.1: the sun sits LOW AHEAD (+Z) so the chase and street shots
+     drive/walk toward the sunset, sun near the centre of the frame like
+     the top-rank entries (was (-260, 30, 160), off to the side). */
   const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(22, 32),
     new THREE.MeshBasicMaterial({ color: C.sun, fog: false }));
-  sunDisc.position.set(-260, 30, 160); sunDisc.lookAt(0, 20, 0); world.add(sunDisc);
-  const sunGlow = glowSprite(C.sun, 150); sunGlow.position.set(-252, 32, 158); world.add(sunGlow);
-  const cloudMat = toon(C.pink);
-  for (let i = 0; i < 14; i++) {
-    const cl = new THREE.Group();
-    const n = 3 + Math.floor(rnd() * 3);
-    for (let j = 0; j < n; j++) box(14 + rnd() * 16, 3 + rnd() * 3, 8, cloudMat, j * 10 - n * 5, 0, rnd() * 4 - 2, cl, true);
-    cl.position.set(-260 + rnd() * 480, 70 + rnd() * 40, -220 + rnd() * 380);
-    world.add(cl);
+  sunDisc.position.set(-130, 30, 260); sunDisc.lookAt(-120, 10, 0); world.add(sunDisc);
+  const sunGlow = glowSprite(C.sun, 150); sunGlow.position.set(-128, 32, 255); world.add(sunGlow);
+  /* v3.3.1 REALISTIC CLOUDS (user, 18 Nov 2026): the old clouds were
+     pink/orange BOXES floating in a purple sky — "aneh malah kotak",
+     while the top-rank skies are soft textured clouds. Box/slab clouds
+     are GONE. Each cloud is now a sprite of several overlapping soft
+     radial-gradient puffs (canvas texture, transparent feathered edges,
+     warm sunset tint), scattered naturally high in the sky. No box
+     may ever appear in the sky again. */
+  const cloudTex = (() => {
+    const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128;
+    const g = cv.getContext('2d');
+    const puff = (x, y, r, a) => {
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, `rgba(255,236,220,${a})`);
+      gr.addColorStop(0.55, `rgba(255,205,190,${a * 0.65})`);
+      gr.addColorStop(1, 'rgba(255,190,180,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    };
+    puff(128, 78, 62, 0.9); puff(82, 88, 44, 0.85); puff(178, 88, 48, 0.85);
+    puff(52, 96, 30, 0.7); puff(208, 96, 32, 0.7); puff(128, 58, 40, 0.6);
+    return new THREE.CanvasTexture(cv);
+  })();
+  const cloudTints = [0xFFE8D8, 0xFFD9C4, 0xFFC4C9, 0xFFE0B8];
+  for (let i = 0; i < 12; i++) {
+    const m = new THREE.SpriteMaterial({ map: cloudTex, transparent: true, fog: false,
+      color: pick(cloudTints), opacity: 0.55 + rnd() * 0.25, depthWrite: false });
+    const s = new THREE.Sprite(m);
+    const w = 60 + rnd() * 70;
+    s.scale.set(w, w * 0.28 + 8, 1);
+    s.position.set(-320 + rnd() * 640, 75 + rnd() * 60, -260 + rnd() * 520);
+    world.add(s);
   }
   buildBuildings(); buildProps(); buildPier();
 }
@@ -1049,12 +1080,18 @@ function makeMateo() {
     const model = gltf.scene;
     model.rotation.y = Math.PI; // MPFB exports facing +Z; the game's forward is -Z
     dullEnv(model); // the HDRI traverse ran before this GLB arrived
-    // the shells are matte fabric: the sunset HDRI's sun disc reflects off
-    // the jacket's curved back as vertical white streaks (found 18 Nov
-    // 2026, debug-lights: stripes survive sun-off, die with env-off).
-    // Drop the shells' env to 0.15; skin/shoes/hair keep 0.5.
+    /* v3.3.1: the shells are matte fabric — the sunset HDRI's sun disc
+       reflects off the jacket's curved back as vertical white streaks
+       (found 18 Nov 2026, debug-lights: stripes survive sun-off, die
+       with env-off). v3.3's 0.15 did NOT remove them, so the shells'
+       env is now 0 (lit by the sun + hemisphere only). And the shoes:
+       the shoes04 texture is nearly black (only 0.2% of pixels >200),
+       so the "white sneakers" rendered dark — drop the map so the
+       off-white baseColorFactor (#f5f2ed) renders as white sneakers. */
     model.traverse((o) => {
-      if (o.isMesh && o.material && o.material.name && o.material.name.startsWith('Mateo')) o.material.envMapIntensity = 0.15;
+      if (!o.isMesh || !o.material) return;
+      if (o.material.name && o.material.name.startsWith('Mateo')) o.material.envMapIntensity = 0;
+      if (o.material.name === 'Human.shoes04') { o.material.map = null; o.material.needsUpdate = true; }
     });
     root.add(model);
     /* Thin beard only: the short01 crop hair is already in the GLB

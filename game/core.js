@@ -152,6 +152,51 @@ function toast(msg, ms) {
   clearTimeout(toast._t); toast._t = setTimeout(() => { t.style.display = 'none'; }, ms || 2400);
 }
 function say(line) { $('dialog-line').textContent = line; }
+/* v3.3.1 — Kira's portrait for the dialog box (top-rank entries all show
+   a character portrait in the dialog; v3.3 showed a 🎧 emoji). Painted
+   flat on a canvas at boot: pink-haired woman, warm skin, teal jacket
+   with headset — simple cel-style shapes, no external asset. */
+function paintKiraAvatar() {
+  const cv = $('kira-avatar');
+  if (!cv) return;
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, 52, 52);
+  // background: sunset gradient
+  const bg = g.createLinearGradient(0, 0, 0, 52);
+  bg.addColorStop(0, '#FF7A3D'); bg.addColorStop(0.6, '#FF2A6D'); bg.addColorStop(1, '#120458');
+  g.fillStyle = bg; g.fillRect(0, 0, 52, 52);
+  // pink hair: big rounded mass behind + over the shoulders
+  g.fillStyle = '#FF5DA2';
+  g.beginPath(); g.ellipse(26, 22, 17, 16, 0, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(10, 38, 6, 12, 0.25, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(42, 38, 6, 12, -0.25, 0, Math.PI * 2); g.fill();
+  // shoulders / teal jacket
+  g.fillStyle = '#0E7C86';
+  g.beginPath(); g.ellipse(26, 52, 19, 10, 0, Math.PI, 0); g.fill();
+  g.fillStyle = '#05D9E8'; g.fillRect(24, 44, 4, 8); // jacket zipper
+  // neck + face
+  g.fillStyle = '#E8B48C'; g.fillRect(23, 34, 6, 8);
+  g.beginPath(); g.ellipse(26, 26, 10, 12, 0, 0, Math.PI * 2); g.fill();
+  // hair fringe over the forehead
+  g.fillStyle = '#FF5DA2';
+  g.beginPath(); g.ellipse(26, 16, 10.5, 6, 0, Math.PI, 0); g.fill();
+  g.beginPath(); g.ellipse(17, 19, 4, 6, 0.4, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(35, 19, 4, 6, -0.4, 0, Math.PI * 2); g.fill();
+  // eyes + brows + smile
+  g.fillStyle = '#1A1030';
+  g.beginPath(); g.ellipse(22, 26, 1.6, 2.2, 0, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(30, 26, 1.6, 2.2, 0, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#1A1030'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(20, 22.5); g.lineTo(24, 22); g.moveTo(28, 22); g.lineTo(32, 22.5); g.stroke();
+  g.strokeStyle = '#8A2A3A'; g.beginPath(); g.arc(26, 31, 3, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke();
+  // headset: band over the hair + ear cups
+  g.strokeStyle = '#120458'; g.lineWidth = 2.5;
+  g.beginPath(); g.arc(26, 24, 12, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
+  g.fillStyle = '#120458';
+  g.beginPath(); g.ellipse(14, 27, 2.5, 4, 0, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(38, 27, 2.5, 4, 0, 0, Math.PI * 2); g.fill();
+}
+paintKiraAvatar();
 function saveGame() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({

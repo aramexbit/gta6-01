@@ -186,7 +186,7 @@ function updateFoot(dt, keys) {
   u.mvStateT = (u.mvStateT || 0) + dt; // time since the last state switch
   u.jumpLockT = Math.max(0, (u.jumpLockT || 0) - dt);
   if ((S.aimT || 0) > 0) S.aimT -= dt; // aim re-entry lock (0.33 s)
-  const shifting = !!(keys.ShiftLeft || keys.ShiftRight);
+  const shifting = !!(keys.ShiftLeft || keys.ShiftRight) || (SHOT === 'street' && params.has('runcheck'));
   let mx = 0, mz = 0;
   if (keys.KeyW || keys.ArrowUp) mz += 1;
   if (keys.KeyS || keys.ArrowDown) mz -= 1;
@@ -217,6 +217,8 @@ function updateFoot(dt, keys) {
   else if (moving) {
     if (shifting) {
       u.runHoldT = (u.runHoldT || 0) + dt; // hold Shift to build into a sprint
+      // runcheck probe (street shot): stay in RUN, never build to SPRINT
+      if (SHOT === 'street' && params.has('runcheck')) u.runHoldT = Math.min(u.runHoldT, 0.9);
       want = (u.runHoldT > 1.0 && (S.aimT || 0) <= 0 && !S.aiming) ? 'SPRINT' : 'RUN'; // sprint cannot aim
     } else { u.runHoldT = 0; want = 'WALK'; }
   } else u.runHoldT = 0;
@@ -313,6 +315,12 @@ function updatePlayer(dt, keys) {
       handbrake: !!keys.Space,
       boost: !!(keys.ShiftLeft || keys.ShiftRight),
     };
+    /* v3.3.1 staged chase: hold full throttle so the shot reads ~150+
+       KM/H like the top-rank entries (was 41 KM/H: the staged car
+       coasted down with no input). dt is clamped to 0.05, so the car
+       only travels ~100 m during the SwiftShader load — it stays on
+       Ocean Drive and the staged police/heli follow it. */
+    if (SHOT === 'chase' && S.shotCruise) { input.throttle = 1; input.steer = 0; input.handbrake = false; }
     const { vf } = stepCar(car, input, dt);
     S.carYaw = car.rotation.y;
     S.carSpeed = vf;
@@ -770,6 +778,30 @@ function updatePolice(dt) {
   for (const pc of police) {
     const u = pc.userData;
     if (!pc.visible) continue;
+    /* v3.3.1 staged chase: hold formation around the player car instead
+       of converging to ram it — the v3.3 shot had two units ON the
+       player car (3-4 m, RAMMING) because pursuit AI closes the gap.
+       u.shotHold = { dx, dz } in player-car local space (dx = right,
+       dz = ahead). The unit keeps the player's heading and speed, so
+       the frame stays a flanking pursuit at readable distance. */
+    if (SHOT === 'chase' && u.shotHold) {
+      const cy = S.carYaw;
+      const fx = -Math.sin(cy), fz = -Math.cos(cy); // forward
+      const rx = Math.cos(cy), rz = -Math.sin(cy);  // right
+      pc.position.x = pp.x + rx * u.shotHold.dx + fx * u.shotHold.dz;
+      pc.position.z = pp.z + rz * u.shotHold.dx + fz * u.shotHold.dz;
+      pc.rotation.y = cy;
+      u.speed = pSpeed; u.dist = Math.hypot(u.shotHold.dx, u.shotHold.dz);
+      u.status = 'PURSUIT';
+      if (u.lightbar) {
+        const on = Math.floor(S.time * 6) % 2 === 0;
+        u.lightbar.userData.r.material.color.setHex(on ? C.policeRed : 0x550000);
+        u.lightbar.userData.b.material.color.setHex(on ? 0x220044 : C.policeBlue);
+        u.lightbar.userData.rg.material.opacity = on ? 0.95 : 0.15;
+        u.lightbar.userData.bg.material.opacity = on ? 0.15 : 0.95;
+      }
+      continue;
+    }
     const pursuing = want >= 2;
     if (!pursuing) {
       stepPatrolCar(pc, dt);
@@ -915,16 +947,24 @@ function updateCamera(dt, keys) {
     const fx = -Math.sin(ang), fz = -Math.cos(ang);
     const rx = Math.cos(ang), rz = -Math.sin(ang);
     // pull in as speed rises; v3.1 chase cam sits closer (was 7.5 m) so
-    // the player car is LARGE in the centre of the frame, like the mockup
-    const dist = Math.max(5.0, 6.2 - speed * 0.04);
+    // the player car is LARGE in the centre of the frame, like the mockup.
+    // v3.3.1: the staged chase shot pulls back to 7.5 m — at 5 m the car
+    // was cropped and the street/sunset/police read as a pink wash.
+    const dist = SHOT === 'chase' ? 7.5 : Math.max(5.0, 6.2 - speed * 0.04);
     const pivot = V3(car.position.x, 1.4, car.position.z);
     const eyeDir = V3(Math.sin(ang), 0, Math.cos(ang)); // behind the car
     const clear = cameraClear(car.position.x, 2.9, car.position.z, eyeDir.x, 0, eyeDir.z, dist);
     const nudged = roadCenterNudge(car.position.x + Math.sin(ang) * clear, car.position.z + Math.cos(ang) * clear, car);
     const want = V3(nudged.x, 2.9, nudged.z);
-    camera.position.x = damp(camera.position.x, want.x, 4, dt);
-    camera.position.y = damp(camera.position.y, want.y, 4, dt);
-    camera.position.z = damp(camera.position.z, want.z, 4, dt);
+    // v3.3.1: the staged chase shot is taken at ~140 KM/H, so the rate-4
+    // camera lags ~10-14 m behind the car (steady-state lag v/k) and the
+    // hero car shrinks to ~48 px. A stiff tracker (rate 20) holds the
+    // 7.5 m chase distance so the car reads large, like the top-rank
+    // shots. Only the staged ?shot=chase frame uses this; gameplay keeps 4.
+    const camRate = SHOT === 'chase' ? 20 : 4;
+    camera.position.x = damp(camera.position.x, want.x, camRate, dt);
+    camera.position.y = damp(camera.position.y, want.y, camRate, dt);
+    camera.position.z = damp(camera.position.z, want.z, camRate, dt);
     // look-at leads along velocity: forward fully, lateral only 70% (bounded slide swing)
     const vf = S.carSpeed;
     const vl = car.userData.vx * rx + car.userData.vz * rz;
@@ -937,9 +977,9 @@ function updateCamera(dt, keys) {
       car.position.x + fx * leadF + rx * leadL,
       lookY,
       car.position.z + fz * leadF + rz * leadL);
-    camTarget.x = damp(camTarget.x, look.x, 4, dt);
-    camTarget.y = damp(camTarget.y, look.y, 4, dt);
-    camTarget.z = damp(camTarget.z, look.z, 4, dt);
+    camTarget.x = damp(camTarget.x, look.x, camRate, dt);
+    camTarget.y = damp(camTarget.y, look.y, camRate, dt);
+    camTarget.z = damp(camTarget.z, look.z, camRate, dt);
     camera.lookAt(camTarget);
     camera.fov = damp(camera.fov, clamp(56 + speed * 0.35, 56, 66), 3, dt);
     camera.updateProjectionMatrix();

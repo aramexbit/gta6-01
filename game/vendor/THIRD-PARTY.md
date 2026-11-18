@@ -21,7 +21,19 @@
   examples); the aim/fire clips were authored for this game. The
   MPFB2 addon code is GPL-3.0 but is NOT shipped — only its CC0
   output (the generated human + CC0 assets) is in this repo.
-  See `game/MATEO-MODEL.md` for the full build recipe.
+  See `game/MATEO-MODEL.md` for the full build recipe. v3.3.1 (18 Nov
+  2026): the idle/walk/run clips were WORLD-SPACE DELTA RETARGETED
+  from the same Mixamo Xbot clips onto the MPFB rig (same clips, no
+  new asset — the verbatim bone-name paste deformed the mesh; see
+  `MATEO-MODEL.md` v3.3.1). The shoes map is dropped at runtime in
+  `world.js` so the off-white base colour renders as white sneakers.
+  The sky clouds are a procedural canvas texture (no asset).
+  v3.3.1 GLB surgery (same file, no new asset): jeans crotch-web
+  triangles degenerated, jacket centre-front pushed out 32 mm radial,
+  jacket back pushed out 32 mm radial, body nipple tips flattened,
+  body neck/face Laplacian-smoothed (gore lines), jeans base colour
+  corrected to the documented #23233A (it had shipped near-black
+  #04040B) — see `MATEO-MODEL.md` "v3.3.1 — GLB surgery".
 - `pistol.glb` — Quaternius "P226" from the Ultimate Guns Pack, CC0 1.0.
   https://poly.pizza/bundle/Ultimate-Guns-Pack-cpgUfI4t2F
   968 tris. Parented to Mateo's RightHand bone (see `world.js`

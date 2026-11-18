@@ -205,7 +205,7 @@ function loop() {
 }
 window.__PIERHEAT = S;
 window.__PIERHEAT_CAM = camera;
-window.__PIERHEAT_DEBUG = { MISSIONS, BUILDINGS, playerPos, setWanted, completeStage, traffic, police, copPeds, peds, playerCar, playerMesh, heli, heli2, beacon, clearCops, copsNearCount, hurtPlayer, busted };
+window.__PIERHEAT_DEBUG = { MISSIONS, BUILDINGS, playerPos, setWanted, completeStage, traffic, police, copPeds, peds, playerCar, playerMesh, heli, heli2, beacon, clearCops, copsNearCount, hurtPlayer, busted, stageChaseTraffic };
 
 /* ---------- start / continue / pause wiring ---------- */
 function startGame(fromSave) {
@@ -280,35 +280,94 @@ function stagePoliceAt(spots) {
     pc.userData.speed = 10; pc.userData.vx = 0; pc.userData.vz = 0;
   }
 }
+/* v3.3.1 — re-stage chase traffic RELATIVE to the player car, called by
+   the shots script just before the 1-chase screenshot. The car travels
+   ~150 m during the SwiftShader load, so any absolute traffic position
+   staged at boot is stale by screenshot time; this puts 2 cars ahead
+   in-lane (to be overtaken) and 3 oncoming in the west lane, all in
+   frame ahead of the camera. Exposed as __PIERHEAT_DEBUG.stageChaseTraffic. */
+function stageChaseTraffic() {
+  const pz = playerCar.position.z;
+  const spots = [
+    { along: pz + 22, dir: 1 }, { along: pz + 36, dir: 1 },  // in-lane ahead (east)
+    { along: pz + 28, dir: -1 }, { along: pz + 48, dir: -1 }, { along: pz + 68, dir: -1 }, // oncoming (west)
+  ];
+  for (let i = 0; i < spots.length && i < traffic.length; i++) {
+    const c = traffic[i], u = c.userData;
+    u.vertical = true; u.road = -120; u.along = spots[i].along; u.dir = spots[i].dir;
+    u.speed = u.cruise = 12;
+    c.position.set(-120 + (u.dir > 0 ? 3 : -3), 0, u.along);
+    c.rotation.y = u.dir > 0 ? Math.PI : 0;
+    u.vx = 0; u.vz = u.dir * 12;
+  }
+}
 function applyShot() {
   if (!SHOT) return;
-  if (SHOT === 'start') { updateHUD(); return; } // stay on the start screen, minimap drawn
+  if (SHOT === 'start') {
+    // v3.3.1: the title card sits over a sunset street — camera on Ocean
+    // Drive looking +Z toward the sun (was the default boot camera,
+    // which faced the buildings and read as night).
+    for (const c of traffic) placeCarOnLane(c);
+    camera.position.set(-117, 4.5, -10);
+    camTarget.set(-122, 3, 80);
+    camera.lookAt(camTarget);
+    updateHUD(); return; // stay on the start screen, minimap drawn
+  }
   S.started = true;
   $('start').style.display = 'none';
   for (const c of traffic) placeCarOnLane(c); // random cars start at the origin; put them on their lanes first
   if (SHOT === 'chase') {
     S.mode = 'car'; S.drivenCar = playerCar; playerCar.userData.owned = true;
     playerMesh.visible = false;
-    /* v3.1 — OCEAN DRIVE (road x=-120, the beachfront boulevard): the
-       Scarlet Arrow runs +Z with the sea + sand on the left and the
-       art-deco hotel row + neon on the right, palms lining the road.
-       Camera sits closer (5.5 m) so the car is LARGE in the centre. */
-    playerCar.position.set(-117, 0, -40); S.carYaw = Math.PI; playerCar.rotation.y = Math.PI;
-    playerCar.userData.vx = 0; playerCar.userData.vz = 20; S.carSpeed = 20;
+    /* v3.3.1 — OCEAN DRIVE chase (top-rank pattern, 18 Nov 2026): the
+       Scarlet Arrow runs +Z TOWARD the sunset (sun disc ahead at
+       (-130, 30, 260)), camera pulled back to 7.5 m (sim.js updateCamera)
+       so the car + street + sunset all read, speed held at ~150 KM/H
+       (S.shotCruise, sim.js updatePlayer), THREE police units in a
+       flanking formation that HOLDS its distance (u.shotHold, sim.js
+       updatePolice — the v3.3 shot had two units ON the car at 3-4 m),
+       heli overhead, traffic ahead in both lanes. Sea + sand on the
+       left, art-deco hotel row + neon on the right, palms lining the
+       road. */
+    playerCar.position.set(-117, 0, -60); S.carYaw = Math.PI; playerCar.rotation.y = Math.PI;
+    playerCar.userData.vx = 0; playerCar.userData.vz = 30; S.carSpeed = 30;
+    S.shotCruise = true; // hold full throttle for the shot (~150 KM/H)
     S.mission = 2; S.money = 18450; S.wanted = 4; S.carHealth = 72;
     playerCar.userData.health = 72;
-    // oncoming traffic in the west lane (x=-123, heading -Z toward the player) + one car far ahead in-lane
-    const oncoming = [[-123, -25, -1], [-123, -8, -1], [-117, 12, 1]];
-    for (let i = 0; i < oncoming.length; i++) {
+    // no spawns during the long SwiftShader load: foot cops + police
+    // reinforcements would otherwise drive into the staged frame
+    S.footTimer = -1e9; S.carTimer = -1e9;
+    // initial traffic (re-staged relative to the car at screenshot time
+    // by stageChaseTraffic, called from the shots script — the car
+    // travels ~150 m during the load, so absolute positions go stale)
+    for (let i = 0; i < 3; i++) {
       const c = traffic[i], u = c.userData;
-      u.vertical = true; u.road = -120; u.along = oncoming[i][1]; u.dir = oncoming[i][2];
+      u.vertical = true; u.road = -120; u.along = -30 + i * 30; u.dir = i < 2 ? -1 : 1;
       u.speed = u.cruise = 12;
-      c.position.set(oncoming[i][0], 0, oncoming[i][1]);
+      c.position.set(-120 + (u.dir > 0 ? 3 : -3), 0, u.along);
       c.rotation.y = u.dir > 0 ? Math.PI : 0;
       u.vx = 0; u.vz = u.dir * 12;
     }
-    // police flank in from the sides, ahead — visible in frame, converging, not head-on
-    stagePoliceAt([[-126, -4, 38], [-108, -10, 34]]);
+    // police in flanking formation (dx = right, dz = ahead of the player
+    // car): left-front, right-front, right-rear — they HOLD these offsets
+    // (updatePolice shotHold branch) instead of converging to ram.
+    // Callsigns are bird/fish names, distinct from the top-rank units.
+    const formation = [
+      { dx: -9, dz: 16, name: 'PELICAN-4' },
+      { dx: 9, dz: 12, name: 'TARPON-9' },
+      { dx: 10, dz: -12, name: 'GULL-2' },
+    ];
+    for (let i = 0; i < formation.length && i < police.length; i++) {
+      const pc = police[i], u = pc.userData;
+      pc.visible = true;
+      u.shotHold = { dx: formation[i].dx, dz: formation[i].dz };
+      u.name = formation[i].name;
+      u.status = 'PURSUIT';
+      u.dist = Math.hypot(formation[i].dx, formation[i].dz);
+      u.speed = 30; u.vx = 0; u.vz = 30;
+      pc.position.set(-117 + formation[i].dx, 0, -60 + formation[i].dz);
+      pc.rotation.y = Math.PI;
+    }
     /* Heli FULLY in frame (v3.1: was cut off at the top edge): low wide
        orbit ahead over the sea — angle 1.98 puts it ~20 m ahead and
        ~8 m to the sea side at 7.5 m height, ~19° off centre and ~11°
@@ -318,7 +377,7 @@ function applyShot() {
     heli.userData.orbitR = 24; heli.userData.height = 6.5; heli.userData.angle = 1.98;
     heli.scale.setScalar(1.4);
     snapCamBehindCar(playerCar, 2.6);
-    clearNearPlayer(-117, -40, 12); clearNearPlayer(-126, -4, 12); clearNearPlayer(-108, -10, 12);
+    clearNearPlayer(-117, -60, 12);
     say('Almost there — left at the pier! We can lose them near the boardwalk.');
   } else if (SHOT === 'street') {
     S.mode = 'foot'; playerMesh.visible = true;

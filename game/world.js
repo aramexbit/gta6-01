@@ -10,7 +10,7 @@ renderer.setPixelRatio(1);
 renderer.shadowMap.enabled = !params.has('flat');
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.5;
+renderer.toneMappingExposure = 1.35;
 $('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -36,8 +36,10 @@ scene.fog = new THREE.Fog(0xE89A6A, 150, 520);
 const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 1600);
 camera.position.set(-110, 6, 40);
 
-/* Low golden-hour sun: long shadows, warm key light. */
-const sunLight = new THREE.DirectionalLight(0xFFC46B, 2.6);
+/* Low golden-hour sun: long shadows, warm key light. (v3.1: sun 2.6 +
+   hemisphere 1.55 washed every sun-facing surface to near-white —
+   the Scarlet Arrow read pale pink, Mateo's orange jacket read beige.) */
+const sunLight = new THREE.DirectionalLight(0xFFC46B, 1.6);
 sunLight.position.set(-260, 70, -80);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(1024, 1024);
@@ -45,9 +47,9 @@ sunLight.shadow.camera.left = -160; sunLight.shadow.camera.right = 160;
 sunLight.shadow.camera.top = 160; sunLight.shadow.camera.bottom = -160;
 sunLight.shadow.camera.far = 600;
 scene.add(sunLight);
-scene.add(new THREE.HemisphereLight(0xC9A8E8, 0x2E5E6E, 1.2));
+scene.add(new THREE.HemisphereLight(0xC9A8E8, 0x8A5A3A, 1.0));
 /* Warm bounce so shadowed faces never go black. */
-scene.add(new THREE.AmbientLight(0x8A5A6A, 0.5));
+scene.add(new THREE.AmbientLight(0x8A5A6A, 0.35));
 
 /* 3-step toon gradient map */
 const gradData = new Uint8Array([90, 160, 255, 255]);
@@ -93,10 +95,21 @@ function box(w, h, d, mat, x, y, z, parent, noShadow) {
   (parent || world).add(m); return m;
 }
 function buildWorld() {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(CITY * 2 + 60, CITY * 2 + 60), toon(0x4A3644));
+  /* Warm terracotta ground (v3.1: was dark brown 0x4A3644 — read as mud
+     in chase/street shots). Sunset palette, no pure white/black. */
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(CITY * 2 + 60, CITY * 2 + 60), toon(0x8A5A48));
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; world.add(ground);
   const beach = new THREE.Mesh(new THREE.PlaneGeometry(46, CITY * 2 + 60), toon(C.pastel));
   beach.rotation.x = -Math.PI / 2; beach.position.set(-CITY - 38, 0.05, 0); beach.receiveShadow = true; world.add(beach);
+  /* Ocean Drive sand promenade (v3.1): the beach used to sit 45 m from the
+     road behind dark ground. A sand strip now joins Ocean Drive (x=-120)
+     to the beach, so the chase/street shots read as a beachfront boulevard
+     — sea on one side, art-deco hotels on the other. */
+  const sand = new THREE.Mesh(new THREE.PlaneGeometry(40, CITY * 2 + 60), toon(0xE8C9A0));
+  sand.rotation.x = -Math.PI / 2; sand.position.set(-CITY + 4.5, 0.04, 0); sand.receiveShadow = true; world.add(sand);
+  /* Wide pale promenade sidewalk on the sea side of Ocean Drive. */
+  const prom = new THREE.Mesh(new THREE.PlaneGeometry(10, CITY * 2), toon(0xD8A080));
+  prom.rotation.x = -Math.PI / 2; prom.position.set(-131, 0.06, 0); prom.receiveShadow = true; world.add(prom);
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(260, CITY * 2 + 400), toon(C.sea));
   sea.rotation.x = -Math.PI / 2; sea.position.set(-CITY - 190, -0.4, 0); world.add(sea);
   for (let i = 0; i < 10; i++) {
@@ -109,8 +122,8 @@ function buildWorld() {
   dg.fillStyle = '#FFB347'; dg.fillRect(6, 6, 4, 34);
   const dashTex = new THREE.CanvasTexture(dashCv);
   dashTex.wrapS = dashTex.wrapT = THREE.RepeatWrapping;
-  const roadMat = toon(0x2E2622);
-  const walkMat = toon(0x8A6A72); // sidewalks: lighter strips so streets read at golden hour
+  const roadMat = toon(0x6B4A3C);
+  const walkMat = toon(0xC99A70); // sidewalks: warm sand-tan so streets read at golden hour
   for (const x of ROAD_X) {
     const r = new THREE.Mesh(new THREE.PlaneGeometry(12, CITY * 2), roadMat);
     r.rotation.x = -Math.PI / 2; r.position.set(x, 0.1, 0); r.receiveShadow = true; world.add(r);
@@ -137,8 +150,8 @@ function buildWorld() {
   }
   const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(22, 32),
     new THREE.MeshBasicMaterial({ color: C.sun, fog: false }));
-  sunDisc.position.set(-320, 26, -40); sunDisc.lookAt(0, 20, 0); world.add(sunDisc);
-  const sunGlow = glowSprite(C.sun, 150); sunGlow.position.set(-310, 28, -40); world.add(sunGlow);
+  sunDisc.position.set(-260, 30, 160); sunDisc.lookAt(0, 20, 0); world.add(sunDisc);
+  const sunGlow = glowSprite(C.sun, 150); sunGlow.position.set(-252, 32, 158); world.add(sunGlow);
   const cloudMat = toon(C.pink);
   for (let i = 0; i < 14; i++) {
     const cl = new THREE.Group();
@@ -149,21 +162,36 @@ function buildWorld() {
   }
   buildBuildings(); buildProps(); buildPier();
 }
-const NEON_SIGNS = ['NOODLES 24h', 'ARCADE', 'TACOS', 'MART', 'HOTEL BAY', 'NEON ROW', 'PIER BAR', 'SURF SHOP', 'KIRA FM', 'SUNSET MOTEL'];
-const BUILDING_COLORS = [C.pastel, 0xE8A0B8, 0xA0D8E8, 0xE8C9A0, 0xD8A0E8, C.pink, 0xA0E8C9];
+const NEON_SIGNS = ['NOODLES 24h', 'ARCADE', 'TACOS', 'MART', 'HOTEL BAY', 'NEON ROW', 'PIER BAR', 'SURF SHOP', 'KIRA FM', 'SUNSET MOTEL', 'OCEAN DR', 'DECO HOTEL', 'BAR — OPEN', 'PALM COURT'];
+/* Art-deco pastel row (v3.1, Ocean Drive direction): pink / teal / yellow /
+   mint / coral / lavender — saturated pastels, never dominant white. The
+   row facing the beach (road x=-120, buildings bx≈-96) is always deco. */
+const DECO_COLORS = [0xFF9CDA, 0x7FE3D0, 0xFFD166, 0xFF8A7A, 0xC9A8E8, 0x05D9E8, 0xFFB347];
+const BUILDING_COLORS = [0xFF9CDA, 0x7FE3D0, 0xFFD166, 0xFF8A7A, 0xC9A8E8, 0x05D9E8, 0xFFB347, 0xFF2A6D];
 function buildBuildings() {
   const neonColors = [C.magenta, C.cyan, C.sun, C.pink, C.teal];
   for (const x of ROAD_X) for (const z of ROAD_Z) {
     if (Math.abs(x) > 130 || Math.abs(z) > 130) continue;
     const bx = x + 24 + rnd() * 4, bz = z + 24 + rnd() * 4;
     if (bx < -135 || bx > 140 || bz < -140 || bz > 140) continue;
-    if (rnd() < 0.22) continue; // plaza gaps
-    const w = 14 + rnd() * 8, d = 14 + rnd() * 8, h = 10 + rnd() * 34;
-    const col = pick(BUILDING_COLORS);
+    if (rnd() < 0.22 && x !== -120) continue; // plaza gaps (never on Ocean Drive)
+    const isDeco = x === -120; // the beachfront hotel row: low-rise art deco, always present
+    const w = 14 + rnd() * 8, d = 14 + rnd() * 8, h = isDeco ? 8 + rnd() * 10 : 10 + rnd() * 34;
+    const col = isDeco ? pick(DECO_COLORS) : pick(BUILDING_COLORS);
     const b = box(w, h, d, toon(col), bx, h / 2, bz);
     b.castShadow = true;
     BUILDINGS.push({ x: bx, z: bz, hw: w / 2, hd: d / 2, h });
-    box(w + 1, 0.8, d + 1, toon(C.magenta), bx, h + 0.4, bz);
+    box(w + 1, 0.8, d + 1, toon(isDeco ? C.sun : C.magenta), bx, h + 0.4, bz);
+    if (isDeco) {
+      // deco parapet band + vertical neon edge strips, like the Ocean Drive hotels
+      box(w + 0.6, 0.9, d + 0.6, toon(pick(DECO_COLORS)), bx, 3.4, bz);
+      for (const ex of [-w / 2 + 0.4, w / 2 - 0.4]) {
+        const strip = new THREE.Mesh(new THREE.PlaneGeometry(0.5, h - 4),
+          new THREE.MeshBasicMaterial({ color: pick([C.cyan, C.magenta, C.sun]) }));
+        strip.position.set(bx + ex, h / 2 + 1, bz + d / 2 + 0.08);
+        world.add(strip);
+      }
+    }
     const winMat = new THREE.MeshBasicMaterial({ color: rnd() < 0.5 ? C.sun : C.cyan });
     const rows = Math.floor(h / 5), cols = Math.floor(w / 4);
     let placed = 0;
@@ -174,7 +202,7 @@ function buildBuildings() {
       win.position.set(bx - w / 2 + 2 + c * 4, 3 + r * 5, bz + d / 2 + 0.06);
       world.add(win); placed++;
     }
-    if (rnd() < 0.55) {
+    if (rnd() < (x === -120 ? 0.95 : 0.75)) {
       const signCol = pick(neonColors);
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(9, 2.4),
         new THREE.MeshBasicMaterial({ color: signCol }));
@@ -206,8 +234,10 @@ function palm(x, z) {
   g.position.set(x, 0, z); world.add(g); return g;
 }
 function buildProps() {
-  for (let z = -140; z <= 140; z += 22) { palm(-132, z + 4); palm(-108, z - 6); }
-  for (let z = -120; z <= 120; z += 30) palm(-160 + rnd() * 8, z);
+  /* Palms line Ocean Drive on both sides, dense (v3.1: every 16 m, was 22);
+     a second row stands on the sand so the beach reads from the road. */
+  for (let z = -140; z <= 140; z += 16) { palm(-132, z + 4); palm(-108, z - 6); }
+  for (let z = -120; z <= 120; z += 24) palm(-150 + rnd() * 6, z);
   for (let i = 0; i < 12; i++) palm(-60 + rnd() * 190, -140 + rnd() * 280);
   const lampMat = toon(C.asphalt);
   for (const x of ROAD_X) for (let z = -140; z <= 140; z += 40) {
@@ -310,16 +340,21 @@ function makeCar(color, isPolice, name, profileId) {
   scene.add(g);
   return g;
 }
-/* Slim realistic humanoid (NOT a Roblox box): real human proportions —
-   narrow shoulders (~0.58 m), long legs (~0.95 m), small proportional head
-   (r 0.17), total height ~1.85 m. Limbs are Groups pivoted at the
-   shoulder/hip so the swing rotates naturally, like a rigged
-   Three.js Soldier/Xbot walk cycle (arms counter-swing the legs,
-   swing amplitude eases in/out instead of snapping). */
-function limb(w, len, mat, px, py, pz, parent) {
+/* Slim procedural humanoid v3.1 (NOT a Roblox box) — used for the
+   background pedestrians and foot cops. (Mateo himself is the rigged
+   GLB now — see makeMateo below.) Narrow shoulders (~0.42 m), tapered
+   cylinder torso, slim two-segment cylinder limbs (thigh + shin with a
+   working knee, upper + forearm with a bent elbow), small proportional
+   head (r 0.145) with dark hair cap, total ~1.85 m. Animation follows
+   the openvice Player.cpp pattern (IDLE_STANCE / walk_player /
+   run_player / SPRINT_civi, walk speed 2.25 m/s, ~0.3 s crossfade
+   blend, bob + forward lean at a run), translated to JS: thigh swing
+   drives the stride, the shin counter-bends at the knee, arms
+   counter-swing the legs — see sim.js updateFoot/updatePeds. */
+function seg(rTop, rBot, len, mat, parent, px, py, pz) {
   const pivot = new THREE.Group();
   pivot.position.set(px, py, pz);
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, len, w), mat);
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, len, 8), mat);
   m.position.y = -len / 2; m.castShadow = true;
   pivot.add(m); parent.add(pivot);
   return pivot;
@@ -328,43 +363,120 @@ function makePerson(jacket, pants) {
   const g = new THREE.Group();
   const jacketMat = toon(jacket), pantsMat = toon(pants || C.indigo);
   const skinMat = toon(0xC98a5a);
-  // torso: slim, tapered (narrow shoulders)
-  const body = box(0.58, 0.62, 0.32, jacketMat, 0, 1.26, 0, g);
-  addOutline(body, C.asphalt, 1.05);
-  // white tee peeking under the jacket
-  box(0.2, 0.5, 0.03, toon(C.cream), 0, 1.22, 0.17, g);
-  // head: proportional, with hair cap
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10), skinMat);
-  head.position.y = 1.74; head.castShadow = true; g.add(head);
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.175, 12, 10, 0, Math.PI * 2, 0, 1.5), toon(C.asphalt));
-  hair.position.y = 1.755; g.add(hair);
-  // long legs, pivoted at the hip (y 0.95)
-  const legL = limb(0.17, 0.92, pantsMat, -0.11, 0.95, 0, g);
-  const legR = limb(0.17, 0.92, pantsMat, 0.11, 0.95, 0, g);
-  // slim arms, pivoted at the shoulder (y 1.52)
-  const armL = limb(0.13, 0.72, jacketMat, -0.36, 1.52, 0, g);
-  const armR = limb(0.13, 0.72, jacketMat, 0.36, 1.52, 0, g);
+  // torso: slim tapered cylinder, not a box — narrow shoulders
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.15, 0.58, 10), jacketMat);
+  torso.position.y = 1.22; torso.castShadow = true; g.add(torso);
+  // white tee peeking under the open jacket
+  const tee = new THREE.Mesh(new THREE.CylinderGeometry(0.145, 0.13, 0.42, 8), toon(C.cream));
+  tee.position.set(0, 1.2, 0.045); g.add(tee);
+  // bomber collar
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.185, 0.09, 10), toon(0x8A4A00));
+  collar.position.y = 1.52; g.add(collar);
+  // head: proportional, with dark hair cap (top/back only, face stays skin)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.145, 12, 10), skinMat);
+  head.position.y = 1.70; head.castShadow = true; g.add(head);
+  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 10, 0, Math.PI * 2, 0, 1.9), toon(0x1F1A16));
+  hair.position.y = 1.715; hair.scale.set(1, 0.9, 1); g.add(hair);
+  // long legs: thigh pivot at the hip (y 0.88), shin pivot at the knee
+  const legL = seg(0.075, 0.062, 0.45, pantsMat, g, -0.09, 0.88, 0);
+  const shinL = seg(0.062, 0.05, 0.42, pantsMat, legL, 0, -0.45, 0);
+  const legR = seg(0.075, 0.062, 0.45, pantsMat, g, 0.09, 0.88, 0);
+  const shinR = seg(0.062, 0.05, 0.42, pantsMat, legR, 0, -0.45, 0);
+  // slim arms: upper pivot at the shoulder (y 1.48, ±0.21 — narrow),
+  // forearm pivot at the elbow, slight permanent bend
+  const armL = seg(0.052, 0.045, 0.32, jacketMat, g, -0.21, 1.48, 0);
+  const foreL = seg(0.045, 0.038, 0.30, jacketMat, armL, 0, -0.32, 0);
+  const armR = seg(0.052, 0.045, 0.32, jacketMat, g, 0.21, 1.48, 0);
+  const foreR = seg(0.045, 0.038, 0.30, jacketMat, armR, 0, -0.32, 0);
   // hands
-  for (const a of [armL, armR]) {
-    const h = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), skinMat);
-    h.position.y = -0.74; a.add(h);
+  for (const a of [foreL, foreR]) {
+    const h = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), skinMat);
+    h.position.y = -0.32; a.add(h);
   }
-  g.userData = { legL, legR, armL, armR, torso: body, head, walkPhase: rnd() * 6,
-    swing: 0, bobY: 0 };
+  g.userData = { legL, legR, shinL, shinR, armL, armR, foreL, foreR,
+    torso, head, walkPhase: rnd() * 6, swing: 0, bobY: 0 };
   scene.add(g);
   return g;
 }
-/* Mateo Vega: orange bomber jacket, white tee, dark jeans, white sneakers. */
+/* Mateo Vega — RIGGED MIT GLB (v3.1, vendor/Soldier.glb, Three.js
+   examples, MIT — see vendor/THIRD-PARTY.md). Loaded via GLTFLoader +
+   AnimationMixer with 0.3 s crossfades Idle↔Walk↔Run, the openvice
+   Player.cpp pattern (IDLE_STANCE / walk_player / run_player /
+   SPRINT_civi, walk speed 2.25 m/s, blend ~0.3 s, bob + lean at a run).
+   The GLB is a single-material skinned mesh, so per-part colours come
+   from VERTEX COLOURS: each vertex is classified in the model's local
+   bind-pose space (Z-up, 0..183, face +Y) — orange bomber jacket,
+   white tee strip on the front chest, dark jeans, white sneakers,
+   skin hands + face, dark hair. (A repainted texture was tried first:
+   the UV atlas overlaps islands, so boot/tee colours bled onto the
+   thighs; vertex colours land exactly.) The visor mesh is hidden.
+   Slim proportions: wrapper scale (0.88, 1, 0.9). Loads async; the
+   street screenshot waits for window.__MATEO_GLB === true. */
+function mateoClassify(cx, cy, cz) {
+  if (Math.abs(cx) > 55) return [201 / 255, 138 / 255, 90 / 255]; // hands -> skin
+  if (cz < 10) return [244 / 255, 236 / 255, 223 / 255]; // boots -> white sneakers
+  if (cz < 88) return [35 / 255, 35 / 255, 58 / 255]; // legs -> dark jeans
+  if (cz >= 155) return cy > 4 ? [201 / 255, 138 / 255, 90 / 255] : [31 / 255, 26 / 255, 22 / 255]; // face / hair
+  if (Math.abs(cx) > 24) return [185 / 255, 62 / 255, 12 / 255]; // sleeves -> deep burnt orange (v3.1: the lighter orange washed to tan under the sunset sun)
+  if (cy > 0 && Math.abs(cx) < 8 && cz > 100 && cz < 142) return [244 / 255, 236 / 255, 223 / 255]; // white tee
+  return [185 / 255, 62 / 255, 12 / 255]; // bomber jacket
+}
+/* San Andreas Unity pattern (BaseMovementState): the STATE picks the clip,
+   the clip's authored speed moves the ped (Ped.cs:560-576, root motion).
+   `ts` is the clip playback rate — SPRINT runs the Run clip at 1.35x. */
+function mateoSetSpeed(sp, ts) {
+  const mt = playerMesh.userData.mateo;
+  if (!mt || !mt.ready) return;
+  const name = sp < 0.3 ? 'idle' : sp > 6 ? 'run' : 'walk';
+  const rate = ts || 1;
+  if (mt.current === name && Math.abs((mt.timeScale || 1) - rate) < 0.01) return;
+  const next = mt.actions[name];
+  if (!next) return;
+  if (mt.currentAction) mt.currentAction.fadeOut(0.3);
+  next.reset().setEffectiveTimeScale(rate).setEffectiveWeight(1).fadeIn(0.3).play();
+  mt.current = name; mt.currentAction = next; mt.timeScale = rate;
+}
+function mateoUpdate(dt) {
+  const mt = playerMesh.userData.mateo;
+  if (mt && mt.ready) mt.mixer.update(dt);
+}
 function makeMateo() {
-  const g = makePerson(C.orange, 0x23233A);
-  const shoeMat = toon(C.cream);
-  for (const leg of [g.userData.legL, g.userData.legR]) {
-    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.09, 0.32), shoeMat);
-    shoe.position.set(0, -0.94, 0.05); shoe.castShadow = true;
-    leg.add(shoe);
-  }
-  // bomber collar + sleeve cuffs
-  box(0.6, 0.1, 0.34, toon(0x8A4A00), 0, 1.56, 0, g);
+  const g = new THREE.Group();
+  const root = new THREE.Group(); // bob + run lean live here; facing lives on g
+  root.scale.set(0.88, 1, 0.9); // slim proportions (narrower, same height)
+  g.add(root);
+  const mt = { root, mixer: null, actions: {}, current: '', currentAction: null, ready: false };
+  g.userData = { mateo: mt, walkPhase: 0, swing: 0, torso: root, head: root,
+    legL: root, legR: root, armL: root, armR: root, shinL: root, shinR: root, foreL: root, foreR: root };
+  new THREE.GLTFLoader().load('vendor/Soldier.glb', (gltf) => {
+    const model = gltf.scene;
+    root.add(model);
+    model.traverse((o) => {
+      if (!o.isSkinnedMesh) return;
+      if (o.name.indexOf('visor') !== -1) { o.visible = false; return; } // no face shield
+      const posA = o.geometry.attributes.position;
+      const colors = new Float32Array(posA.count * 3);
+      for (let i = 0; i < posA.count; i++) {
+        const c = mateoClassify(posA.getX(i), posA.getY(i), posA.getZ(i));
+        colors[i * 3] = c[0]; colors[i * 3 + 1] = c[1]; colors[i * 3 + 2] = c[2];
+      }
+      o.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      o.material = o.material.clone();
+      o.material.map = null; o.material.vertexColors = true; o.material.color.setHex(0xffffff);
+    });
+    const mixer = new THREE.AnimationMixer(model);
+    const byName = (re) => gltf.animations.find((a) => re.test(a.name));
+    mt.mixer = mixer;
+    mt.actions = {
+      idle: byName(/idle/i) ? mixer.clipAction(byName(/idle/i)) : null,
+      walk: byName(/walk/i) ? mixer.clipAction(byName(/walk/i)) : null,
+      run: byName(/run/i) ? mixer.clipAction(byName(/run/i)) : null,
+    };
+    mt.ready = true;
+    window.__MATEO_GLB = true;
+    mateoSetSpeed(0);
+  }, undefined, () => { window.__MATEO_GLB = 'error'; });
+  scene.add(g);
   return g;
 }
 
@@ -372,7 +484,7 @@ function makeMateo() {
 buildWorld();
 const playerMesh = makeMateo(); // Mateo Vega — slim, orange bomber, white sneakers
 playerMesh.position.set(-118, 0, 20);
-const playerCar = makeCar(C.magenta, false, 'SCARLET ARROW', 'sports');
+const playerCar = makeCar(0xD1003F, false, 'SCARLET ARROW', 'sports'); // deep crimson-magenta (v3.1: C.magenta washed to pale pink under the bright sun)
 playerCar.position.set(-104, 0, -24); playerCar.rotation.y = Math.PI / 2;
 playerCar.userData.health = 100;
 const traffic = [];
@@ -422,8 +534,8 @@ const copPeds = [];
 for (let i = 0; i < 3; i++) {
   const cp = makePerson(0x2A3A6E, 0x1F2A4A);
   // police cap
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.07, 10), toon(0x1F2A4A));
-  cap.position.y = 1.88; cp.add(cap);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.06, 10), toon(0x1F2A4A));
+  cap.position.y = 1.84; cp.add(cap);
   const badge = box(0.1, 0.12, 0.03, toon(C.sun), -0.14, 1.42, 0.17, cp);
   badge.castShadow = false;
   cp.visible = false; cp.position.set(200, -50, 200);

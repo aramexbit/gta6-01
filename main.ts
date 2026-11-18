@@ -1,4 +1,6 @@
-// PIER HEAT — Sunset Bay: hand-in program for make.fun gta6-01.
+// PIER HEAT — Sunset Bay v3.1: hand-in program for make.fun gta6-01.
+// v3.1: Ocean Drive art-deco pass, slim two-segment Mateo, heli framing,
+// live police distances, closer chase cam, brighter sunset ground.
 // Copies game/ and screenshots/ from this repository to /output (or
 // MAKEFUN_OUTPUT_DIR outside the grader) and writes /output/dossier.json
 // with buildDossier from vendor/makefun-game.ts.

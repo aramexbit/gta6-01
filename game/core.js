@@ -46,6 +46,7 @@ const S = {
      within 40 m (decay), foughtT = seconds since the player last
      fought a cop (1★ cops only fight back after this). */
   footTimer: 0, carTimer: 0, calmT: 0, foughtT: 99, heliLockT: 0, heliLock2T: 0,
+  aimT: 0, // seconds left of the 0.33 s aim re-entry lock (PedManager.cs)
   policeStatus: 'PATROL', // PATROL | OBSERVING | PURSUIT | RAMMING | ARREST | HELI LOCK
   mission: 0,             // stage index 0..7
   ammo: 12, emp: 1, smoke: 3,
@@ -56,7 +57,7 @@ const S = {
   radioTrack: 0, muted: false,
   time: 0, frames: 0,
   drivenCar: null,
-  transition: null,       // {t, dur, fromX, fromZ, toX, toZ, car} walk-to-door
+  transition: null,       // {phase, side, t, dur, fromX, fromZ, toX, toZ, car} walk-to-door + GetIn
 };
 const RADIO = ['"RUNNING RED"', '"SUNSET FREEWAY"', '"NEON TIDE"', '"PIER LIGHTS"'];
 const MISSIONS = [

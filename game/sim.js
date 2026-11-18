@@ -48,8 +48,13 @@ function collideCars(a, b) {
   const fa = mb / (ma + mb), fb = ma / (ma + mb);
   a.position.x -= nx * depth * fa; a.position.z -= nz * depth * fa;
   b.position.x += nx * depth * fb; b.position.z += nz * depth * fb;
-  const vn = (ua.vx - ub.vx) * nx + (ua.vz - ub.vz) * nz;
+  let vn = (ua.vx - ub.vx) * nx + (ua.vz - ub.vz) * nz;
   if (vn > 0) {
+    /* v3.1: cap the impulse. A traffic car teleporting across the map
+       (lane wrap / recycle) gets a derived velocity of ~320 m / dt for
+       one frame; uncapped, that impulse flung the player car 280 m
+       into the map edge in the mission shot. */
+    vn = Math.min(vn, 60);
     const rest = 0.4;
     const imp = -(1 + rest) * vn / (1 / ma + 1 / mb);
     ua.vx += (imp / ma) * nx; ua.vz += (imp / ma) * nz;
@@ -121,26 +126,83 @@ function stepCar(car, input, dt) {
 
 const footVel = { x: 0, z: 0 };
 let footSpeed = 0;
+/* ---------- movement state machine (San Andreas Unity, translated) ----------
+   BaseMovementState.cs priority: Jump > Walk > Run > Sprint > Panic > Stand.
+   PedManager.cs: a state switch is locked 0.166 s after the last switch,
+   and re-entering the aim state is locked 0.33 s (minTimeToReturnToAimState).
+   Ped.cs:560-576: speed comes from the animation's root motion, not the
+   input — the state picks the clip, the clip's authored speed moves Mateo.
+   (Soldier.glb clips are in-place Mixamo clips with no root translation to
+   extract, so each state's speed is its authored value below — the
+   structure is the SA Unity one: input -> state -> clip -> speed.)
+   JumpState.cs: jump = JUMP_launch -> JUMP_glide -> JUMP_land, re-entry
+   0.4 s, no jump with a heavy weapon or while not grounded, no rotation
+   change in the air, glide speed 2. Mateo's pistol is a LIGHT weapon, so
+   sprinting and jumping with it are allowed; sprint cannot aim — shooting
+   drops Sprint back to Run. Crouch / Roll / Surrender / Panic / DriveBy
+   are reference only and are NOT implemented here. */
+const MV = { STAND: 0, WALK: 4.2, RUN: 8, SPRINT: 11.5 };
+const MV_SWITCH_LOCK = 0.166, MV_AIM_LOCK = 0.33, MV_JUMP_REENTRY = 0.4;
+const MV_JUMP_GLIDE = 2; // JumpState.cs glideVelocity
+
 function updateFoot(dt, keys) {
-  const running = keys.ShiftLeft || keys.ShiftRight;
-  const maxSp = running ? 8 : 4.2;
+  const u = playerMesh.userData;
+  u.mvState = u.mvState || 'STAND';
+  u.mvStateT = (u.mvStateT || 0) + dt; // time since the last state switch
+  u.jumpLockT = Math.max(0, (u.jumpLockT || 0) - dt);
+  if ((S.aimT || 0) > 0) S.aimT -= dt; // aim re-entry lock (0.33 s)
+  const shifting = !!(keys.ShiftLeft || keys.ShiftRight);
   let mx = 0, mz = 0;
   if (keys.KeyW || keys.ArrowUp) mz += 1;
   if (keys.KeyS || keys.ArrowDown) mz -= 1;
   if (keys.KeyA || keys.ArrowLeft) mx -= 1;
   if (keys.KeyD || keys.ArrowRight) mx += 1;
+  /* Street shot: Mateo walks down Ocean Drive on his own so the shot
+     catches him mid-stride, slim and animated — not standing still. */
+  if (SHOT === 'street') { mx = 0; mz = 1; }
   // camera-relative: forward/right from the orbit yaw
   const fx = -Math.sin(S.yaw), fz = -Math.cos(S.yaw);
   const rx = Math.cos(S.yaw), rz = -Math.sin(S.yaw);
   let dx = fx * mz + rx * mx, dz = fz * mz + rz * mx;
   const len = Math.hypot(dx, dz);
   if (len > 0) { dx /= len; dz /= len; }
-  const target = len > 0 ? maxSp : 0;
+  const moving = len > 0;
+
+  /* --- jump (Space on foot; Space is the handbrake in a car) --- */
+  const spaceDown = !!keys.Space;
+  if (spaceDown && !u.spacePrev && !u.jump && u.jumpLockT <= 0) {
+    // CanJump(): light weapon (pistol) + grounded (always, on foot here)
+    u.jump = { t: 0, dirX: moving ? dx : -Math.sin(playerMesh.rotation.y), dirZ: moving ? dz : -Math.cos(playerMesh.rotation.y) };
+  }
+  u.spacePrev = spaceDown;
+
+  /* --- pick the target state from input (priority Jump > Walk > Run > Sprint) --- */
+  let want = 'STAND';
+  if (u.jump) want = 'JUMP';
+  else if (moving) {
+    if (shifting) {
+      u.runHoldT = (u.runHoldT || 0) + dt; // hold Shift to build into a sprint
+      want = (u.runHoldT > 1.0 && (S.aimT || 0) <= 0) ? 'SPRINT' : 'RUN'; // sprint cannot aim
+    } else { u.runHoldT = 0; want = 'WALK'; }
+  } else u.runHoldT = 0;
+  /* state switch locked 0.166 s (PedManager.cs) — except INTO Jump, which
+     must answer the button press at once (JumpState re-entry is its own lock) */
+  if (want !== u.mvState && (want === 'JUMP' || u.mvStateT >= MV_SWITCH_LOCK)) {
+    u.mvState = want; u.mvStateT = 0;
+  }
+  const state = u.mvState;
+
+  /* --- root-motion speed: the state's clip speed moves Mateo --- */
+  const target = state === 'JUMP' ? MV_JUMP_GLIDE : (moving ? (MV[state] || 0) : 0);
   const rate = target > footSpeed ? 20 : 28; // accel / decel (m/s^2)
   footSpeed = Math.abs(target - footSpeed) <= rate * dt ? target : footSpeed + Math.sign(target - footSpeed) * rate * dt;
-  playerMesh.position.x += dx * footSpeed * dt;
-  playerMesh.position.z += dz * footSpeed * dt;
-  footVel.x = dx * footSpeed; footVel.z = dz * footSpeed;
+  /* --- move: in the air the glide carries Mateo along the launch
+     direction at 2 m/s and the heading is frozen (JumpState.cs: no
+     rotation change in the air) --- */
+  const jx = u.jump ? u.jump.dirX : dx, jz = u.jump ? u.jump.dirZ : dz;
+  playerMesh.position.x += jx * footSpeed * dt;
+  playerMesh.position.z += jz * footSpeed * dt;
+  footVel.x = jx * footSpeed; footVel.z = jz * footSpeed;
   playerMesh.position.x = clamp(playerMesh.position.x, -235, 155);
   playerMesh.position.z = clamp(playerMesh.position.z, -155, 155);
   const res = resolveBuildings(playerMesh.position.x, playerMesh.position.z, 0.4);
@@ -156,26 +218,53 @@ function updateFoot(dt, keys) {
       playerMesh.position.z += (playerMesh.position.z - c.position.z) / d * push;
     }
   }
-  if (len > 0) {
+  if (len > 0 && !u.jump) {
     const targetYaw = Math.atan2(-dx, -dz);
     playerMesh.rotation.y = angleLerp(playerMesh.rotation.y, targetYaw, clamp(12 * dt, 0, 1));
   }
   S.speedKmh = footSpeed * 3.6;
-  const u = playerMesh.userData;
-  const moving = footSpeed > 0.3;
+
+  /* --- jump phases: launch (0.18 s) -> glide (0.37 s) -> land (0.15 s) ---
+     The GLB has no JUMP_launch/glide/land clips, so the three phases are
+     driven on the model root (rise / tucked glide / crouch recover) while
+     the mixer holds the Idle clip — the timing and the rules are the
+     JumpState.cs ones. */
+  let jumpY = 0, jumpLean = 0;
+  if (u.jump) {
+    const j = u.jump; j.t += dt;
+    const LAUNCH = 0.18, GLIDE = 0.37, LAND = 0.15, TOTAL = LAUNCH + GLIDE + LAND;
+    if (j.t < LAUNCH) { // JUMP_launch: crouch, then rise
+      const k = j.t / LAUNCH;
+      jumpY = k * k * 0.35; jumpLean = -0.08 * k;
+    } else if (j.t < LAUNCH + GLIDE) { // JUMP_glide: tucked, peak 0.9 m
+      const k = (j.t - LAUNCH) / GLIDE;
+      jumpY = 0.35 + Math.sin(k * Math.PI) * 0.55; jumpLean = -0.16;
+    } else if (j.t < TOTAL) { // JUMP_land: settle, no upward movement
+      const k = (j.t - LAUNCH - GLIDE) / LAND;
+      jumpY = Math.max(0, 0.35 * (1 - k)); jumpLean = -0.08 * (1 - k);
+    } else { // landed: back to Stand/Walk, 0.4 s before the next jump
+      u.jump = null; u.jumpLockT = MV_JUMP_REENTRY;
+      if (u.mvState === 'JUMP') { u.mvState = moving ? 'WALK' : 'STAND'; u.mvStateT = 0; }
+    }
+  }
+
+  const moving2 = footSpeed > 0.3;
   // eased swing: amplitude ramps toward walk/run target instead of snapping
-  // (crossfade-style blend, ~0.3 s) — arms counter-swing the legs.
-  const targetSwing = moving ? (footSpeed > 6 ? 0.62 : 0.48) : 0;
+  // (crossfade-style blend, ~0.3 s) — drives the walk-phase bob timing.
+  const targetSwing = moving2 ? (footSpeed > 6 ? 0.62 : 0.48) : 0;
   u.swing = damp(u.swing, targetSwing, 6, dt);
-  u.walkPhase += dt * (moving ? (footSpeed > 6 ? 12 : 9) : 0);
-  const sw = Math.sin(u.walkPhase) * u.swing;
-  u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
-  u.armL.rotation.x = -sw * 0.75; u.armR.rotation.x = sw * 0.75;
-  // idle breathing + run bob + slight forward lean at a run
-  const bob = moving ? Math.abs(Math.sin(u.walkPhase)) * 0.05 : Math.sin(S.time * 1.6) * 0.012;
-  playerMesh.position.y = bob;
-  u.torso.rotation.x = damp(u.torso.rotation.x, footSpeed > 6 ? 0.12 : 0, 6, dt);
-  if (!moving) { u.armL.rotation.x = Math.sin(S.time * 1.6) * 0.03; u.armR.rotation.x = -Math.sin(S.time * 1.6) * 0.03; }
+  u.walkPhase += dt * (moving2 ? (footSpeed > 6 ? 12 : 9) : 0);
+  /* v3.1: rigged GLB Mateo — AnimationMixer crossfades Idle/Walk/Run
+     (0.3 s), the openvice IDLE_STANCE / walk_player / run_player /
+     SPRINT_civi pattern. Bob + forward lean live on the model wrapper. */
+  mateoSetSpeed(u.jump ? 0 : footSpeed, state === 'SPRINT' ? 1.35 : 1);
+  const bob = u.jump ? 0 : (moving2 ? Math.abs(Math.sin(u.walkPhase)) * 0.05 : Math.sin(S.time * 1.6) * 0.012);
+  const mt = u.mateo;
+  if (mt && mt.root) {
+    mt.root.position.y = u.jump ? jumpY : bob;
+    const lean = u.jump ? jumpLean : (footSpeed > 6 ? -0.10 : 0);
+    mt.root.rotation.x = damp(mt.root.rotation.x || 0, lean, 6, dt);
+  }
 }
 
 function updatePlayer(dt, keys) {
@@ -211,7 +300,6 @@ function updateTraffic(dt) {
   for (const car of traffic) {
     if (S.drivenCar === car) continue;
     const u = car.userData;
-    const oldX = car.position.x, oldZ = car.position.z;
     // --- leader: nearest car ahead in the same lane (IDM) ---
     let gap = Infinity, leaderSpeed = 0;
     for (const o of allCars) {
@@ -270,8 +358,13 @@ function updateTraffic(dt) {
     if (u.along < -CITY - 10) u.along = CITY + 10;
     if (u.vertical) { car.position.set(u.road + (u.dir > 0 ? 3 : -3), 0, u.along); car.rotation.y = u.dir > 0 ? Math.PI : 0; }
     else { car.position.set(u.along, 0, u.road + (u.dir > 0 ? 3 : -3)); car.rotation.y = u.dir > 0 ? -Math.PI / 2 : Math.PI / 2; }
-    u.vx = (car.position.x - oldX) / Math.max(dt, 1e-4);
-    u.vz = (car.position.z - oldZ) / Math.max(dt, 1e-4);
+    /* v3.1: velocity IS the lane velocity — never the position delta.
+       Deriving it from deltas exploded whenever a car was pushed,
+       wrapped (~320 m / dt) or turned, and the feedback loop kept
+       collided cars grinding with vn ~55 every frame (mission shot:
+       the player car was flung 280 m into the map edge on frame 1). */
+    if (u.vertical) { u.vx = 0; u.vz = u.dir * u.speed; }
+    else { u.vx = u.dir * u.speed; u.vz = 0; }
     for (const w of u.wheels) w.rotation.x += u.speed * dt * 1.2;
   }
   // --- car-vs-car collisions (player car, traffic, police) ---
@@ -363,7 +456,11 @@ function updatePeds(dt) {
     u.swing = damp(u.swing, targetSwing, 6, dt);
     const sw = Math.sin(u.walkPhase) * u.swing;
     u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
+    u.shinL.rotation.x = -Math.max(0, -sw) * 1.1;
+    u.shinR.rotation.x = -Math.max(0, sw) * 1.1;
     u.armL.rotation.x = -sw * 0.6; u.armR.rotation.x = sw * 0.6;
+    u.foreL.rotation.x = -0.3 - Math.abs(sw) * 0.3;
+    u.foreR.rotation.x = -0.3 - Math.abs(sw) * 0.3;
     // hit by a car: shoved (<9 m/s) or gibbed (>=9 m/s)
     const cars = S.mode === 'car' ? [(S.drivenCar || playerCar)] : [...traffic, ...police.filter((pc) => pc.visible)];
     for (const c of cars) {
@@ -466,8 +563,8 @@ function stepPatrolCar(pc, dt) {
   if (u.along < -CITY - 10) u.along = CITY + 10;
   if (u.vertical) { pc.position.set(u.road + (u.dir > 0 ? 3 : -3), 0, u.along); pc.rotation.y = u.dir > 0 ? Math.PI : 0; }
   else { pc.position.set(u.along, 0, u.road + (u.dir > 0 ? 3 : -3)); pc.rotation.y = u.dir > 0 ? -Math.PI / 2 : Math.PI / 2; }
-  u.vx = (pc.position.x - oldX) / Math.max(dt, 1e-4);
-  u.vz = (pc.position.z - oldZ) / Math.max(dt, 1e-4);
+  if (u.vertical) { u.vx = 0; u.vz = u.dir * u.speed; } // v3.1: lane velocity, never delta (see updateTraffic)
+  else { u.vx = u.dir * u.speed; u.vz = 0; }
   for (const w of u.wheels) w.rotation.x += u.speed * dt * 1.2;
   u.status = 'PATROL';
 }
@@ -499,11 +596,20 @@ function updateFootCops(dt, pp) {
       u.walkPhase += dt * 7;
       const sw = Math.sin(u.walkPhase) * u.swing;
       u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
+      u.shinL.rotation.x = -Math.max(0, -sw) * 1.1;
+      u.shinR.rotation.x = -Math.max(0, sw) * 1.1;
       u.armL.rotation.x = -sw * 0.6; u.armR.rotation.x = sw * 0.6;
+      u.foreL.rotation.x = -0.3 - Math.abs(sw) * 0.3;
+      u.foreR.rotation.x = -0.3 - Math.abs(sw) * 0.3;
       continue;
     }
     // --- wanted >= 1: close in on the player ---
-    const runSpeed = want === 1 ? 3.6 : 4.6;
+    /* v3.1: 1-star foot cops run 4.6 m/s (was 3.6 — slower than Mateo's
+       4.2 walk, so a walking player could NEVER be arrested: the cop met
+       him head-on, then fell behind at 0.6 m/s and closeT kept resetting.
+       4.6 still loses to Mateo's run (8) and sprint (11.5), so escape by
+       running is always possible — the arrest rule just works now. */
+    const runSpeed = 4.6;
     const dirX = dx / gap, dirZ = dz / gap;
     let sp = runSpeed;
     if (u.aimT > 0) { u.aimT -= dt; sp = 0; u.status = 'AIMING'; }
@@ -518,7 +624,11 @@ function updateFootCops(dt, pp) {
     u.walkPhase += dt * (sp > 0.3 ? 9 : 0);
     const sw = Math.sin(u.walkPhase) * u.swing;
     u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
+    u.shinL.rotation.x = -Math.max(0, -sw) * 1.1;
+    u.shinR.rotation.x = -Math.max(0, sw) * 1.1;
     u.armL.rotation.x = -sw * 0.6; u.armR.rotation.x = sw * 0.6;
+    u.foreL.rotation.x = -0.3 - Math.abs(sw) * 0.3;
+    u.foreR.rotation.x = -0.3 - Math.abs(sw) * 0.3;
     // 1 star: arrest after 2.2 s within 1.5 m (player on foot only)
     if (want === 1 && S.mode === 'foot') {
       if (gap < 1.5) { u.closeT += dt; if (u.closeT > 2.2) { busted(); return; } }
@@ -551,10 +661,16 @@ function updateFootCops(dt, pp) {
 }
 function updateHeli(h, lockKey, dt, pp, want) {
   h.visible = true;
-  h.userData.angle += dt * 0.28;
+  /* In a staged shot the heli holds its framed position (v3.1: the orbit
+     drifted it out of frame / cut off at the top edge between staging
+     and the screenshot). In live play it keeps orbiting. */
+  if (!SHOT) h.userData.angle += dt * 0.28;
   const a = h.userData.angle;
   const r = h.userData.orbitR, ht = h.userData.height;
-  h.position.set(pp.x + Math.cos(a) * r, ht + Math.sin(S.time * 0.7) * 2, pp.z + Math.sin(a) * r);
+  /* In staged shots the heli also holds a fixed height (v3.1: the ±2 m
+     bob pushed the rotor out of the top of the frame). */
+  const bobH = SHOT ? 0 : Math.sin(S.time * 0.7) * 2;
+  h.position.set(pp.x + Math.cos(a) * r, ht + bobH, pp.z + Math.sin(a) * r);
   h.lookAt(pp.x, 0, pp.z);
   h.userData.rotor.rotation.y += dt * 22;
   h.userData.spot.target.position.set(pp.x - h.position.x, -ht, pp.z - h.position.z);
@@ -619,7 +735,14 @@ function updatePolice(dt) {
     const u = pc.userData;
     if (!pc.visible) continue;
     const pursuing = want >= 2;
-    if (!pursuing) { stepPatrolCar(pc, dt); continue; }
+    if (!pursuing) {
+      stepPatrolCar(pc, dt);
+      /* v3.1 panel bug: patrol cars never wrote userData.dist, so the
+         Police Response panel showed "UNIT P-03 0m". Distance is now
+         computed for real every frame (and updateHUD recomputes live). */
+      u.dist = dist2d(pc.position, pp);
+      continue;
+    }
     idx++;
     let dx = pp.x - pc.position.x, dz = pp.z - pc.position.z;
     let gap = Math.hypot(dx, dz) || 1e-3;
@@ -632,8 +755,19 @@ function updatePolice(dt) {
     const lead = Math.min(1.2, gap / Math.max(1e-3, targetSpeed + pSpeed));
     let dirX = (pp.x + pvx * lead) - pc.position.x;
     let dirZ = (pp.z + pvz * lead) - pc.position.z;
+    /* De-escalation (user, 18 Nov): ram ONLY at wanted 3+, ONLY the lead
+       unit, and ONLY in short bursts — 2 s of ramming, then a 4 s cooldown
+       back to PURSUIT. At 2 stars the units chase without ramming; at 1
+       star they only observe / arrest on foot. The panel therefore shows
+       PURSUIT most of the time, RAMMING only while a burst is actually on. */
+    u.ramCd = Math.max(0, (u.ramCd || 0) - dt);
+    if ((u.ramT || 0) > 0) { // a ram burst already in progress: keep it up
+      u.ramT -= dt;
+      u.status = 'RAMMING'; targetSpeed = Math.min(16 + want * 3, pSpeed + 4);
+      if (u.ramT <= 0) u.ramCd = 4;
+    }
     // roadblock: the 2nd unit cuts ahead of a fast-moving player car
-    if (idx === 2 && S.mode === 'car' && Math.abs(S.carSpeed) > 8 && gap > 30) {
+    else if (idx === 2 && S.mode === 'car' && Math.abs(S.carSpeed) > 8 && gap > 30) {
       u.status = 'ROADBLOCK';
       const aheadX = pp.x - Math.sin(S.carYaw) * 26, aheadZ = pp.z - Math.cos(S.carYaw) * 26;
       dirX = aheadX - pc.position.x; dirZ = aheadZ - pc.position.z;
@@ -642,9 +776,9 @@ function updatePolice(dt) {
         targetSpeed = 0;
         pc.rotation.y = S.carYaw + Math.PI / 2;
       }
-    } else if (gap < 12 && idx === 1) {
-      // only the lead unit rams, and only at 2+ stars — never at 1 star
-      u.status = 'RAMMING'; targetSpeed = Math.min(16 + want * 3, pSpeed + 4);
+    } else if (gap < 8 && idx === 1 && want >= 3 && u.ramCd <= 0) {
+      // start a ram burst: lead unit only, 3+ stars, close range
+      u.status = 'RAMMING'; u.ramT = 2.0; targetSpeed = Math.min(16 + want * 3, pSpeed + 4);
     } else if (gap < 45) u.status = 'PURSUIT';
     else u.status = 'EN ROUTE';
     if (u.status === 'RAMMING') worst = 'RAMMING';
@@ -675,7 +809,7 @@ function updatePolice(dt) {
     }
     for (const w of u.wheels) w.rotation.x += u.speed * dt * 1.3;
     u.dist = gap;
-    // ram: shove the player's car + damage on contact (2+ stars only)
+    // ram: shove the player's car + damage on contact (3+ stars, lead unit, burst only)
     if (u.status === 'RAMMING' && S.mode === 'car' && gap < 3.6) {
       car.position.x += (car.position.x - pc.position.x) * 0.02;
       car.position.z += (car.position.z - pc.position.z) * 0.02;
@@ -744,13 +878,14 @@ function updateCamera(dt, keys) {
     const ang = S.carYaw + camYawOffset;
     const fx = -Math.sin(ang), fz = -Math.cos(ang);
     const rx = Math.cos(ang), rz = -Math.sin(ang);
-    // pull in slightly as speed rises, but never so close the car fills the frame
-    const dist = Math.max(5.5, 7.5 - speed * 0.05);
+    // pull in as speed rises; v3.1 chase cam sits closer (was 7.5 m) so
+    // the player car is LARGE in the centre of the frame, like the mockup
+    const dist = Math.max(5.0, 6.2 - speed * 0.04);
     const pivot = V3(car.position.x, 1.4, car.position.z);
     const eyeDir = V3(Math.sin(ang), 0, Math.cos(ang)); // behind the car
-    const clear = cameraClearDist(car.position.x, 3.4, car.position.z, eyeDir.x, 0, eyeDir.z, dist);
+    const clear = cameraClearDist(car.position.x, 2.9, car.position.z, eyeDir.x, 0, eyeDir.z, dist);
     const nudged = roadCenterNudge(car.position.x + Math.sin(ang) * clear, car.position.z + Math.cos(ang) * clear, car);
-    const want = V3(nudged.x, 3.4, nudged.z);
+    const want = V3(nudged.x, 2.9, nudged.z);
     camera.position.x = damp(camera.position.x, want.x, 4, dt);
     camera.position.y = damp(camera.position.y, want.y, 4, dt);
     camera.position.z = damp(camera.position.z, want.z, 4, dt);
@@ -759,15 +894,18 @@ function updateCamera(dt, keys) {
     const vl = car.userData.vx * rx + car.userData.vz * rz;
     const leadF = vf / 4;
     const leadL = clamp((vl / 4) * 0.7, -2, 2);
+    /* v3.1: in chase/mission shots the camera looks a touch higher so the
+       helicopter fits fully in frame (body + tail + rotor). */
+    const lookY = SHOT === 'chase' ? 2.6 : SHOT === 'mission' ? 2.6 : 1.4;
     const look = V3(
       car.position.x + fx * leadF + rx * leadL,
-      1.4,
+      lookY,
       car.position.z + fz * leadF + rz * leadL);
     camTarget.x = damp(camTarget.x, look.x, 4, dt);
     camTarget.y = damp(camTarget.y, look.y, 4, dt);
     camTarget.z = damp(camTarget.z, look.z, 4, dt);
     camera.lookAt(camTarget);
-    camera.fov = damp(camera.fov, clamp(58 + speed * 0.5, 58, 72), 3, dt);
+    camera.fov = damp(camera.fov, clamp(56 + speed * 0.35, 56, 66), 3, dt);
     camera.updateProjectionMatrix();
   } else {
     // third-person orbit: mouse yaw/pitch around the avatar
@@ -856,13 +994,18 @@ function updateHUD() {
   statusEl.textContent = '▸ ' + statusText;
   statusEl.style.color = S.wanted === 0 ? '#01CDFE' : S.wanted === 1 ? '#FFB347' : '#FF2A6D';
   let plist = '';
+  /* v3.1: distances are computed LIVE from real positions every frame.
+     A unit with no valid position yet shows "--", never "0m". */
+  const pp = playerPos();
+  const distStr = (pos) => {
+    const d = Math.round(dist2d(pos, pp));
+    return (isFinite(d) && d >= 0 && d < 900) ? d + 'm' : '--';
+  };
   for (const c of foot) {
-    const d = Math.round(c.userData.dist || 0);
-    plist += '<li><span>👮 COP · ' + d + 'm</span><span class="st">' + c.userData.status + '</span><span class="dot">●</span></li>';
+    plist += '<li><span>👮 COP · ' + distStr(c.position) + '</span><span class="st">' + c.userData.status + '</span><span class="dot">●</span></li>';
   }
   for (const p of act.slice(0, 4)) {
-    const d = Math.round(p.userData.dist || 0);
-    plist += '<li><span>🚔 ' + p.userData.name + ' · ' + d + 'm</span><span class="st">' + p.userData.status + '</span><span class="dot">●</span></li>';
+    plist += '<li><span>🚔 ' + p.userData.name + ' · ' + distStr(p.position) + '</span><span class="st">' + p.userData.status + '</span><span class="dot">●</span></li>';
   }
   if (heli.visible) plist += '<li><span>🚁 HELI H-1 · OVERHEAD</span><span class="st">' + (S.heliLockT > 3 ? 'LOCKED — FIRING' : 'SPOTLIGHT') + '</span><span class="dot">●</span></li>';
   if (heli2.visible) plist += '<li><span>🚁 HELI H-2 · OVERHEAD</span><span class="st">' + (S.heliLock2T > 3 ? 'LOCKED — FIRING' : 'SPOTLIGHT') + '</span><span class="dot">●</span></li>';

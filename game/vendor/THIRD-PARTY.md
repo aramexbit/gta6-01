@@ -9,31 +9,26 @@
 - `RGBELoader.js` — Three.js r147 RGBELoader (UMD build), MIT License.
   Same source as GLTFLoader above. Loads the sunset HDRI for the
   environment map (see `textures/bambanani_sunset_1k.hdr`).
-- `mateo.glb` — Mateo Vega, built 18 Nov 2026 with MPFB2
-  (https://github.com/makehumancommunity/mpfb2, GPL-3.0 code) from the
-  MakeHuman system assets pack (CC0 1.0 Universal):
-  skin `young_caucasian_male`, eyes `low-poly`, eyebrows `eyebrow001`,
-  eyelashes `eyelashes01`, hair `short01`, shoes `shoes04`. The
-  bomber jacket / white tee / dark jeans are procedural shells built
-  in Blender from the body mesh (no third-party clothing). The
-  idle/walk/run clips are the Mixamo "X Bot" clips (free for use
-  under Adobe Mixamo's terms, as distributed with the three.js
-  examples); the aim/fire clips were authored for this game. The
-  MPFB2 addon code is GPL-3.0 but is NOT shipped — only its CC0
-  output (the generated human + CC0 assets) is in this repo.
-  See `game/MATEO-MODEL.md` for the full build recipe. v3.3.1 (18 Nov
-  2026): the idle/walk/run clips were WORLD-SPACE DELTA RETARGETED
-  from the same Mixamo Xbot clips onto the MPFB rig (same clips, no
-  new asset — the verbatim bone-name paste deformed the mesh; see
-  `MATEO-MODEL.md` v3.3.1). The shoes map is dropped at runtime in
-  `world.js` so the off-white base colour renders as white sneakers.
-  The sky clouds are a procedural canvas texture (no asset).
-  v3.3.1 GLB surgery (same file, no new asset): jeans crotch-web
-  triangles degenerated, jacket centre-front pushed out 32 mm radial,
-  jacket back pushed out 32 mm radial, body nipple tips flattened,
-  body neck/face Laplacian-smoothed (gore lines), jeans base colour
-  corrected to the documented #23233A (it had shipped near-black
-  #04040B) — see `MATEO-MODEL.md` "v3.3.1 — GLB surgery".
+- `mateo.glb` — Mateo Vega, v3.4 (18 Nov 2026): Quaternius
+  "Animated Human", CC0 1.0 (public domain).
+  https://poly.pizza/m/c3Ibh9I3udk
+  One skinned mesh, 4,749 verts; the 8 procedural materials (skin,
+  hair, eyes, amber jacket, white tee, dark jeans, white sneakers,
+  dark soles) were split from the asset's single grey material in
+  Blender — no new geometry except dark sole boxes joined to the
+  mesh. The idle/walk/run clips are the asset's own clips (in-place);
+  the aim/fire clips are `Pistol_Aim_Neutral` / `Pistol_Shoot` from
+  the Universal Animation Library, CC0 1.0
+  (https://github.com/J-Ponzo/gltf-universal-animation-library),
+  retargeted at the glTF level. See `game/MATEO-MODEL.md` for the
+  full build recipe. The v3.3 MPFB2 human (MakeHuman system assets,
+  CC0) was retired in v3.4 — its mesh was defective (fused arms,
+  cube hands, googly eyes) and is no longer shipped.
+  NOTE: the Quaternius "Animated Base Character" was evaluated and
+  REJECTED for this repo — under the Quaternius Asset License QAL
+  v1.0 its raw GLB may not be redistributed as a standalone asset,
+  so it must never be committed here. Only CC0 Quaternius assets
+  (Animated Human, P226, Palm Tree, rock) are shipped.
 - `pistol.glb` — Quaternius "P226" from the Ultimate Guns Pack, CC0 1.0.
   https://poly.pizza/bundle/Ultimate-Guns-Pack-cpgUfI4t2F
   968 tris. Parented to Mateo's RightHand bone (see `world.js`
@@ -59,5 +54,6 @@
   `trash_A`, `dumpster`, `watertower` (+ `citybits_texture.png`
   atlas they share). Street furniture in `game/world.js` `kaykitPlace`.
 
-No Rockstar assets are used anywhere. `Xbot.glb` (v3.2) is no longer
-shipped — Mateo is the MPFB2 human above.
+No Rockstar assets are used anywhere. `Xbot.glb` (v3.2) and the MPFB2
+human (v3.3) are no longer shipped — Mateo is the CC0 Animated Human
+above.

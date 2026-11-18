@@ -1017,21 +1017,26 @@ function makePerson(jacket, pants) {
   scene.add(g);
   return g;
 }
-/* Mateo Vega — REALISTIC MPFB2 CIVILIAN (v3.3, vendor/mateo.glb).
-   Replaces the v3.2 Xbot mannequin + vertex-paint jacket: a MakeHuman
-   (MPFB2, GPL-3.0 code, CC0 system assets) male, muscle 0.6, weight
-   0.4, ~1.80 m, textured skin, with REAL clothing geometry — a
-   burnt-orange bomber jacket shell, white tee shell, dark jeans shell
-   and white sneakers, all separate skinned meshes, so the jacket
-   reads from the BACK as material, not paint. Short dark crop hair +
-   brown eyes are MPFB assets; the thin beard is a procedural mesh on
-   the Head bone (MPFB ships no facial hair). Mixamo rig
-   (mixamorig:*), so the Xbot idle/walk/run clips transfer verbatim,
-   plus authored aim/fire clips. All clips crossfade 0.3 s (the
-   openvice Player.cpp pattern: IDLE_STANCE / walk_player /
-   run_player / SPRINT_civi, walk speed 2.25 m/s, bob + lean at a
-   run). See game/MATEO-MODEL.md. Loads async; the street screenshot
-   waits for window.__MATEO_GLB. */
+/* Mateo Vega — QUATERNIUS ANIMATED HUMAN (v3.4, vendor/mateo.glb).
+   Replaces the v3.3 MPFB2 model, whose MESH was defective (upper arms
+   fused to the torso, cube-segment pale hands, googly eyes) — pose
+   fixes could not repair it, so the model was replaced, not patched.
+   The new model is the Quaternius "Animated Human" (Poly Pizza,
+   CC0 / public domain): one skinned mesh, 4,749 verts, Mixamo-style
+   rig, one grey material split in Blender into 8 procedural
+   materials (skin, dark hair, dark eyes, amber jacket #E8960F, white
+   tee V, dark jeans #23233A, white sneakers, dark soles baked in as
+   boxes joined to the mesh). Clips: the Human's own Idle/Walk/Run
+   (in-place, Hips location stripped) plus Pistol_Aim_Neutral and
+   Pistol_Shoot from the Universal Animation Library (CC0),
+   retargeted at the glTF level in world space, conjugated by
+   R_y(-90 deg) (mode A) so the aim points forward; the Human's own
+   clips face -Y in Blender space, so their Hips rotation keys are
+   premultiplied by R_y(+90 deg) so every clip faces +X like the bind
+   pose. All clips crossfade 0.3 s. Locomotion stays walk 4.2 / run 8 /
+   sprint 11.5 m/s. See game/MATEO-MODEL.md. Loads async; the street
+   screenshot waits for window.__MATEO_GLB. */
+const MATEO_SCALE = 1.80 / 5.321; // GLB is 5.321 units tall -> 1.80 m in-game
 function mateoPlayClip(name, rate) {
   const mt = playerMesh.userData.mateo;
   if (!mt || !mt.ready) return;
@@ -1068,252 +1073,80 @@ function mateoUpdate(dt) {
   const mt = playerMesh.userData.mateo;
   if (mt && mt.ready) {
     mt.mixer.update(dt);
-    /* v3.3.3 — HAND FIX, locomotion only (idle/walk/run). Aim/fire keep
-       the authored grip. See mateoFixHands below. */
-    if (mt.current === 'idle' || mt.current === 'walk' || mt.current === 'run') mateoFixHands();
-    /* v3.3.3 — the pistol is parented to the wrist, so while walking
-       it reads as a floating grey plank, not a gripped weapon. Hide
-       it during locomotion; it shows for aim/fire, when it must read. */
+    /* v3.4 — the pistol is parented to the RightHand bone, so while
+       walking it reads as a floating grey plank, not a gripped weapon.
+       Hide it during locomotion; it shows for aim/fire, when it must
+       read. (No hand fix is needed on the new model: its hands are
+       single-colour tapered shapes with palms toward the thighs.) */
     if (mt.pistol) mt.pistol.visible = (mt.current === 'aim' || mt.current === 'fire');
   }
 }
-/* v3.3.3 — HAND FIX (18 Nov 2026, measured in the browser, round-4
-   diagnosis). Baseline idle: palms face UP like trays (palm normal
-   88 deg from the thigh, 29 deg from straight up), fingers point
-   sideways, forearms bare skin from elbow to wrist. Causes, all
-   measured, not guessed:
-   (a) The MPFB hand's bind pose has the palm facing sideways (+X in
-       hand space), 90 deg off the Mixamo/Xbot convention, and the
-       retargeted clips barely rotate the wrist (idle: Hand 9-14 deg,
-       ForeArm 8-13 deg) — so the bind orientation survives into the
-       pose. Fix: pronate each ForeArm bone by a FIXED local-Y rotation
-       (mirrored: Left +90 deg, Right -90 deg), post-multiplied after
-       every mixer update — exactly the correction verified in the
-       browser probe (mateo-hands-B-foreY90.jpg): fingers point down,
-       palms face the thighs. Rotating the Hand bone instead was tried
-       and rejected (fingers swing up; the pistol, a RightHand child,
-       reads as a floating plank).
-       That turned out to be HALF the fix. The stable palm metric
-       (palmLocal from the bind finger/thumb directions, not the
-       thumb-flip cross product) showed foreY90 alone leaves the
-       fingers pointing down-FORWARD (only 64-75% down) because the
-       wrist itself is bent ~40 deg in the clip. A second rotation of
-       the HAND bone about its own long axis (local Y, mirrored
-       Left +45 / Right -45 deg) swings the curled fingers to point
-       straight down (93-97% down) while the palm stays 29-37 deg
-       from the thigh — probe mateo-hands-F-handY45.jpg. Going to
-       +90 deg puts the palm 69-78 deg off (backwards); -45 deg leaves
-       the fingers pointing up-forward. So +45 deg it is.
-   (b) The idle clip holds a CONSTANT uniform finger curl on every
-       joint (~42-47 deg), which reads as a stiff fan. Fix: damp each
-       finger joint's rotation halfway back toward its bind pose
-       (bind = straight fingers). The bind quaternions are captured at
-       load, before the mixer ever runs.
-   (c) The jacket shell ends at the elbow (43-44% of forearm vertices
-       are >3 cm from any jacket vertex), so the forearm reads as a
-       bare-skin paddle. Fix: orange sleeve cylinders on the ForeArm
-       bones (see makeMateo), same pattern as the v3.3.2 collar. */
-const _fixQ = new THREE.Quaternion();
-function mateoFixHands() {
-  const mt = playerMesh.userData.mateo;
-  if (!mt || !mt.ready) return;
-  if (mt.foreL) mt.foreL.quaternion.multiply(mt.foreCorrL);
-  if (mt.foreR) mt.foreR.quaternion.multiply(mt.foreCorrR);
-  /* Second half of the fix (see (a) above): rotate each Hand bone
-     about its own long axis so the fingers hang straight down. */
-  if (mt.handL) mt.handL.quaternion.multiply(mt.handCorrL);
-  if (mt.handR) mt.handR.quaternion.multiply(mt.handCorrR);
-  if (mt.fingerBind) {
-    for (const key of Object.keys(mt.fingerBind)) {
-      const rec = mt.fingerBind[key];
-      _fixQ.copy(rec.bone.quaternion);
-      rec.bone.quaternion.slerpQuaternions(rec.bind, _fixQ, 0.5);
-    }
-  }
-  /* Adduction AFTER the damping (damping would halve it otherwise):
-     pull each finger toward the middle finger so the hand reads as
-     fingers together, not a claw fan. Thumb toward the index. */
-  if (mt.fingerAdduct) {
-    for (const key of Object.keys(mt.fingerAdduct)) {
-      const rec = mt.fingerAdduct[key];
-      rec.bone.quaternion.premultiply(rec.corr);
-    }
-  }
-}
+/* v3.4 — mateoFixHands deleted with the MPFB2 model (18 Nov 2026).
+   The v3.3.3 hand fix (forearm pronation, hand rotation, finger
+   curl damping, adduction, sleeve cylinders) corrected a defective
+   mesh at runtime; the new Animated Human model has normal hands
+   (single-colour tapered shapes, palms toward the thighs), so no
+   runtime hand correction exists anymore. */
 function makeMateo() {
   const g = new THREE.Group();
   const root = new THREE.Group(); // bob + run lean live here; facing lives on g
-  g.add(root); // v3.3: no slimming scale — Mateo is 1.80 m at realistic proportions
+  g.add(root); // the model node carries MATEO_SCALE (5.321 -> 1.80 m); root is unscaled
   const mt = { root, mixer: null, actions: {}, current: '', currentAction: null, ready: false,
     pistol: null, muzzleSprite: null };
   g.userData = { mateo: mt, walkPhase: 0, swing: 0, torso: root, head: root,
     legL: root, legR: root, armL: root, armR: root, shinL: root, shinR: root, foreL: root, foreR: root };
   new THREE.GLTFLoader().load('vendor/mateo.glb', (gltf) => {
     const model = gltf.scene;
-    model.rotation.y = Math.PI; // MPFB exports facing +Z; the game's forward is -Z
+    model.scale.setScalar(MATEO_SCALE);
+    model.rotation.y = Math.PI / 2; // model faces glTF +X; the game's forward is -Z
     dullEnv(model); // the HDRI traverse ran before this GLB arrived
-    /* v3.3.1: the shells are matte fabric — the sunset HDRI's sun disc
-       reflects off the jacket's curved back as vertical white streaks
-       (found 18 Nov 2026, debug-lights: stripes survive sun-off, die
-       with env-off). v3.3's 0.15 did NOT remove them, so the shells'
-       env is now 0 (lit by the sun + hemisphere only). And the shoes:
-       the shoes04 texture is nearly black (only 0.2% of pixels >200),
-       so the "white sneakers" rendered dark — drop the map so the
-       off-white baseColorFactor (#f5f2ed) renders as white sneakers. */
+    /* The 8 Mateo materials are matte fabric/skin — the sunset HDRI's
+       sun disc reflects off the jacket's curved back as vertical white
+       streaks (v3.3.1 lesson: stripes survive sun-off, die with
+       env-off), so the materials' env is 0 (lit by sun + hemisphere). */
     model.traverse((o) => {
       if (!o.isMesh || !o.material) return;
       if (o.material.name && o.material.name.startsWith('Mateo')) o.material.envMapIntensity = 0;
-      if (o.material.name === 'Human.shoes04') { o.material.map = null; o.material.color.set(0xFFFFFF); o.material.needsUpdate = true; }
     });
     root.add(model);
-    /* Thin beard only: the short01 crop hair is already in the GLB
-       (MPFB asset); MPFB ships no facial hair. Bone-local frame in
-       the Mixamo bind pose: +Y up toward the crown, +Z out of the face. */
-    /* Bone lookup is colon-tolerant: the GLB file names the bones
-       'mixamorig:RightHand', but the loaded THREE.Bone objects are named
-       'mixamorigRightHand' (the colon is stripped on load — found
-       18 Nov 2026, debug-bone2). The exact-name lookup silently returned
-       null, so loadPistol never ran and Mateo had no pistol (and no
-       beard). Match with colons stripped on both sides. */
+    /* Thin beard only: the Human ships no facial hair. Bone-local
+       frame (Mixamo convention): +Y up toward the crown, +Z out of
+       the face.
+       v3.4 — BONE WORLD SCALE: the Human GLB's armature node carries
+       a 69.183x scale (Blender export artifact), so 1 unit in
+       bone-local space is MATEO_SCALE * 69.183 ≈ 23.4 m in the world.
+       The v3.3 beard (0.06 m) and pistol grip (metres) were written
+       for a 1:1 rig and rendered 23.4x too big here — a 4 m beard
+       sphere and a 22 m pistol that filled the mission frame
+       (diagnosed 18 Nov 2026 via matrixWorld decomposition:
+       pistol mwScale 1224 = 100 (Pistol_5 node) x 0.1539 x 3.4 x
+       69.183 x 0.3383). The scale is measured at runtime from a
+       bone's world matrix, never hardcoded. */
     const findBone = (name) => {
-      const want = name.replace(/:/g, '');
       let found = null;
-      model.traverse((o) => { if (!found && o.name && o.name.replace(/:/g, '') === want) found = o; });
+      model.traverse((o) => { if (!found && o.name === name) found = o; });
       return found;
     };
-    const headBone = findBone('mixamorig:Head');
+    model.updateWorldMatrix(true, true);
+    const _bw = new THREE.Vector3();
+    const _hips = findBone('Hips');
+    if (_hips) _hips.matrixWorld.decompose(new THREE.Vector3(), new THREE.Quaternion(), _bw);
+    const boneScale = _bw.x || 1; // ~23.4: model scale x armature scale
+    const headBone = findBone('Head');
     if (headBone) {
-      const beard = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), toon(0x2A2018));
-      beard.position.set(0, 0.005, 0.07); beard.scale.set(1, 0.5, 0.45);
+      const beard = new THREE.Mesh(new THREE.SphereGeometry(0.06 / boneScale, 10, 8), toon(0x2A2018));
+      beard.position.set(0, 0.005 / boneScale, 0.07 / boneScale); beard.scale.set(1, 0.5, 0.45);
       headBone.add(beard);
     }
-    /* v3.3.2 — burnt-orange collar: the jacket ends at y 1.58, so the
-       neck/trapezius (skin, faceted MakeHuman gores) shows above the
-       collar as pale strips down the back (round-3 diagnosis #3). A
-       flared collar band on the Neck bone (+Y up the neck, same frame
-       as the beard) covers the neck base and upper trapezius. Colour
-       via THREE.Color('#E8960F') so the sRGB hex is converted to
-       linear — never write sRGB numbers raw into a linear field (the
-       v3.3.1 jeans gamma bug). */
-    const neckBone = findBone('mixamorig:Neck');
-    if (neckBone) {
-      const collarMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#E8960F'), roughness: 0.9, metalness: 0 });
-      collarMat.envMapIntensity = 0;
-      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.12, 0.13, 20, 1, true), collarMat);
-      collar.position.set(0, 0.005, 0);
-      neckBone.add(collar);
-    }
-    const handBone = findBone('mixamorig:RightHand');
-    if (handBone) loadPistol(handBone, mt);
-    /* v3.3.2 — dark sneaker soles: the shoes04 texture is near-black,
-       so the code drops the map and the off-white base renders — but at
-       screenshot size the small pale shoes read as bare feet
-       (round-3 diagnosis #5). A dark sole slab under each shoe,
-       parented to the Foot bone so it tracks the stride, makes the
-       sneakers read. The slab is 0.14 x 0.05 x 0.30 — thick enough to
-       show as a dark band from the front, back and side — and the shoe
-       upper is forced pure white (the off-white base rendered
-       cream/skin-tone under the warm sun). The local transform is computed at runtime from
-       the bone's own matrices (never from hand-measured Euler angles):
-       the slab is axis-aligned in model space, centred under the shoe
-       footprint (ankle x +/-0.197, footprint z centre 0.078). */
-    const soleMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#1A1A1E'), roughness: 0.85, metalness: 0 });
-    soleMat.envMapIntensity = 0;
-    const soleGeo = new THREE.BoxGeometry(0.14, 0.05, 0.30);
-    model.updateWorldMatrix(true, true);
-    for (const side of ['Left', 'Right']) {
-      const footBone = findBone('mixamorig:' + side + 'Foot');
-      if (!footBone) continue;
-      const ankleX = side === 'Left' ? 0.197 : -0.197;
-      const sole = new THREE.Mesh(soleGeo, soleMat);
-      footBone.updateWorldMatrix(true, false);
-      const bq = new THREE.Quaternion(); footBone.getWorldQuaternion(bq);
-      const mq = new THREE.Quaternion(); model.getWorldQuaternion(mq);
-      sole.quaternion.copy(bq).invert().multiply(mq);
-      const wp = model.localToWorld(new THREE.Vector3(ankleX, 0.023, 0.078));
-      footBone.worldToLocal(wp);
-      sole.position.copy(wp);
-      footBone.add(sole);
-    }
-    /* v3.3.3 — HAND FIX setup (see mateoFixHands). The model is still
-       at bind pose here: the mixer is created below and has never run,
-       so these quaternions are the true bind pose.
-       (a) Pronation corrections, mirrored per side (probe-verified:
-       foreY Left +90 / Right -90 about the bone's local Y, which
-       points elbow->wrist — proven by the probe: the forearm's local
-       Y equals the elbow->wrist direction).
-       (b) Finger bind quaternions for the curl damping.
-       (c) Jacket sleeves to the wrist: an orange cylinder on each
-       ForeArm bone (local +Y = elbow->wrist), spanning -0.03..0.29
-       so it overlaps the jacket at the elbow and reaches the wrist. */
-    mt.foreL = findBone('mixamorig:LeftForeArm');
-    mt.foreR = findBone('mixamorig:RightForeArm');
-    mt.handL = findBone('mixamorig:LeftHand');
-    mt.handR = findBone('mixamorig:RightHand');
-    mt.foreCorrL = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
-    mt.foreCorrR = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
-    mt.handCorrL = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4);
-    mt.handCorrR = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 4);
-    mt.fingerBind = {};
-    for (const side of ['Left', 'Right']) {
-      for (const f of ['Index', 'Middle', 'Ring', 'Pinky', 'Thumb']) {
-        for (let j = 1; j <= 3; j++) {
-          const b = findBone(`mixamorig:${side}Hand${f}${j}`);
-          if (b) mt.fingerBind[side + f + j] = { bone: b, bind: b.quaternion.clone() };
-        }
-      }
-    }
-    if (mt.foreL || mt.foreR) {
-      const sleeveMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#E8960F'), roughness: 0.9, metalness: 0 });
-      sleeveMat.envMapIntensity = 0;
-      const sleeveGeo = new THREE.CylinderGeometry(0.042, 0.058, 0.32, 12);
-      for (const fb of [mt.foreL, mt.foreR]) {
-        if (!fb) continue;
-        const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat);
-        sleeve.position.set(0, 0.13, 0);
-        fb.add(sleeve);
-      }
-    }
-    /* v3.3.3 (2) — finger adduction: the bind pose holds the fingers
-       SPREAD (index-to-pinky ~29 deg in Hand space; the clip curl
-       does not close the fan, so the 0.5 curl damping alone leaves a
-       claw). Measure each finger's direction in the Hand bone's
-       local space at bind and store a fixed rotation that pulls it
-       toward the middle finger (index/ring/pinky 100% — parallel
-       fingers; the knuckle spacing keeps them from intersecting —
-       thumb 80% toward the index). Applied to the first joint of each
-       finger in mateoFixHands, after the curl damping. The pistol
-       is hidden during locomotion in mateoUpdate (it is parented to
-       the wrist, so while walking it reads as a floating grey plank
-       at the wrist, not a gripped weapon); it shows for aim/fire,
-       which is when it must read. */
-    const _adduct = (a, b, k) => {
-      const axis = new THREE.Vector3().crossVectors(a, b);
-      const ang = a.angleTo(b) * k;
-      if (axis.lengthSq() < 1e-8 || ang < 0.01) return new THREE.Quaternion();
-      return new THREE.Quaternion().setFromAxisAngle(axis.normalize(), ang);
-    };
-    mt.fingerAdduct = {};
-    for (const side of ['Left', 'Right']) {
-      const hand = findBone(`mixamorig:${side}Hand`);
-      if (!hand) continue;
-      const dirOf = (f) => {
-        const b = findBone(`mixamorig:${side}Hand${f}1`);
-        const t = findBone(`mixamorig:${side}Hand${f}3`);
-        if (!b || !t) return null;
-        const bp = new THREE.Vector3(); b.getWorldPosition(bp);
-        const tp = new THREE.Vector3(); t.getWorldPosition(tp);
-        return hand.worldToLocal(tp).sub(hand.worldToLocal(bp)).normalize();
-      };
-      const dMid = dirOf('Middle');
-      const dIdx = dirOf('Index');
-      if (!dMid || !dIdx) continue;
-      for (const [f, k, ref] of [['Index', 1.0, dMid], ['Ring', 1.0, dMid], ['Pinky', 1.0, dMid], ['Thumb', 0.8, dIdx]]) {
-        const d = dirOf(f);
-        const j1 = findBone(`mixamorig:${side}Hand${f}1`);
-        if (d && j1) mt.fingerAdduct[side + f] = { bone: j1, corr: _adduct(d, ref, k) };
-      }
-    }
+    const handBone = findBone('RightHand');
+    if (handBone) loadPistol(handBone, mt, boneScale);
+    /* v3.4 — no runtime sole slabs: the dark soles are baked into the
+       GLB as boxes joined to the skinned mesh (Blender build), so
+       they track the stride with no extra code. */
+    /* v3.4 — no runtime hand/sleeve fixes: the new model's jacket
+       sleeves reach the wrist, its hands need no correction, and its
+       fingers are a single tapered shape (see the note where
+       mateoFixHands used to be). */
     const mixer = new THREE.AnimationMixer(model);
     const byName = (re) => gltf.animations.find((a) => re.test(a.name));
     mt.mixer = mixer;
@@ -1338,7 +1171,7 @@ function makeMateo() {
    normalised by bounding box to a 0.28 m barrel and re-centred on
    its middle; the barrel is aligned to the hand bone's +Y (the
    forearm direction when the wrist is straight). */
-function loadPistol(handBone, mt) {
+function loadPistol(handBone, mt, boneScale) {
   new THREE.GLTFLoader().load('vendor/pistol.glb', (gltf) => {
     const raw = gltf.scene;
     const bb = new THREE.Box3().setFromObject(raw);
@@ -1352,7 +1185,11 @@ function loadPistol(handBone, mt) {
     inner.rotation.set(0, 0, Math.PI / 2); // barrel (raw long axis X) -> hand +Y
     const grip = new THREE.Group();
     grip.add(inner);
-    grip.position.set(0, -0.02, 0.01);
+    /* v3.4 — grip offsets are in HAND-bone local units: 1 unit is
+       boneScale (~23.4) metres in the world (armature 69.183x scale
+       x MATEO_SCALE), so the v3.3 (0, -0.02, 0.01) m offset is divided
+       by boneScale to still sit in the palm. */
+    grip.position.set(0, -0.02 / boneScale, 0.01 / boneScale);
     handBone.add(grip);
     mt.pistol = grip;
     grip.visible = false;
@@ -1372,7 +1209,12 @@ function loadPistol(handBone, mt) {
         o.material.emissive = new THREE.Color(0x2a2a2a);
       }
     });
-    grip.scale.setScalar(1.15);
+    grip.scale.setScalar(1.15 / boneScale); // v3.4: the pistol is
+    // normalised to 0.28 m in grip units, then scaled back up by
+    // 1/boneScale so it still reads 0.28 x 1.15 m in the world after
+    // the bone's ~23.4x world scale. (v3.3: plain 1.15 on a 1:1 rig.
+    // Dividing by MATEO_SCALE alone left it 69.183x too big — a 22 m
+    // pistol that filled the mission frame.)
     // muzzle flash: a glow sprite at the barrel tip + the shared muzzle light
     const tip = new THREE.Group();
     tip.position.set(0, 0.16, 0); // just past the 0.28 m barrel tip
@@ -1393,7 +1235,7 @@ function loadPistol(handBone, mt) {
 
 /* ---------- entities ---------- */
 buildWorld();
-const playerMesh = makeMateo(); // Mateo Vega — realistic MPFB2 civilian, orange bomber, white sneakers
+const playerMesh = makeMateo(); // Mateo Vega — Quaternius Animated Human (v3.4), orange jacket, white sneakers
 playerMesh.position.set(-118, 0, 20);
 const playerCar = makeCar(0xD1003F, false, 'SCARLET ARROW', 'sports'); // deep crimson-magenta (v3.1: C.magenta washed to pale pink under the bright sun)
 playerCar.position.set(-104, 0, -24); playerCar.rotation.y = Math.PI / 2;

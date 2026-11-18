@@ -1,4 +1,17 @@
-// PIER HEAT — Sunset Bay v3.3.3: hand-in program for make.fun gta6-01.
+// PIER HEAT — Sunset Bay v3.4: hand-in program for make.fun gta6-01.
+// v3.4 (18 Nov 2026): MATEO REPLACED. The v3.3 MPFB2 model's mesh was
+// defective (upper arms fused to the torso, cube-segment pale hands,
+// googly eyes) and three rounds of pose fixes could not repair it, so
+// the model was replaced, not patched: Quaternius "Animated Human"
+// (Poly Pizza, CC0 1.0) with 8 procedural materials split in Blender
+// (amber jacket, white tee V, dark jeans, white sneakers + baked dark
+// soles), its own Idle/Walk/Run clips (in-place, facing-fixed so all
+// clips face +X), and aim/fire retargeted at the glTF level from the
+// Universal Animation Library (CC0). All MPFB runtime code
+// (mateoFixHands, collar, sole slabs, sleeves) deleted from world.js.
+// Everything else is v3.3.2/v3.3.3 unchanged: two separate jeans legs,
+// burnt-orange jacket, bright golden hour, soft sprite clouds,
+// top-rank chase shot, pistol + aim. See game/MATEO-MODEL.md.
 // v3.3.3 (18 Nov 2026): HANDS ONLY — no rebuild. Round-4 diagnosis
 // (independent, measured in the browser) found the idle/walk hands
 // holding palms-up like trays at waist height: the MPFB hand's bind

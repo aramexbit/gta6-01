@@ -193,8 +193,9 @@ function updateFoot(dt, keys) {
   if (keys.KeyA || keys.ArrowLeft) mx -= 1;
   if (keys.KeyD || keys.ArrowRight) mx += 1;
   /* Street shot: Mateo walks down Ocean Drive on his own so the shot
-     catches him mid-stride, slim and animated — not standing still. */
-  if (SHOT === 'street') { mx = 0; mz = 1; }
+     catches him mid-stride, slim and animated — not standing still.
+     ?idlecheck=1: stand still instead (v3.4 idle probe). */
+  if (SHOT === 'street') { mx = 0; mz = params.has('idlecheck') ? 0 : 1; }
   // camera-relative: forward/right from the orbit yaw
   const fx = -Math.sin(S.yaw), fz = -Math.cos(S.yaw);
   const rx = Math.cos(S.yaw), rz = -Math.sin(S.yaw);
@@ -990,16 +991,18 @@ function updateCamera(dt, keys) {
     /* ?facecheck=1 (street shot only): put the camera AHEAD of Mateo so
        he walks toward it — the front-view probe for the civilian check
        (jacket/tee/hair/beard). ?sidecheck=1: 90° to the side instead.
-       Normal play is unaffected. */
-    const faceCheck = params.has('facecheck') && SHOT === 'street';
-    const sideCheck = params.has('sidecheck') && SHOT === 'street';
+       v3.4: both also work on the mission shot (front/side aim probes).
+       ?dist=N (street only): orbit distance in metres (v3.4 probes use
+       2.8 — playtest distance; default 5). Normal play is unaffected. */
+    const faceCheck = params.has('facecheck') && (SHOT === 'street' || SHOT === 'mission');
+    const sideCheck = params.has('sidecheck') && (SHOT === 'street' || SHOT === 'mission');
     const side = faceCheck ? -1 : 1;
     const dirX = sideCheck ? Math.cos(S.yaw) * cp : Math.sin(S.yaw) * cp * side;
     const dirY = Math.sin(S.pitch);
     const dirZ = sideCheck ? -Math.sin(S.yaw) * cp : Math.cos(S.yaw) * cp * side;
     // v3.3: the mission (foot-fire) shot frames Mateo LARGE so the pistol
     // in his hand reads — 2.4 m instead of the normal 5 m orbit.
-    const orbitDist = SHOT === 'mission' ? 2.4 : 5;
+    const orbitDist = SHOT === 'mission' ? 2.4 : (params.has('dist') ? parseFloat(params.get('dist')) || 5 : 5);
     const clear = cameraClear(pivot.x, pivot.y, pivot.z, dirX, dirY, dirZ, orbitDist);
     const eye = V3(pivot.x + dirX * clear, Math.max(1.0, pivot.y + dirY * clear), pivot.z + dirZ * clear);
     // v3.3: mission shot is a 3/4 view from Mateo's right-rear (he still

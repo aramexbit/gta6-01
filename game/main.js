@@ -33,6 +33,15 @@ renderer.domElement.addEventListener('click', () => {
     else if (S.mode === 'foot') shoot();
   }
 });
+/* v3.3 aim: hold right mouse to aim (aim pose + viewmodel), release to
+   stand down. The pistol stays in Mateo's hand the whole time. */
+renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+renderer.domElement.addEventListener('mousedown', (e) => {
+  if (e.button === 2 && S.started && !S.paused && S.mode === 'foot') { S.aiming = true; mateoAim(); }
+});
+addEventListener('mouseup', (e) => {
+  if (e.button === 2 && S.aiming) { S.aiming = false; mateoSetSpeed(footSpeed); }
+});
 function togglePause() {
   if (!S.started || S.over) return;
   S.paused = !S.paused;
@@ -135,7 +144,10 @@ function shoot() {
     return;
   }
   S.ammo--; $('ammo').textContent = '[' + S.ammo + '/12]';
-  gunshot(); muzzle.intensity = 6; setTimeout(() => { muzzle.intensity = 0; }, 60);
+  gunshot(); muzzle.intensity = 6; setTimeout(() => { if (!S.missionGlow) muzzle.intensity = 0; }, 60);
+  mateoFire(); // v3.3: fire clip (0.3 s crossfade, returns to aim)
+  const mt = playerMesh.userData.mateo;
+  if (mt && mt.muzzleSprite) { mt.muzzleSprite.visible = true; setTimeout(() => { if (!S.missionGlow) mt.muzzleSprite.visible = false; }, 90); }
   S.foughtT = 0; // the player fought first — 1★ cops may now fight back
   S.aimT = 0.33; // aim re-entry lock (PedManager.cs); sprint drops to Run while this is up
   // hitscan: nearest police (car or foot cop) in the camera-forward cone within 40 m
@@ -176,7 +188,7 @@ function loop() {
   const dt = Math.min(clock.getDelta(), 0.05);
   S.frames++;
   if (S.frames === 5) { $('loading').style.display = 'none'; window.__PIERHEAT_READY = true; }
-  if (!S.started || S.paused) { renderer.render(scene, camera); return; }
+  if (!S.started || S.paused) { renderFrame(); return; }
   S.time += dt;
   updateTransition(dt);
   updatePlayer(dt, keys);
@@ -189,7 +201,7 @@ function loop() {
   updateCamera(dt, keys);
   updateHUD();
   engineUpdate();
-  renderer.render(scene, camera);
+  renderFrame(); // v3.3: bloom + grade composer (falls back to plain render)
 }
 window.__PIERHEAT = S;
 window.__PIERHEAT_CAM = camera;
@@ -357,36 +369,59 @@ function applyShot() {
     camera.lookAt(camTarget);
     say('Mateo, I am at the pier gate. Walk over — no car yet, keep it quiet.');
   } else if (SHOT === 'mission') {
-    S.mode = 'car'; S.drivenCar = playerCar; playerCar.userData.owned = true;
-    playerMesh.visible = false;
-    /* v3.1 — re-staged on OCEAN DRIVE (was road z=40, where a building
-       face 2 m off the lane ate the right half of the frame): the Arrow
-       runs -Z down the beachfront boulevard toward the pier safehouse
-       (beacon ahead-left), sea on the left, deco hotels on the right. */
-    playerCar.position.set(-123, 0, 80); S.carYaw = 0; playerCar.rotation.y = 0;
-    playerCar.userData.vx = 0; playerCar.userData.vz = -18;
-    S.carSpeed = 18;
-    S.mission = 2; S.money = 18450; S.wanted = 3; S.carHealth = 85;
-    playerCar.userData.health = 85;
-    // oncoming traffic in the east lane (x=-117, heading +Z); one car far ahead in-lane
-    const oncoming = [[-117, 60, 1], [-117, 45, 1], [-123, 30, -1]];
-    for (let i = 0; i < oncoming.length; i++) {
-      const c = traffic[i], u = c.userData;
-      u.vertical = true; u.road = -120; u.along = oncoming[i][1]; u.dir = oncoming[i][2];
-      u.speed = u.cruise = 12;
-      c.position.set(oncoming[i][0], 0, oncoming[i][1]);
-      c.rotation.y = u.dir > 0 ? Math.PI : 0;
-      u.vx = 0; u.vz = u.dir * 12;
+    S.mode = 'foot'; playerMesh.visible = true;
+    /* v3.3 — FOOT FIRE on the Ocean Drive promenade (was a second car
+       chase): Mateo stands in the aim pose, pistol in hand, muzzle
+       flash held lit, facing a foot cop 12 m up the sidewalk — the
+       frame proves the weapon is visible in his hand, not just a
+       sound. */
+    playerMesh.position.set(-112, 0, 40); playerMesh.rotation.y = 0; // facing -Z
+    S.yaw = 0; S.pitch = 0.16; // camera behind Mateo, looking -Z down the sidewalk
+    S.mission = 2; S.money = 18450; S.wanted = 1; S.carHealth = 85;
+    // wanted=1 (not 2): at 2 stars EVERY police car pursues the player and
+    // parks itself 2 m away — the last shot had two white units flanking
+    // the camera. At 1 star the cars stay on patrol (frozen below), the
+    // foot cop still freezes via aimT=999, and no reinforcements spawn.
+    S.aiming = true; S.missionGlow = true; // hold the aim pose + muzzle glow for the shot
+    // the target: a foot cop 12 m ahead, aiming back (FROZEN for the shot:
+    // aimT=999 keeps the update loop's aim branch holding him still with
+    // sp=0 — the old aimT=0 let him sprint to Mateo in ~3 s, and the
+    // ~25 s SwiftShader load gave him plenty of time)
+    const cop = copPeds[0];
+    cop.visible = true;
+    cop.position.set(-112, 0, 28);
+    cop.rotation.y = Math.PI;
+    cop.userData.status = 'AIMING'; cop.userData.dist = 12;
+    cop.userData.closeT = 0; cop.userData.attackCd = 99; cop.userData.aimT = 999;
+    cop.userData.patrol = { vertical: true, road: -120, along: 28, dir: -1, side: 8.5 };
+    // no second foot cop may spawn during the long load (updateFootCops
+    // spawns one every 4 s while below the cap) — freeze the spawn timers
+    S.footTimer = -1e9; S.carTimer = -1e9;
+    // BOTH patrol cars are PARKED far behind the camera for the shot
+    // (cruise=0 + stepPatrolCar holds them at their `along`). At wanted 1
+    // the pursuit branch is off, so they stay on patrol and never drive
+    // through the frame.
+    for (let i = 0; i < 2; i++) {
+      const pc = police[i];
+      pc.visible = true; pc.userData.status = 'PATROL';
+      pc.userData.vertical = true; pc.userData.road = -120;
+      pc.userData.along = 70 + i * 15; pc.userData.dir = -1;
+      pc.userData.speed = pc.userData.cruise = 0;
+      pc.position.set(-117, 0, 70 + i * 15); pc.rotation.y = 0;
     }
-    // police flank in from the sides, ahead of the car
-    stagePoliceAt([[-132, 40, 38], [-108, 46, 34]]);
-    /* Heli fully in frame (v3.1): low orbit ahead of the southbound car
-       (angle -1.2 ≈ 18 m ahead, 7 m to the side, 7.5 m up), frozen for shots. */
-    heli.userData.orbitR = 19.3; heli.userData.height = 7.5; heli.userData.angle = -1.2;
-    heli.scale.setScalar(1.4);
-    snapCamBehindCar(playerCar, 2.6);
-    clearNearPlayer(-123, 80, 12); clearNearPlayer(-132, 40, 12); clearNearPlayer(-108, 46, 12);
-    say('Almost there — left at the pier! We can lose them near the boardwalk.');
+    // the Scarlet Arrow waits behind Mateo on the road
+    playerCar.position.set(-120, 0, 52); playerCar.rotation.y = 0;
+    clearNearPlayer(-112, 40, 12); clearNearPlayer(-112, 28, 12);
+    clearNearPlayer(-117, 70, 12); clearNearPlayer(-117, 40, 15);
+    camera.position.set(-112, 2.4, 45.2);
+    camTarget.set(-112, 1.6, 34);
+    camera.lookAt(camTarget);
+    // play the fire clip once (animation only — NO live shoot(): the old
+    // shoot() hitscan killed a ped and raised wanted 1 -> 2, which sent
+    // the police cars swarming the camera). The muzzle glow is held lit
+    // by missionGlow via loadPistol's hook.
+    setTimeout(() => { if (SHOT === 'mission' && S.started) mateoFire(); }, 500);
+    say('Hands where I can see them, Vega — drop the piece!');
   }
   updateMissionHUD();
   updateHUD();

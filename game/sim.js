@@ -152,8 +152,10 @@ function stepCar(car, input, dt) {
       if (car === (S.drivenCar || playerCar)) beep(120, 0.1, 'sawtooth', 0.1);
     }
   }
-  for (const w of u.wheels) w.rotation.x += vf * dt * 1.4;
-  if (u.wheels[0]) { u.wheels[0].rotation.y = input.steer * 0.4; u.wheels[1].rotation.y = input.steer * 0.4; }
+  for (const w of u.wheels) w.rotation.x += u.wheelSpinSign * vf * dt / u.wheelRadius;
+  if (u.wheelPivots[0]) { u.wheelPivots[0].rotation.y = u.steerSign * input.steer * 0.4; u.wheelPivots[1].rotation.y = u.steerSign * input.steer * 0.4; }
+  // v3.3 body roll: the car leans into the turn (Kenney GLB body group)
+  if (u.bodyGroup) u.bodyGroup.rotation.z = clamp(-u.yawRate * 0.03, -0.07, 0.07);
   return { vf, vl };
 }
 
@@ -165,8 +167,8 @@ let footSpeed = 0;
    and re-entering the aim state is locked 0.33 s (minTimeToReturnToAimState).
    Ped.cs:560-576: speed comes from the animation's root motion, not the
    input — the state picks the clip, the clip's authored speed moves Mateo.
-   (Xbot.glb clips are in-place Mixamo clips with no root translation to
-   extract, so each state's speed is its authored value below — the
+   (mateo.glb clips are in-place Mixamo clips with no root translation to
+   extract — the Hips location tracks were stripped at build time — so each state's speed is its authored value below — the
    structure is the SA Unity one: input -> state -> clip -> speed.)
    JumpState.cs: jump = JUMP_launch -> JUMP_glide -> JUMP_land, re-entry
    0.4 s, no jump with a heavy weapon or while not grounded, no rotation
@@ -215,7 +217,7 @@ function updateFoot(dt, keys) {
   else if (moving) {
     if (shifting) {
       u.runHoldT = (u.runHoldT || 0) + dt; // hold Shift to build into a sprint
-      want = (u.runHoldT > 1.0 && (S.aimT || 0) <= 0) ? 'SPRINT' : 'RUN'; // sprint cannot aim
+      want = (u.runHoldT > 1.0 && (S.aimT || 0) <= 0 && !S.aiming) ? 'SPRINT' : 'RUN'; // sprint cannot aim
     } else { u.runHoldT = 0; want = 'WALK'; }
   } else u.runHoldT = 0;
   /* state switch locked 0.166 s (PedManager.cs) — except INTO Jump, which
@@ -226,7 +228,8 @@ function updateFoot(dt, keys) {
   const state = u.mvState;
 
   /* --- root-motion speed: the state's clip speed moves Mateo --- */
-  const target = state === 'JUMP' ? MV_JUMP_GLIDE : (moving ? (MV[state] || 0) : 0);
+  let target = state === 'JUMP' ? MV_JUMP_GLIDE : (moving ? (MV[state] || 0) : 0);
+  if (S.aiming) target = Math.min(target, 2.0); // v3.3: aiming is a slow walk, aim pose owns the mixer
   const rate = target > footSpeed ? 20 : 28; // accel / decel (m/s^2)
   footSpeed = Math.abs(target - footSpeed) <= rate * dt ? target : footSpeed + Math.sign(target - footSpeed) * rate * dt;
   /* --- move: in the air the glide carries Mateo along the launch
@@ -398,7 +401,7 @@ function updateTraffic(dt) {
        the player car was flung 280 m into the map edge on frame 1). */
     if (u.vertical) { u.vx = 0; u.vz = u.dir * u.speed; }
     else { u.vx = u.dir * u.speed; u.vz = 0; }
-    for (const w of u.wheels) w.rotation.x += u.speed * dt * 1.2;
+    for (const w of u.wheels) w.rotation.x += u.wheelSpinSign * u.speed * dt / u.wheelRadius;
   }
   // --- car-vs-car collisions (player car, traffic, police) ---
   const solids = [S.drivenCar || playerCar, ...traffic, ...police.filter((p) => p.visible)];
@@ -598,7 +601,7 @@ function stepPatrolCar(pc, dt) {
   else { pc.position.set(u.along, 0, u.road + (u.dir > 0 ? 3 : -3)); pc.rotation.y = u.dir > 0 ? -Math.PI / 2 : Math.PI / 2; }
   if (u.vertical) { u.vx = 0; u.vz = u.dir * u.speed; } // v3.1: lane velocity, never delta (see updateTraffic)
   else { u.vx = u.dir * u.speed; u.vz = 0; }
-  for (const w of u.wheels) w.rotation.x += u.speed * dt * 1.2;
+  for (const w of u.wheels) w.rotation.x += u.wheelSpinSign * u.speed * dt / u.wheelRadius;
   u.status = 'PATROL';
 }
 function updateFootCops(dt, pp) {
@@ -840,7 +843,7 @@ function updatePolice(dt) {
       pc.position.x = res.x; pc.position.z = res.z;
       if (into < 0) { u.vx -= into * res.nx; u.vz -= into * res.nz; }
     }
-    for (const w of u.wheels) w.rotation.x += u.speed * dt * 1.3;
+    for (const w of u.wheels) w.rotation.x += u.wheelSpinSign * u.speed * dt / u.wheelRadius;
     u.dist = gap;
     // ram: shove the player's car + damage on contact (3+ stars, lead unit, burst only)
     if (u.status === 'RAMMING' && S.mode === 'car' && gap < 3.6) {
@@ -946,12 +949,24 @@ function updateCamera(dt, keys) {
     const cp = Math.cos(S.pitch);
     /* ?facecheck=1 (street shot only): put the camera AHEAD of Mateo so
        he walks toward it — the front-view probe for the civilian check
-       (jacket/tee/hair/beard). Normal play is unaffected. */
+       (jacket/tee/hair/beard). ?sidecheck=1: 90° to the side instead.
+       Normal play is unaffected. */
     const faceCheck = params.has('facecheck') && SHOT === 'street';
+    const sideCheck = params.has('sidecheck') && SHOT === 'street';
     const side = faceCheck ? -1 : 1;
-    const dirX = Math.sin(S.yaw) * cp * side, dirY = Math.sin(S.pitch), dirZ = Math.cos(S.yaw) * cp * side;
-    const clear = cameraClear(pivot.x, pivot.y, pivot.z, dirX, dirY, dirZ, 5);
+    const dirX = sideCheck ? Math.cos(S.yaw) * cp : Math.sin(S.yaw) * cp * side;
+    const dirY = Math.sin(S.pitch);
+    const dirZ = sideCheck ? -Math.sin(S.yaw) * cp : Math.cos(S.yaw) * cp * side;
+    // v3.3: the mission (foot-fire) shot frames Mateo LARGE so the pistol
+    // in his hand reads — 2.4 m instead of the normal 5 m orbit.
+    const orbitDist = SHOT === 'mission' ? 2.4 : 5;
+    const clear = cameraClear(pivot.x, pivot.y, pivot.z, dirX, dirY, dirZ, orbitDist);
     const eye = V3(pivot.x + dirX * clear, Math.max(1.0, pivot.y + dirY * clear), pivot.z + dirZ * clear);
+    // v3.3: mission shot is a 3/4 view from Mateo's right-rear (he still
+    // aims straight ahead at the cop, but the camera sits 1.4 m to his
+    // right so the pistol shows in profile instead of end-on, where a
+    // forward-pointing barrel reads as a dark dot).
+    if (SHOT === 'mission') eye.x += 1.4;
     camera.position.x = damp(camera.position.x, eye.x, 7, dt);
     camera.position.y = damp(camera.position.y, eye.y, 7, dt);
     camera.position.z = damp(camera.position.z, eye.z, 7, dt);
@@ -1016,7 +1031,10 @@ function updateHUD() {
   const cond = car ? Math.round(S.carHealth) : 100;
   $('car-cond-fill').style.width = cond + '%';
   $('cond-label').textContent = 'CONDITION ~' + cond + '%';
-  // third-person foot cam: the avatar is on screen, so no floating gun viewmodel
+  // v3.3: NEVER show the camera-attached viewmodel — this game is
+  // third-person only (no first-person mode exists), so the box gun
+  // floats at the screen edge with no hand holding it while Mateo ALSO
+  // holds the pistol. The hand pistol is the weapon on screen.
   viewmodel.visible = false;
   $('crosshair').style.display = S.mode === 'foot' && S.started && !S.paused ? 'block' : 'none';
   $('health-fill').style.width = Math.max(0, S.health) + '%';

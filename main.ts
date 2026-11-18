@@ -1,8 +1,11 @@
-// PIER HEAT — Sunset Bay v3.2: hand-in program for make.fun gta6-01.
-// v3.2: civilian Xbot Mateo (replaces military Soldier.glb), three
-// districts with podium+tower buildings + window textures, 4 palm
-// variants, KayKit CC0 street furniture, calmer exposure (1.0),
-// camera raycast vs cars, pier railings/lamps, animated sea.
+// PIER HEAT — Sunset Bay v3.3: hand-in program for make.fun gta6-01.
+// v3.3: realistic MPFB2 Mateo (replaces the Xbot mannequin + vertex-paint
+// jacket — real clothing geometry, jacket visible from the back),
+// pistol in Mateo's hand + authored aim/fire clips (viewmodel only
+// while aiming), Kenney Car Kit GLB cars with spinning/steering wheels
+// and body roll, Quaternius palm + rock, Poly Haven PBR textures +
+// sunset HDRI environment + custom bloom/grade composer, 6 hero roof
+// topologies, mission shot re-staged as a foot fire scene.
 // Copies game/ and screenshots/ from this repository to /output (or
 // MAKEFUN_OUTPUT_DIR outside the grader) and writes /output/dossier.json
 // with buildDossier from vendor/makefun-game.ts.

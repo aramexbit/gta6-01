@@ -47,6 +47,8 @@ const S = {
      fought a cop (1★ cops only fight back after this). */
   footTimer: 0, carTimer: 0, calmT: 0, foughtT: 99, heliLockT: 0, heliLock2T: 0,
   aimT: 0, // seconds left of the 0.33 s aim re-entry lock (PedManager.cs)
+  aiming: false, // right-mouse hold: aim pose + viewmodel (v3.3)
+  missionGlow: false, // staged mission shot: hold the muzzle flash on (v3.3)
   policeStatus: 'PATROL', // PATROL | OBSERVING | PURSUIT | RAMMING | ARREST | HELI LOCK
   mission: 0,             // stage index 0..7
   ammo: 12, emp: 1, smoke: 3,

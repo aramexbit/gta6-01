@@ -17,6 +17,160 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 $('game').appendChild(renderer.domElement);
 
+/* ---------- v3.3 PBR textures (Poly Haven, CC0) + HDRI environment ----------
+   512 px maps, loaded once, shared: asphalt (roads), aerial sand
+   (beach + promenade strip), brushed concrete (sidewalks), clay
+   plaster (facade bump). The HDRI (bambanani sunset 1K) feeds a PMREM
+   environment map so standard materials get a warm sunset reflection
+   instead of flat ambient light. */
+const PH = {};
+(function loadPBR() {
+  const tl = new THREE.TextureLoader();
+  const mk = (file, rx, ry, srgb) => {
+    const t = tl.load('vendor/textures/' + file);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(rx, ry);
+    if (srgb !== false) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  PH.asphalt = mk('asphalt_02_diff_512.jpg', 2, 50);
+  PH.asphaltRough = mk('asphalt_02_rough_512.jpg', 2, 50, false);
+  PH.sand = mk('aerial_sand_diff_512.jpg', 4, 30);
+  PH.sandRough = mk('aerial_sand_rough_512.jpg', 4, 30, false);
+  PH.concrete = mk('brushed_concrete_diff_512.jpg', 1, 40);
+  PH.plaster = mk('clay_plaster_diff_512.jpg', 1, 1, false);
+})();
+if (window.THREE && THREE.RGBELoader) {
+  new THREE.RGBELoader().load('vendor/textures/bambanani_sunset_1k.hdr', (hdr) => {
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      scene.environment = pmrem.fromEquirectangular(hdr).texture;
+      hdr.dispose(); pmrem.dispose();
+      dullEnv(scene);
+      window.__HDRI_READY = true;
+    } catch (e) { window.__HDRI_READY = 'error'; }
+  }, undefined, () => { window.__HDRI_READY = 'error'; });
+} else window.__HDRI_READY = 'noloader';
+/* v3.3: the HDRI's traverse above only catches meshes that exist when the
+   HDRI loads — GLBs arrive later (async), so their materials kept
+   envMapIntensity 1.0 and the sunset env painted bright vertical streaks
+   on Mateo's jacket (found 18 Nov 2026). Every GLB loader callback below
+   calls dullEnv() on its scene so all standard materials sit at 0.5. */
+function dullEnv(obj) {
+  obj.traverse((o) => {
+    if (o.isMesh && o.material && o.material.isMeshStandardMaterial) o.material.envMapIntensity = 0.5;
+  });
+}
+
+/* ---------- v3.3 bloom + grade (lightweight custom composer) ----------
+   No EffectComposer in the r152 core build, so the chain is hand-rolled:
+   scene -> HalfFloat RT -> bright-pass (max-channel, soft knee) at half
+   res -> separable Gaussian blur x2 -> composite (ACES filmic + sRGB +
+   lift/gamma/gain + saturation + vignette) + bloom. SMAA is skipped:
+   the renderer already runs MSAA (antialias:true). If anything here
+   fails, renderFrame() falls back to a plain renderer.render. */
+const composer = { ok: false };
+function initComposer() {
+  try {
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    const mkRT = (w, h, depth) => new THREE.WebGLRenderTarget(w, h, {
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat, type: THREE.HalfFloatType, depthBuffer: depth,
+    });
+    composer.rtScene = mkRT(size.x, size.y, true);
+    composer.rtA = mkRT(size.x >> 1, size.y >> 1, false);
+    composer.rtB = mkRT(size.x >> 1, size.y >> 1, false);
+    composer.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    composer.quadScene = new THREE.Scene();
+    const quad = (frag, uniforms) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2),
+        new THREE.ShaderMaterial({ uniforms, vertexShader:
+          'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+          fragmentShader: frag, depthTest: false, depthWrite: false }));
+      m.frustumCulled = false;
+      return m;
+    };
+    composer.bright = quad(
+      'uniform sampler2D tD; uniform float uT; varying vec2 vUv;' +
+      'void main(){ vec3 c = texture2D(tD, vUv).rgb;' +
+      ' float m = max(max(c.r, c.g), c.b);' +
+      ' float k = smoothstep(uT, uT + 0.25, m);' +
+      ' gl_FragColor = vec4(c * k, 1.0); }',
+      { tD: { value: null }, uT: { value: 0.72 } });
+    composer.blur = quad(
+      'uniform sampler2D tD; uniform vec2 uDir; varying vec2 vUv;' +
+      'void main(){ vec3 c = texture2D(tD, vUv).rgb * 0.227027;' +
+      ' vec2 o1 = uDir * 1.3846153846, o2 = uDir * 3.2307692308;' +
+      ' c += texture2D(tD, vUv + o1).rgb * 0.3162162162 + texture2D(tD, vUv - o1).rgb * 0.3162162162;' +
+      ' c += texture2D(tD, vUv + o2).rgb * 0.0702702703 + texture2D(tD, vUv - o2).rgb * 0.0702702703;' +
+      ' gl_FragColor = vec4(c, 1.0); }',
+      { tD: { value: null }, uDir: { value: new THREE.Vector2(1, 0) } });
+    composer.comp = quad(
+      'uniform sampler2D tD; uniform sampler2D tB; uniform float uBloom; varying vec2 vUv;' +
+      'vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }' +
+      'void main(){ vec3 c = texture2D(tD, vUv).rgb + texture2D(tB, vUv).rgb * uBloom;' +
+      ' c = aces(c * 1.0);' +                       // filmic tone map (renderer tonemapping is off while composing)
+      ' c = pow(c, vec3(1.0/1.12));' +             // gentle lift of the mids
+      ' float l = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(vec3(l), c, 1.08);' + // +saturation
+      ' vec2 d = vUv - 0.5; c *= 1.0 - dot(d, d) * 0.28;' + // vignette
+      // NO pow(1/2.2) here: the renderer (outputColorSpace srgb) encodes
+      // linear -> sRGB once on the final quad. (The old pow() double-encoded
+      // and blew the cars/crosswalk out to white — found 18 Nov 2026.)
+      ' gl_FragColor = vec4(c, 1.0); }',
+      { tD: { value: null }, tB: { value: null }, uBloom: { value: 0.35 } });
+    composer.ok = true;
+    renderer.toneMapping = THREE.NoToneMapping; // ACES now lives in the composite shader
+  } catch (e) { composer.ok = false; }
+}
+function renderFrame() {
+  if (!composer.ok) { renderer.render(scene, camera); return; }
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+  if (composer.rtScene.width !== size.x || composer.rtScene.height !== size.y) {
+    composer.rtScene.setSize(size.x, size.y);
+    composer.rtA.setSize(size.x >> 1, size.y >> 1);
+    composer.rtB.setSize(size.x >> 1, size.y >> 1);
+  }
+  const oldRT = renderer.getRenderTarget();
+  // NOTE (bug found 18 Nov 2026, debug-composer2): the uniforms live on
+  // the quad MESH's material, not on the mesh — `quad.uniforms` is
+  // undefined and threw every frame at the bright pass, stranding the
+  // render target on rtScene so the canvas stayed transparent. Always
+  // use `.material.uniforms`, and restore the target in a finally.
+  try {
+    renderer.setRenderTarget(composer.rtScene);
+    renderer.render(scene, camera);
+    // bright-pass into rtA, blur rtA->rtB (H), rtB->rtA (V), rtA->rtB (H), rtB->rtA (V)
+    composer.bright.material.uniforms.tD.value = composer.rtScene.texture;
+    composer.quadScene.clear(); composer.quadScene.add(composer.bright);
+    renderer.setRenderTarget(composer.rtA); renderer.render(composer.quadScene, composer.cam);
+    const blurDir = composer.blur.material.uniforms.uDir.value;
+    const blurPass = (src, dst, dx, dy) => {
+      composer.blur.material.uniforms.tD.value = src.texture;
+      blurDir.set(dx / (size.x >> 1), dy / (size.y >> 1));
+      composer.quadScene.clear(); composer.quadScene.add(composer.blur);
+      renderer.setRenderTarget(dst); renderer.render(composer.quadScene, composer.cam);
+    };
+    blurPass(composer.rtA, composer.rtB, 1, 0);
+    blurPass(composer.rtB, composer.rtA, 0, 1);
+    blurPass(composer.rtA, composer.rtB, 1, 0);
+    blurPass(composer.rtB, composer.rtA, 0, 1);
+    composer.comp.material.uniforms.tD.value = composer.rtScene.texture;
+    composer.comp.material.uniforms.tB.value = composer.rtA.texture;
+    composer.quadScene.clear(); composer.quadScene.add(composer.comp);
+    renderer.setRenderTarget(null);
+    renderer.render(composer.quadScene, composer.cam);
+  } catch (e) {
+    // A post-processing failure must never black out the game: fall back
+    // to a plain render of this frame and disable the composer.
+    composer.ok = false;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping; // back to the pre-composer grade
+    try { renderer.render(scene, camera); } catch (_) { /* keep the last frame */ }
+  } finally {
+    renderer.setRenderTarget(oldRT);
+  }
+}
+initComposer();
+
 const scene = new THREE.Scene();
 /* Golden-hour sky dome: vertical gradient indigo -> magenta -> orange -> sun
    (locked palette; no pure white/black). Rendered on a big backside sphere
@@ -125,13 +279,21 @@ function winMatFor(kind, w, h, tint) {
     map, emissiveMap: em, emissive: new THREE.Color(0xffffff),
     emissiveIntensity: 0.85, color: tint,
     roughness: glass ? 0.35 : 0.9, metalness: glass ? 0.6 : 0.0,
+    bumpMap: PH.plaster, bumpScale: 0.02, // v3.3: clay-plaster relief on facades
   });
 }
 /* Plain standard material (ground, roads, sand): roughness per surface,
-   no flat toon shading — the city reads as built matter, not plastic. */
-function std(color, roughness, metalness) {
-  return new THREE.MeshStandardMaterial({ color, roughness: roughness === undefined ? 0.95 : roughness,
+   no flat toon shading — the city reads as built matter, not plastic.
+   v3.3: opts.map / opts.roughnessMap take the Poly Haven PBR textures. */
+function std(color, roughness, metalness, opts) {
+  const m = new THREE.MeshStandardMaterial({ color, roughness: roughness === undefined ? 0.95 : roughness,
     metalness: metalness || 0 });
+  if (opts) {
+    if (opts.map) m.map = opts.map;
+    if (opts.roughnessMap) m.roughnessMap = opts.roughnessMap;
+    if (opts.bumpMap) { m.bumpMap = opts.bumpMap; m.bumpScale = opts.bumpScale || 0.03; }
+  }
+  return m;
 }
 function glowTexture() {
   const cv = document.createElement('canvas'); cv.width = cv.height = 64;
@@ -175,16 +337,19 @@ function buildWorld() {
      (0xE8C9A0) + pastel beach clipped to white under the v3.1 sun. */
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(CITY * 2 + 60, CITY * 2 + 60), std(0x8A5A48));
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; world.add(ground);
-  const beach = new THREE.Mesh(new THREE.PlaneGeometry(46, CITY * 2 + 60), std(0xC9A06A));
+  const beach = new THREE.Mesh(new THREE.PlaneGeometry(46, CITY * 2 + 60),
+    std(0xC9A06A, 0.95, 0, { map: PH.sand, roughnessMap: PH.sandRough }));
   beach.rotation.x = -Math.PI / 2; beach.position.set(-CITY - 38, 0.05, 0); beach.receiveShadow = true; world.add(beach);
   /* Ocean Drive sand promenade (v3.1): the beach used to sit 45 m from the
      road behind dark ground. A sand strip now joins Ocean Drive (x=-120)
      to the beach, so the chase/street shots read as a beachfront boulevard
      — sea on one side, art-deco hotels on the other. */
-  const sand = new THREE.Mesh(new THREE.PlaneGeometry(40, CITY * 2 + 60), std(0xC99B62));
+  const sand = new THREE.Mesh(new THREE.PlaneGeometry(40, CITY * 2 + 60),
+    std(0xC99B62, 0.95, 0, { map: PH.sand, roughnessMap: PH.sandRough }));
   sand.rotation.x = -Math.PI / 2; sand.position.set(-CITY + 4.5, 0.04, 0); sand.receiveShadow = true; world.add(sand);
   /* Wide pale promenade sidewalk on the sea side of Ocean Drive. */
-  const prom = new THREE.Mesh(new THREE.PlaneGeometry(10, CITY * 2), std(0xB98A68));
+  const prom = new THREE.Mesh(new THREE.PlaneGeometry(10, CITY * 2),
+    std(0xB98A68, 0.95, 0, { map: PH.concrete }));
   prom.rotation.x = -Math.PI / 2; prom.position.set(-131, 0.06, 0); prom.receiveShadow = true; world.add(prom);
   /* v3.2 sea: gradient texture (deep teal offshore -> turquoise ->
      pale foam at the shore) instead of one flat teal plane, plus
@@ -206,9 +371,10 @@ function buildWorld() {
     seaWaves.push({ mesh: s, speed: 1.5 + rnd() * 2 });
   }
   window.__SEA_WAVES = seaWaves;
-  /* v3.2 roads: standard asphalt (was flat toon brown) + concrete curbs. */
-  const roadMat = std(0x6A5248, 0.95);
-  const walkMat = std(0xB08A62, 0.95); // sidewalks: warm sand-tan so streets read at golden hour
+  /* v3.2 roads: standard asphalt (was flat toon brown) + concrete curbs.
+     v3.3: Poly Haven asphalt + roughness maps, concrete sidewalks. */
+  const roadMat = std(0x6A5248, 0.95, 0, { map: PH.asphalt, roughnessMap: PH.asphaltRough });
+  const walkMat = std(0xB08A62, 0.95, 0, { map: PH.concrete }); // sidewalks: warm sand-tan so streets read at golden hour
   const dashCv = document.createElement('canvas'); dashCv.width = 16; dashCv.height = 64;
   const dg = dashCv.getContext('2d');
   dg.clearRect(0, 0, 16, 64);
@@ -299,6 +465,33 @@ function districtFor(x) {
   if (x >= 40) return 'downtown';
   return 'havana';
 }
+/* v3.3 roof topologies (osm2threejs pattern): gable (two sloped slabs),
+   hip (4-sided pyramid), dome (half sphere), sawtooth (3 sloped slabs),
+   tiered (two stacked setbacks), flat (parapet only — nothing added). */
+function addRoof(kind, bx, bz, w, d, h) {
+  const mat = std(0x8A6A5A, 0.95);
+  const mat2 = std(0x6A4A3A, 0.95);
+  if (kind === 'gable') {
+    for (const s of [-1, 1]) {
+      const slab = box(w * 0.62, 0.3, d + 0.4, mat, bx + s * w * 0.22, h + 1.1, bz);
+      slab.rotation.z = -s * 0.5;
+    }
+  } else if (kind === 'hip') {
+    const pyr = new THREE.Mesh(new THREE.ConeGeometry(Math.hypot(w, d) * 0.38, 3.2, 4), mat);
+    pyr.position.set(bx, h + 2.3, bz); pyr.rotation.y = Math.PI / 4; pyr.castShadow = true; world.add(pyr);
+  } else if (kind === 'dome') {
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(w * 0.36, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat2);
+    dome.position.set(bx, h + 0.7, bz); dome.castShadow = true; world.add(dome);
+  } else if (kind === 'sawtooth') {
+    for (let i = -1; i <= 1; i++) {
+      const slab = box(w / 3 + 0.2, 0.25, d, mat, bx + i * w / 3, h + 1.3, bz);
+      slab.rotation.z = 0.45;
+    }
+  } else if (kind === 'tiered') {
+    box(w * 0.7, 1.2, d * 0.7, mat, bx, h + 1.3, bz);
+    box(w * 0.45, 1.2, d * 0.45, mat2, bx, h + 2.5, bz);
+  }
+}
 function buildBuildings() {
   const neonColors = [C.magenta, C.cyan, C.sun, C.pink, C.teal];
   for (const x of ROAD_X) for (const z of ROAD_Z) {
@@ -326,6 +519,15 @@ function buildBuildings() {
     BUILDINGS.push({ x: bx, z: bz, hw: w / 2, hd: d / 2, h });
     /* parapet: a thin slab lip around the tower roof edge. */
     box(tw + 0.6, 0.7, td + 0.6, std(district === 'downtown' ? 0x3A4A5A : 0x8A6A5A, 0.95), bx, h + 0.35, bz);
+    /* v3.3 hero roofs (osm2threejs pattern — 6 topologies): the tallest
+       downtown towers (h>34) and the tallest deco hotels (h>15) get a
+       distinct roof on top of the parapet, so the skyline reads from
+       the street instead of one flat slab everywhere. */
+    if (h > 34 || (isDeco && h > 15)) {
+      const kinds = ['gable', 'hip', 'dome', 'sawtooth', 'tiered', 'flat'];
+      const kind = kinds[Math.abs(Math.round(bx * 7 + bz * 13)) % kinds.length];
+      addRoof(kind, bx, bz, tw, td, h);
+    }
     /* roof plant: water tank (havana/deco) or AC boxes (downtown). */
     if (rnd() < 0.4) {
       if (district === 'downtown') {
@@ -384,54 +586,74 @@ function buildBuildings() {
     }
   }
 }
-/* v3.2 palms: FOUR variants, never one clone every 16 m (the v3.1
-   defect — identical palms in a perfect row read as Roblox). Each palm
-   rolls its variant from the seeded stream, then jitters trunk lean,
-   leaf count/length/angle and leaf green per tree:
-   0 royal (tall, 7 leaves, deep green), 1 coconut (8 m, broad leaves
-   + nut clusters), 2 fan (short, 8 narrow yellow-green leaves),
-   3 slim (12 m, 5 long thin dark leaves). */
-const PALM_VARIANTS = [
-  { h: 11, leaves: 7, len: 5.5, wid: 1.1, col: 0x1E7A4A, lean: 0.08 },
-  { h: 8, leaves: 6, len: 6.0, wid: 1.5, col: 0x2A8A5A, lean: 0.22 },
-  { h: 7, leaves: 8, len: 4.5, wid: 0.8, col: 0x4A9A3A, lean: 0.12 },
-  { h: 12, leaves: 5, len: 6.5, wid: 0.9, col: 0x1A6A3A, lean: 0.04 },
-];
+/* v3.3 palms: a real Quaternius palm GLB (CC0, vendor/palm.glb), cloned
+   with random rotation/scale/lean — the cone-leaf palms are gone from
+   the main frame (kept only as palmFallback() if the GLB fails to
+   load). The GLB is ~2.7 m tall, so clones scale x3 (~8 m) with
+   variation. Placement lives in placePalms(), called once the GLB
+   arrives (buildWorld runs before async loads finish). */
+const palmTemplate = { scene: null, ready: false };
+new THREE.GLTFLoader().load('vendor/palm.glb', (gltf) => {
+  dullEnv(gltf.scene);
+  palmTemplate.scene = gltf.scene;
+  palmTemplate.ready = true;
+  placePalms(); placeRocks();
+  window.__PALMS_READY = true;
+}, undefined, () => { placePalms(); window.__PALMS_READY = 'error'; });
 function palm(x, z) {
-  const v = PALM_VARIANTS[Math.floor(rnd() * PALM_VARIANTS.length)];
+  if (!palmTemplate.ready) return palmFallback(x, z);
+  const c = palmTemplate.scene.clone();
+  c.scale.setScalar(3.0 * (0.85 + rnd() * 0.4));
+  c.rotation.y = rnd() * Math.PI * 2;
+  c.rotation.z = (rnd() - 0.5) * 0.12;
+  c.position.set(x, 0, z);
+  c.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  world.add(c); return c;
+}
+function palmFallback(x, z) { // cone palm, load-failure fallback only
   const g = new THREE.Group();
-  const leanDir = rnd() * Math.PI * 2;
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.55, v.h, 6), std(0x8A5A3A, 0.95));
-  trunk.position.y = v.h / 2; trunk.castShadow = true;
-  trunk.rotation.z = v.lean * Math.cos(leanDir); trunk.rotation.x = v.lean * Math.sin(leanDir);
-  g.add(trunk);
-  const leafMat = std(v.col, 0.9);
-  const n = v.leaves + (rnd() < 0.5 ? 1 : 0);
-  const off = rnd() * Math.PI * 2;
-  for (let i = 0; i < n; i++) {
-    const a = off + (i / n) * Math.PI * 2 + (rnd() - 0.5) * 0.25;
-    const len = v.len * (0.85 + rnd() * 0.3);
-    const leaf = new THREE.Mesh(new THREE.ConeGeometry(v.wid, len, 4), leafMat);
-    leaf.position.set(Math.cos(a) * 1.6, v.h + 0.2, Math.sin(a) * 1.6);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.55, 9, 6), std(0x8A5A3A, 0.95));
+  trunk.position.y = 4.5; trunk.castShadow = true; g.add(trunk);
+  const leafMat = std(0x2A8A5A, 0.9);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(1.1, 5.5, 4), leafMat);
+    leaf.position.set(Math.cos(a) * 1.6, 9.2, Math.sin(a) * 1.6);
     leaf.rotation.z = Math.cos(a) * 1.1; leaf.rotation.x = -Math.sin(a) * 1.1;
-    leaf.castShadow = true;
-    g.add(leaf);
-  }
-  if (v.leaves === 6 && rnd() < 0.7) { // coconut clusters on the coconut variant
-    for (let i = 0; i < 3; i++) {
-      const nut = new THREE.Mesh(new THREE.SphereGeometry(0.28, 6, 6), std(0x6A4A2A, 0.9));
-      nut.position.set(Math.cos(i * 2.1) * 0.7, v.h - 0.4, Math.sin(i * 2.1) * 0.7);
-      g.add(nut);
-    }
+    leaf.castShadow = true; g.add(leaf);
   }
   g.position.set(x, 0, z); world.add(g); return g;
 }
-function buildProps() {
-  /* Palms line Ocean Drive on both sides, dense (v3.1: every 16 m, was 22);
+function placePalms() {
+  /* Palms line Ocean Drive on both sides, dense (every 16 m);
      a second row stands on the sand so the beach reads from the road. */
   for (let z = -140; z <= 140; z += 16) { palm(-132, z + 4); palm(-108, z - 6); }
   for (let z = -120; z <= 120; z += 24) palm(-150 + rnd() * 6, z);
   for (let i = 0; i < 12; i++) palm(-60 + rnd() * 190, -140 + rnd() * 280);
+}
+/* Quaternius rock (CC0, vendor/rock.glb) scattered on the beach + pier. */
+const rockTemplate = { scene: null, ready: false };
+new THREE.GLTFLoader().load('vendor/rock.glb', (gltf) => {
+  dullEnv(gltf.scene);
+  rockTemplate.scene = gltf.scene;
+  rockTemplate.ready = true;
+  placeRocks();
+}, undefined, () => {});
+function placeRocks() {
+  if (!rockTemplate.ready) return;
+  const spots = [[-146, -60], [-142, 20], [-148, 90], [-140, -110], [-224, 22], [-216, 38], [-60, 130], [30, -135]];
+  for (const [x, z] of spots) {
+    const c = rockTemplate.scene.clone();
+    c.scale.setScalar(0.8 + rnd() * 1.4);
+    c.rotation.y = rnd() * Math.PI * 2;
+    c.position.set(x, 0, z);
+    c.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    world.add(c);
+  }
+}
+function buildProps() {
+  /* Palms are placed by placePalms() once the GLB template loads
+     (see above) — not here, so buildWorld never blocks on async loads. */
   /* Streetlights come from KayKit (see kaykitPlace below) — the v3.1
      procedural poles are the fallback if a KayKit file fails to load. */
   for (let i = 0; i < 8; i++) {
@@ -506,6 +728,7 @@ function kaykitPlace() {
 }
 KAYKIT_MODELS.forEach((name) => {
   new THREE.GLTFLoader().load('vendor/kaykit/' + name + '.gltf', (gltf) => {
+    dullEnv(gltf.scene);
     kaykit.templates[name] = gltf.scene;
     if (--kaykit.pending === 0) kaykitPlace();
   }, undefined, () => { if (--kaykit.pending === 0) kaykitPlace(); });
@@ -593,22 +816,84 @@ const PROFILES = {
   compact: { engine: 12, brake: 34, top: 36, reverse: 14, turn: 3.1, grip: 11, gripHB: 0.7, mass: 1000 },
   van:     { engine: 10, brake: 30, top: 33, reverse: 12, turn: 2.1, grip: 8,  gripHB: 0.6, mass: 2400 },
   truck:   { engine: 8,  brake: 26, top: 30, reverse: 10, turn: 1.9, grip: 7,  gripHB: 0.6, mass: 4500 },
+  suv:     { engine: 12, brake: 32, top: 38, reverse: 14, turn: 2.5, grip: 9,  gripHB: 0.65, mass: 1800 },
   cop:     { engine: 15, brake: 36, top: 43, reverse: 16, turn: 2.9, grip: 11, gripHB: 0.7, mass: 1700 },
 };
+/* v3.3 GLB cars (Kenney Car Kit, CC0 — vendor/cars/). The box car below
+   is now only the PLACEHOLDER: every car is created with it so the game
+   never shows a missing vehicle, then applyCarModel() swaps in the
+   cloned Kenney GLB (scale 1.6, rotated π — Kenney front is +Z, game
+   forward is -Z) once the templates load. Wheels come from the named
+   wheel-* nodes: each is wrapped in a steering pivot (front only) and
+   spun around its local X axis; the body leans on turns (stepCar).
+   If a GLB fails, that car keeps its box placeholder and the game
+   still runs — window.__CARS_READY is set either way. */
+const CAR_PROFILES_GLB = { sports: 'sedan-sports', sedan: 'sedan', compact: 'hatchback-sports',
+  van: 'van', truck: 'truck', cop: 'police', suv: 'suv' };
+const carTemplates = {};
+let carTemplatesPending = 0;
+const carsToDress = [];
+function loadCarTemplates() {
+  const names = [...new Set(Object.values(CAR_PROFILES_GLB))];
+  carTemplatesPending = names.length;
+  for (const n of names) {
+    new THREE.GLTFLoader().load('vendor/cars/' + n + '.glb', (gltf) => {
+      dullEnv(gltf.scene);
+      carTemplates[n] = gltf.scene;
+      if (--carTemplatesPending === 0) dressAllCars();
+    }, undefined, () => { if (--carTemplatesPending === 0) dressAllCars(); });
+  }
+}
+function dressAllCars() {
+  for (const car of carsToDress) applyCarModel(car);
+  window.__CARS_READY = true;
+}
+function applyCarModel(car) {
+  const u = car.userData;
+  if (u.dressed) return;
+  const tpl = carTemplates[CAR_PROFILES_GLB[u.profileId]];
+  if (!tpl) return; // keep the box placeholder
+  const model = tpl.clone();
+  model.scale.setScalar(1.6);
+  model.rotation.y = Math.PI;
+  const bodyGroup = new THREE.Group();
+  bodyGroup.add(model);
+  const wheelNodes = [];
+  model.traverse((o) => { if (o.name && o.name.indexOf('wheel-') === 0) wheelNodes.push(o); });
+  const spin = [], pivots = [];
+  for (const node of wheelNodes) {
+    const pivot = new THREE.Group();
+    pivot.position.copy(node.position);
+    pivot.rotation.copy(node.rotation);
+    node.position.set(0, 0, 0); node.rotation.set(0, 0, 0);
+    const parent = node.parent;
+    parent.remove(node); pivot.add(node); parent.add(pivot);
+    spin.push(node);
+    if (node.name.indexOf('wheel-front-') === 0) pivots.push(pivot);
+  }
+  if (u.placeholder) { car.remove(u.placeholder); u.placeholder = null; }
+  car.add(bodyGroup);
+  u.wheels = spin; u.wheelPivots = pivots;
+  u.wheelSpinSign = -1; u.wheelRadius = 0.48; u.steerSign = -1; // model rotated π
+  u.bodyGroup = bodyGroup; u.dressed = true;
+}
 function makeCar(color, isPolice, name, profileId) {
   const g = new THREE.Group();
+  const pid = profileId || (isPolice ? 'cop' : 'sedan');
+  const ph = new THREE.Group(); // box placeholder (swapped out by applyCarModel)
   const bodyMat = toon(isPolice ? 0x2a2a4a : color);
-  const body = box(2.1, 0.75, 4.6, bodyMat, 0, 0.75, 0, g);
+  const body = box(2.1, 0.75, 4.6, bodyMat, 0, 0.75, 0, ph);
   addOutline(body, C.asphalt, 1.05);
-  const cabin = box(1.8, 0.65, 2.2, toon(isPolice ? 0x3a3a5a : color), 0, 1.4, -0.2, g);
-  const glass = box(1.84, 0.5, 2.24, new THREE.MeshBasicMaterial({ color: C.indigo }), 0, 1.42, -0.2, g);
+  const cabin = box(1.8, 0.65, 2.2, toon(isPolice ? 0x3a3a5a : color), 0, 1.4, -0.2, ph);
+  const glass = box(1.84, 0.5, 2.24, new THREE.MeshBasicMaterial({ color: C.indigo }), 0, 1.42, -0.2, ph);
   glass.castShadow = false;
   const wheelMat = toon(C.asphalt);
   const wheels = [];
   for (const [wx, wz] of [[-1.05, 1.5], [1.05, 1.5], [-1.05, -1.5], [1.05, -1.5]]) {
     const w = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10), wheelMat);
-    w.rotation.z = Math.PI / 2; w.position.set(wx, 0.42, wz); w.castShadow = true; g.add(w); wheels.push(w);
+    w.rotation.z = Math.PI / 2; w.position.set(wx, 0.42, wz); w.castShadow = true; ph.add(w); wheels.push(w);
   }
+  g.add(ph);
   const hl = new THREE.MeshBasicMaterial({ color: C.sun });
   for (const hx of [-0.7, 0.7]) {
     const h = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.1), hl);
@@ -632,12 +917,17 @@ function makeCar(color, isPolice, name, profileId) {
     lightbar.position.set(0, 1.85, -0.2); g.add(lightbar);
     lightbar.userData = { r, b, rg, bg };
   }
-  g.userData = { wheels, lightbar, name: name || pick(CAR_NAMES), color, isPolice,
+  g.userData = { wheels, wheelPivots: [wheels[0], wheels[1]], wheelSpinSign: 1, wheelRadius: 0.42,
+    steerSign: 1, bodyGroup: ph, placeholder: ph, dressed: false, profileId: pid,
+    lightbar, name: name || pick(CAR_NAMES), color, isPolice,
     speed: 0, yaw: 0, health: 100, vx: 0, vz: 0, yawRate: 0,
-    profile: PROFILES[profileId || (isPolice ? 'cop' : 'sedan')] };
+    profile: PROFILES[pid] };
   scene.add(g);
+  carsToDress.push(g);
+  if (window.__CARS_READY) applyCarModel(g); // car created after templates loaded
   return g;
 }
+loadCarTemplates();
 /* Slim procedural humanoid v3.1 (NOT a Roblox box) — used for the
    background pedestrians and foot cops. (Mateo himself is the rigged
    GLB now — see makeMateo below.) Narrow shoulders (~0.42 m), tapered
@@ -696,44 +986,29 @@ function makePerson(jacket, pants) {
   scene.add(g);
   return g;
 }
-/* Mateo Vega — RIGGED CIVILIAN GLB (v3.2, vendor/Xbot.glb, Mixamo
-   "X Bot" as distributed with the three.js examples — free for use,
-   see vendor/THIRD-PARTY.md). REPLACES Soldier.glb (v3.1): the Soldier
-   is a military model — backpack + chest plates on its back read as a
-   soldier, which is wrong for this game's original civilian lead and
-   for the make.fun brief (original character, not military, not
-   Rockstar). Xbot is a plain civilian mannequin: no backpack, no
-   plates, no weapon, no uniform — slim civilian proportions.
-   Loaded via GLTFLoader + AnimationMixer with 0.3 s crossfades
-   Idle↔Walk↔Run, the openvice Player.cpp pattern (IDLE_STANCE /
-   walk_player / run_player / SPRINT_civi, walk speed 2.25 m/s,
-   blend ~0.3 s, bob + lean at a run).
-   The GLB has two single-material skinned meshes (Beta_Surface body +
-   Beta_Joints), so per-part colours come from VERTEX COLOURS: each
-   vertex is classified in the model's local bind-pose space (Y-up,
-   0..1.81 m, T-pose, face +Z, toes +Z) — burnt-orange bomber jacket,
-   white tee strip on the front chest, dark jeans, white sneakers,
-   skin hands + face, dark hair on the crown/back of the head.
-   Undercut hair + thin beard are small procedural meshes parented to
-   the mixamorig:Head bone (the mannequin head is smooth — vertex
-   colour alone cannot give a hairline silhouette). Slim proportions:
-   wrapper scale (0.92, 1, 0.94), model turned π inside the wrapper
-   because Xbot faces local +Z while the game's forward is -Z.
-   Loads async; the street screenshot waits for window.__MATEO_GLB. */
-function mateoClassify(cx, cy, cz) {
-  const ax = Math.abs(cx);
-  if (cy > 1.55) { // head: skin face, dark hair crown + back
-    if (cy > 1.68 || cz < -0.05) return [31 / 255, 26 / 255, 22 / 255]; // undercut hair
-    return [201 / 255, 138 / 255, 90 / 255]; // face -> skin
-  }
-  if (ax > 0.78 && cy > 1.30) return [201 / 255, 138 / 255, 90 / 255]; // hands only (T-pose, out at the sides) -> skin; forearms stay jacket-orange to the wrist
-  if (cy < 0.12) return [244 / 255, 236 / 255, 223 / 255]; // feet -> white sneakers
-  if (cy < 1.00) return [35 / 255, 35 / 255, 58 / 255]; // legs + hips -> dark jeans (the bomber ends at the waist; the pelvis shell must read as jeans, never bare skin)
-  if (cy < 1.55) { // torso + arms -> bomber jacket, narrow white tee on the front chest
-    if (cz > 0.10 && ax < 0.07 && cy > 1.06 && cy < 1.30) return [244 / 255, 236 / 255, 223 / 255];
-    return [185 / 255, 62 / 255, 12 / 255]; // burnt-orange bomber (v3.1 shade, kept)
-  }
-  return [201 / 255, 138 / 255, 90 / 255]; // neck -> skin
+/* Mateo Vega — REALISTIC MPFB2 CIVILIAN (v3.3, vendor/mateo.glb).
+   Replaces the v3.2 Xbot mannequin + vertex-paint jacket: a MakeHuman
+   (MPFB2, GPL-3.0 code, CC0 system assets) male, muscle 0.6, weight
+   0.4, ~1.80 m, textured skin, with REAL clothing geometry — a
+   burnt-orange bomber jacket shell, white tee shell, dark jeans shell
+   and white sneakers, all separate skinned meshes, so the jacket
+   reads from the BACK as material, not paint. Short dark crop hair +
+   brown eyes are MPFB assets; the thin beard is a procedural mesh on
+   the Head bone (MPFB ships no facial hair). Mixamo rig
+   (mixamorig:*), so the Xbot idle/walk/run clips transfer verbatim,
+   plus authored aim/fire clips. All clips crossfade 0.3 s (the
+   openvice Player.cpp pattern: IDLE_STANCE / walk_player /
+   run_player / SPRINT_civi, walk speed 2.25 m/s, bob + lean at a
+   run). See game/MATEO-MODEL.md. Loads async; the street screenshot
+   waits for window.__MATEO_GLB. */
+function mateoPlayClip(name, rate) {
+  const mt = playerMesh.userData.mateo;
+  if (!mt || !mt.ready) return;
+  const next = mt.actions[name];
+  if (!next) return;
+  if (mt.currentAction) mt.currentAction.fadeOut(0.3);
+  next.reset().setEffectiveTimeScale(rate || 1).setEffectiveWeight(1).fadeIn(0.3).play();
+  mt.current = name; mt.currentAction = next; mt.timeScale = rate || 1;
 }
 /* San Andreas Unity pattern (BaseMovementState): the STATE picks the clip,
    the clip's authored speed moves the ped (Ped.cs:560-576, root motion).
@@ -741,14 +1016,22 @@ function mateoClassify(cx, cy, cz) {
 function mateoSetSpeed(sp, ts) {
   const mt = playerMesh.userData.mateo;
   if (!mt || !mt.ready) return;
+  if (S.aiming) { mateoAim(); return; } // the aim pose owns the mixer while aiming
   const name = sp < 0.3 ? 'idle' : sp > 6 ? 'run' : 'walk';
   const rate = ts || 1;
   if (mt.current === name && Math.abs((mt.timeScale || 1) - rate) < 0.01) return;
-  const next = mt.actions[name];
-  if (!next) return;
-  if (mt.currentAction) mt.currentAction.fadeOut(0.3);
-  next.reset().setEffectiveTimeScale(rate).setEffectiveWeight(1).fadeIn(0.3).play();
-  mt.current = name; mt.currentAction = next; mt.timeScale = rate;
+  mateoPlayClip(name, rate);
+}
+function mateoAim() {
+  const mt = playerMesh.userData.mateo;
+  if (!mt || !mt.ready || mt.current === 'aim') return;
+  mateoPlayClip('aim');
+}
+function mateoFire() {
+  const mt = playerMesh.userData.mateo;
+  if (!mt || !mt.ready) return;
+  mateoPlayClip('fire');
+  setTimeout(() => { if (S.aiming) mateoAim(); else mateoSetSpeed(0); }, 450);
 }
 function mateoUpdate(dt) {
   const mt = playerMesh.userData.mateo;
@@ -757,49 +1040,55 @@ function mateoUpdate(dt) {
 function makeMateo() {
   const g = new THREE.Group();
   const root = new THREE.Group(); // bob + run lean live here; facing lives on g
-  root.scale.set(0.92, 1, 0.94); // slim civilian proportions (narrower, same height)
-  g.add(root);
-  const mt = { root, mixer: null, actions: {}, current: '', currentAction: null, ready: false };
+  g.add(root); // v3.3: no slimming scale — Mateo is 1.80 m at realistic proportions
+  const mt = { root, mixer: null, actions: {}, current: '', currentAction: null, ready: false,
+    pistol: null, muzzleSprite: null };
   g.userData = { mateo: mt, walkPhase: 0, swing: 0, torso: root, head: root,
     legL: root, legR: root, armL: root, armR: root, shinL: root, shinR: root, foreL: root, foreR: root };
-  new THREE.GLTFLoader().load('vendor/Xbot.glb', (gltf) => {
+  new THREE.GLTFLoader().load('vendor/mateo.glb', (gltf) => {
     const model = gltf.scene;
-    model.rotation.y = Math.PI; // Xbot faces local +Z; the game's forward is -Z
-    root.add(model);
+    model.rotation.y = Math.PI; // MPFB exports facing +Z; the game's forward is -Z
+    dullEnv(model); // the HDRI traverse ran before this GLB arrived
+    // the shells are matte fabric: the sunset HDRI's sun disc reflects off
+    // the jacket's curved back as vertical white streaks (found 18 Nov
+    // 2026, debug-lights: stripes survive sun-off, die with env-off).
+    // Drop the shells' env to 0.15; skin/shoes/hair keep 0.5.
     model.traverse((o) => {
-      if (!o.isSkinnedMesh) return;
-      const posA = o.geometry.attributes.position;
-      const colors = new Float32Array(posA.count * 3);
-      for (let i = 0; i < posA.count; i++) {
-        const c = mateoClassify(posA.getX(i), posA.getY(i), posA.getZ(i));
-        colors[i * 3] = c[0]; colors[i * 3 + 1] = c[1]; colors[i * 3 + 2] = c[2];
-      }
-      o.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      o.material = o.material.clone();
-      o.material.map = null; o.material.vertexColors = true; o.material.color.setHex(0xffffff);
+      if (o.isMesh && o.material && o.material.name && o.material.name.startsWith('Mateo')) o.material.envMapIntensity = 0.15;
     });
-    /* Civilian hair + beard: the mannequin head is smooth, so the
-       undercut (short sides, dark cap on top/back) and the thin beard
-       are procedural meshes parented to the Head bone, so they follow
-       every head turn of the Walk/Run clips. Bone-local frame in the
-       Mixamo bind pose: +Y up toward the crown, +Z out of the face. */
-    const headBone = model.getObjectByName('mixamorig:Head');
+    root.add(model);
+    /* Thin beard only: the short01 crop hair is already in the GLB
+       (MPFB asset); MPFB ships no facial hair. Bone-local frame in
+       the Mixamo bind pose: +Y up toward the crown, +Z out of the face. */
+    /* Bone lookup is colon-tolerant: the GLB file names the bones
+       'mixamorig:RightHand', but the loaded THREE.Bone objects are named
+       'mixamorigRightHand' (the colon is stripped on load — found
+       18 Nov 2026, debug-bone2). The exact-name lookup silently returned
+       null, so loadPistol never ran and Mateo had no pistol (and no
+       beard). Match with colons stripped on both sides. */
+    const findBone = (name) => {
+      const want = name.replace(/:/g, '');
+      let found = null;
+      model.traverse((o) => { if (!found && o.name && o.name.replace(/:/g, '') === want) found = o; });
+      return found;
+    };
+    const headBone = findBone('mixamorig:Head');
     if (headBone) {
-      const hairMat = toon(0x1F1A16);
-      const hair = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 10, 0, Math.PI * 2, 0, 1.9), hairMat);
-      hair.position.set(0, 0.13, -0.015); hair.scale.set(1.05, 0.9, 1.1);
-      headBone.add(hair);
       const beard = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), toon(0x2A2018));
       beard.position.set(0, 0.005, 0.07); beard.scale.set(1, 0.5, 0.45);
       headBone.add(beard);
     }
+    const handBone = findBone('mixamorig:RightHand');
+    if (handBone) loadPistol(handBone, mt);
     const mixer = new THREE.AnimationMixer(model);
     const byName = (re) => gltf.animations.find((a) => re.test(a.name));
     mt.mixer = mixer;
     mt.actions = {
-      idle: byName(/idle/i) ? mixer.clipAction(byName(/idle/i)) : null,
-      walk: byName(/walk/i) ? mixer.clipAction(byName(/walk/i)) : null,
-      run: byName(/run/i) ? mixer.clipAction(byName(/run/i)) : null,
+      idle: byName(/^idle$/i) ? mixer.clipAction(byName(/^idle$/i)) : null,
+      walk: byName(/^walk$/i) ? mixer.clipAction(byName(/^walk$/i)) : null,
+      run: byName(/^run$/i) ? mixer.clipAction(byName(/^run$/i)) : null,
+      aim: byName(/^aim$/i) ? mixer.clipAction(byName(/^aim$/i)) : null,
+      fire: byName(/^fire$/i) ? mixer.clipAction(byName(/^fire$/i)) : null,
     };
     mt.ready = true;
     window.__MATEO_GLB = true;
@@ -808,17 +1097,72 @@ function makeMateo() {
   scene.add(g);
   return g;
 }
+/* Pistol (Quaternius P226, CC0, vendor/pistol.glb) parented to the
+   RightHand bone — fpp-tpp-shooter-starter pattern: the weapon is a
+   child of rightHand, the aim clip rotates the spine. The GLB's raw
+   units are ~8x real size behind a 100x node scale, so the mesh is
+   normalised by bounding box to a 0.28 m barrel and re-centred on
+   its middle; the barrel is aligned to the hand bone's +Y (the
+   forearm direction when the wrist is straight). */
+function loadPistol(handBone, mt) {
+  new THREE.GLTFLoader().load('vendor/pistol.glb', (gltf) => {
+    const raw = gltf.scene;
+    const bb = new THREE.Box3().setFromObject(raw);
+    const size = new THREE.Vector3(); bb.getSize(size);
+    const center = new THREE.Vector3(); bb.getCenter(center);
+    const s = 0.28 / Math.max(size.x, size.y, size.z);
+    const inner = new THREE.Group();
+    inner.add(raw);
+    raw.position.set(-center.x, -center.y, -center.z); // centre the mesh on the grip
+    inner.scale.setScalar(s);
+    inner.rotation.set(0, 0, Math.PI / 2); // barrel (raw long axis X) -> hand +Y
+    const grip = new THREE.Group();
+    grip.add(inner);
+    grip.position.set(0, -0.02, 0.01);
+    handBone.add(grip);
+    mt.pistol = grip;
+    // lighten the gunmetal so the pistol reads against the dark road at
+    // dusk (the stock P226 materials are near-black #28292a/#414241 and
+    // vanish in the mission shot). Two-tone: light slide, darker grip.
+    // A small emissive lifts the camera-facing shadow side (the barrel
+    // points away from the camera, so the visible side is unlit), and
+    // 1.15x scale makes the 0.28 m pistol read at 2.4 m.
+    raw.traverse((o) => {
+      if (o.isMesh && o.material && o.material.color) {
+        const c = o.material.color.getHex();
+        o.material.color.setHex(c === 0x28292a ? 0x555555 : 0x8f8f8f);
+        o.material.emissive = new THREE.Color(0x2a2a2a);
+      }
+    });
+    grip.scale.setScalar(1.15);
+    // muzzle flash: a glow sprite at the barrel tip + the shared muzzle light
+    const tip = new THREE.Group();
+    tip.position.set(0, 0.16, 0); // just past the 0.28 m barrel tip
+    grip.add(tip);
+    const flash = glowSprite(C.sun, 0.9);
+    flash.visible = false;
+    tip.add(flash);
+    mt.muzzleSprite = flash;
+    tip.add(muzzle); // the PointLight now rides the barrel tip, not the camera
+    dullEnv(raw);
+    // staged mission shot: hold the muzzle glow lit without firing a live
+    // round (the old setTimeout(shoot) in main.js killed a ped and raised
+    // wanted 1 -> 2, which sent the police cars swarming the camera).
+    if (S.missionGlow) { flash.visible = true; muzzle.intensity = 6; }
+    window.__PISTOL_READY = true;
+  }, undefined, () => { window.__PISTOL_READY = 'error'; });
+}
 
 /* ---------- entities ---------- */
 buildWorld();
-const playerMesh = makeMateo(); // Mateo Vega — slim, orange bomber, white sneakers
+const playerMesh = makeMateo(); // Mateo Vega — realistic MPFB2 civilian, orange bomber, white sneakers
 playerMesh.position.set(-118, 0, 20);
 const playerCar = makeCar(0xD1003F, false, 'SCARLET ARROW', 'sports'); // deep crimson-magenta (v3.1: C.magenta washed to pale pink under the bright sun)
 playerCar.position.set(-104, 0, -24); playerCar.rotation.y = Math.PI / 2;
 playerCar.userData.health = 100;
 const traffic = [];
 for (let i = 0; i < 18; i++) {
-  const prof = pick(['sedan', 'sedan', 'compact', 'van', 'truck']);
+  const prof = pick(['sedan', 'sedan', 'compact', 'van', 'truck', 'suv']);
   const car = makeCar(pick(CAR_COLORS), false, undefined, prof);
   const vertical = rnd() < 0.5;
   const road = pick(vertical ? ROAD_X : ROAD_Z);
@@ -928,7 +1272,9 @@ beaconGem.position.y = 8; beacon.add(beaconGem);
 const beaconGlow = glowSprite(C.sun, 16); beaconGlow.position.y = 8; beacon.add(beaconGlow);
 scene.add(beacon);
 
-/* ---------- viewmodel gun (attached to camera — never floating) ---------- */
+/* ---------- viewmodel gun (attached to camera — never floating) ----------
+   v3.3: visible ONLY while aiming (see sim.js updateHUD) — third-person
+   play shows the pistol in Mateo's hand instead. */
 const viewmodel = new THREE.Group();
 (function buildGun() {
   const gunMat = toon(C.pastel), gripMat = toon(C.orange);
@@ -946,6 +1292,7 @@ const viewmodel = new THREE.Group();
   camera.add(viewmodel);
 })();
 scene.add(camera);
-/* muzzle flash */
+/* muzzle flash — v3.3: the PointLight rides the pistol barrel tip
+   (added to the tip group in loadPistol); the camera no longer
+   carries it, so third-person shots show the flash at the gun. */
 const muzzle = new THREE.PointLight(C.sun, 0, 18);
-muzzle.position.set(0.34, -0.2, -1.2); camera.add(muzzle);

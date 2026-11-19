@@ -1,1194 +1,1149 @@
-/* PIER HEAT — Sunset Bay. sim.js: driving, walking, traffic, peds, police, camera, HUD.
-   Movement model learned from reference repos (see ~/workspace/makefun/gta6-01-STUDY.md)
-   and rewritten here in our own code. Shares globals with core.js / world.js / main.js. */
-'use strict';
+// PIER HEAT — sim.js
+// The living city: walking and driving, traffic and pedestrians, the police
+// response by wanted level, the eight chained missions, and the HUD with its
+// minimap. Rendering lives in world.js; input and sound live in main.js.
+(function () {
+  'use strict';
+  var PH = window.PH, G = PH.G, U = PH.utils, THREE = window.THREE;
+  var W = PH.world, B = PH.builders;
 
-/* ---------- collision helpers ---------- */
-const CAR_RADIUS = 1.9;
-function crashDamage(impactSpeed) {
-  return Math.min(30, Math.max(0, Math.abs(impactSpeed) - 12) * 1);
-}
-/* Push a circle (x,z,r) out of building AABBs. Returns {x, z, nx, nz, hit}. */
-function resolveBuildings(x, z, r) {
-  let nx = 0, nz = 0, hit = false;
-  for (const b of BUILDINGS) {
-    const dx = x - b.x, dz = z - b.z;
-    const px = b.hw + r - Math.abs(dx), pz = b.hd + r - Math.abs(dz);
-    if (px > 0 && pz > 0) {
-      hit = true;
-      if (px < pz) { x += dx > 0 ? px : -px; nx = dx > 0 ? 1 : -1; }
-      else { z += dz > 0 ? pz : -pz; nz = dz > 0 ? 1 : -1; }
-    }
-  }
-  return { x, z, nx, nz, hit };
-}
-/* March a ray from pivot along dir; shorten it before it enters a building. */
-function cameraClearDist(px, py, pz, dx, dy, dz, dist) {
-  const steps = 16;
-  for (let i = 1; i <= steps; i++) {
-    const t = (i / steps) * dist;
-    const x = px + dx * t, y = py + dy * t, z = pz + dz * t;
-    for (const b of BUILDINGS) {
-      if (Math.abs(x - b.x) < b.hw + 0.6 && Math.abs(z - b.z) < b.hd + 0.6 && y < b.h + 1) {
-        return Math.max(0.8, t - 0.6);
-      }
-    }
-  }
-  return dist;
-}
-/* v3.2: the same march, against CARS (Leonida camera/index.ts: the
-   chase-cam raycast covers the STATIC + VEHICLE groups — v3.1 only
-   tested buildings, so the camera clipped straight through the police
-   car in the user's image-80.png). Every visible car is a 2.2 m
-   radius, 1.9 m tall cylinder; the driven car itself is excluded. */
-function cameraClearCars(px, py, pz, dx, dy, dz, dist) {
-  const driven = S.drivenCar || playerCar;
-  const cars = [];
-  for (const c of [...traffic, ...police]) if (c.visible && c !== driven) cars.push(c);
-  if (S.mode === 'foot' && playerCar.visible) cars.push(playerCar);
-  const steps = 16;
-  for (let i = 1; i <= steps; i++) {
-    const t = (i / steps) * dist;
-    const x = px + dx * t, y = py + dy * t, z = pz + dz * t;
-    if (y > 1.9) continue;
-    for (const c of cars) {
-      /* A pursuer glued to the player's bumper (RAMMING, 4-5 m) must
-         NOT collapse the chase cam into the player car: ignore cars
-         whose centre is within 4.5 m of the pivot, and never pull the
-         camera closer than 3 m — a brief clip through the pursuer
-         beats losing the whole shot. */
-      const pdx = c.position.x - px, pdz = c.position.z - pz;
-      if (pdx * pdx + pdz * pdz < 4.5 * 4.5) continue;
-      const ddx = x - c.position.x, ddz = z - c.position.z;
-      if (ddx * ddx + ddz * ddz < 2.3 * 2.3) return Math.max(3.0, t - 0.6);
-    }
-  }
-  return dist;
-}
-function cameraClear(px, py, pz, dx, dy, dz, dist) {
-  return Math.min(cameraClearDist(px, py, pz, dx, dy, dz, dist),
-    cameraClearCars(px, py, pz, dx, dy, dz, dist));
-}
-/* Mass-weighted car-vs-car separation + impulse. a, b are car meshes. */
-function collideCars(a, b) {
-  const ua = a.userData, ub = b.userData;
-  const dx = b.position.x - a.position.x, dz = b.position.z - a.position.z;
-  const d = Math.hypot(dx, dz);
-  const min = CAR_RADIUS * 2;
-  if (d >= min || d < 1e-4) return 0;
-  const nx = dx / d, nz = dz / d, depth = min - d;
-  const ma = ua.profile.mass, mb = ub.profile.mass;
-  const fa = mb / (ma + mb), fb = ma / (ma + mb);
-  a.position.x -= nx * depth * fa; a.position.z -= nz * depth * fa;
-  b.position.x += nx * depth * fb; b.position.z += nz * depth * fb;
-  let vn = (ua.vx - ub.vx) * nx + (ua.vz - ub.vz) * nz;
-  if (vn > 0) {
-    /* v3.1: cap the impulse. A traffic car teleporting across the map
-       (lane wrap / recycle) gets a derived velocity of ~320 m / dt for
-       one frame; uncapped, that impulse flung the player car 280 m
-       into the map edge in the mission shot. */
-    vn = Math.min(vn, 60);
-    const rest = 0.4;
-    const imp = -(1 + rest) * vn / (1 / ma + 1 / mb);
-    ua.vx += (imp / ma) * nx; ua.vz += (imp / ma) * nz;
-    ub.vx -= (imp / mb) * nx; ub.vz -= (imp / mb) * nz;
-    return vn;
-  }
-  return 0;
-}
-function damageCar(car, impactSpeed) {
-  const d = crashDamage(impactSpeed);
-  if (d <= 0) return;
-  car.userData.health -= d;
-  if (car === (S.drivenCar || playerCar)) S.carHealth = Math.max(0, car.userData.health);
-}
-
-/* ---------- driving: velocity-vector arcade model ---------- */
-function stepCar(car, input, dt) {
-  const u = car.userData, cfg = u.profile;
-  let yaw = car.rotation.y;
-  const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
-  const rx = Math.cos(yaw), rz = -Math.sin(yaw);
-  let vf = u.vx * fx + u.vz * fz;
-  let vl = u.vx * rx + u.vz * rz;
-  const ratio = Math.min(1, Math.abs(vf) / cfg.top);
-  if (input.throttle > 0) vf += input.throttle * cfg.engine * (1 - 0.7 * ratio * ratio) * dt;
-  if (input.throttle < 0) {
-    if (vf > 0.5) vf = Math.max(0, vf - cfg.brake * dt);
-    else vf = Math.max(-cfg.reverse, vf - cfg.engine * 0.6 * (1 - Math.min(1, Math.abs(vf) / cfg.reverse)) * dt);
-  }
-  if (input.handbrake) vf = vf > 0 ? Math.max(0, vf - 6 * dt) : Math.min(0, vf + 6 * dt);
-  // rolling + aero drag
-  const dragDecel = (0.0004 * vf * vf + 1.5) * dt;
-  vf = vf > 0 ? Math.max(0, vf - dragDecel) : Math.min(0, vf + dragDecel);
-  const top = input.boost ? cfg.top * 1.15 : cfg.top;
-  vf = clamp(vf, -cfg.reverse, top);
-  // steering: authority ramps with speed, falls off at high speed; handbrake flicks it
-  const authority = Math.min(1, Math.abs(vf) / 4) / (1 + Math.abs(vf) / 25);
-  const targetYawRate = input.steer * cfg.turn * authority * (vf >= 0 ? 1 : -1) * (input.handbrake ? 1.35 : 1);
-  u.yawRate = damp(u.yawRate, targetYawRate, 9, dt);
-  yaw += u.yawRate * dt;
-  // grip bleeds lateral velocity; handbrake lets the tail step out (drift)
-  const grip = input.handbrake ? cfg.gripHB : cfg.grip;
-  vl *= Math.exp(-grip * dt);
-  const nfx = -Math.sin(yaw), nfz = -Math.cos(yaw);
-  const nrx = Math.cos(yaw), nrz = -Math.sin(yaw);
-  u.vx = nfx * vf + nrx * vl;
-  u.vz = nfz * vf + nrz * vl;
-  car.position.x += u.vx * dt;
-  car.position.z += u.vz * dt;
-  car.position.x = clamp(car.position.x, -235, 155);
-  car.position.z = clamp(car.position.z, -155, 155);
-  car.rotation.y = yaw;
-  // walls: push out, kill inward velocity, damage by impact speed
-  const res = resolveBuildings(car.position.x, car.position.z, CAR_RADIUS);
-  if (res.hit) {
-    const into = u.vx * res.nx + u.vz * res.nz;
-    car.position.x = res.x; car.position.z = res.z;
-    if (into < 0) {
-      u.vx -= into * res.nx; u.vz -= into * res.nz;
-      u.vx *= 0.6; u.vz *= 0.6;
-      damageCar(car, -into);
-      if (car === (S.drivenCar || playerCar)) beep(120, 0.1, 'sawtooth', 0.1);
-    }
-  }
-  for (const w of u.wheels) w.rotation.x += u.wheelSpinSign * vf * dt / u.wheelRadius;
-  if (u.wheelPivots[0]) { u.wheelPivots[0].rotation.y = u.steerSign * input.steer * 0.4; u.wheelPivots[1].rotation.y = u.steerSign * input.steer * 0.4; }
-  // v3.3 body roll: the car leans into the turn (Kenney GLB body group)
-  if (u.bodyGroup) u.bodyGroup.rotation.z = clamp(-u.yawRate * 0.03, -0.07, 0.07);
-  return { vf, vl };
-}
-
-const footVel = { x: 0, z: 0 };
-let footSpeed = 0;
-/* ---------- movement state machine (San Andreas Unity, translated) ----------
-   BaseMovementState.cs priority: Jump > Walk > Run > Sprint > Panic > Stand.
-   PedManager.cs: a state switch is locked 0.166 s after the last switch,
-   and re-entering the aim state is locked 0.33 s (minTimeToReturnToAimState).
-   Ped.cs:560-576: speed comes from the animation's root motion, not the
-   input — the state picks the clip, the clip's authored speed moves Mateo.
-   (mateo.glb clips are in-place Mixamo clips with no root translation to
-   extract — the Hips location tracks were stripped at build time — so each state's speed is its authored value below — the
-   structure is the SA Unity one: input -> state -> clip -> speed.)
-   JumpState.cs: jump = JUMP_launch -> JUMP_glide -> JUMP_land, re-entry
-   0.4 s, no jump with a heavy weapon or while not grounded, no rotation
-   change in the air, glide speed 2. Mateo's pistol is a LIGHT weapon, so
-   sprinting and jumping with it are allowed; sprint cannot aim — shooting
-   drops Sprint back to Run. Crouch / Roll / Surrender / Panic / DriveBy
-   are reference only and are NOT implemented here. */
-const MV = { STAND: 0, WALK: 4.2, RUN: 8, SPRINT: 11.5 };
-const MV_SWITCH_LOCK = 0.166, MV_AIM_LOCK = 0.33, MV_JUMP_REENTRY = 0.4;
-const MV_JUMP_GLIDE = 2; // JumpState.cs glideVelocity
-
-function updateFoot(dt, keys) {
-  const u = playerMesh.userData;
-  u.mvState = u.mvState || 'STAND';
-  u.mvStateT = (u.mvStateT || 0) + dt; // time since the last state switch
-  u.jumpLockT = Math.max(0, (u.jumpLockT || 0) - dt);
-  if ((S.aimT || 0) > 0) S.aimT -= dt; // aim re-entry lock (0.33 s)
-  const shifting = !!(keys.ShiftLeft || keys.ShiftRight) || (SHOT === 'street' && params.has('runcheck'));
-  let mx = 0, mz = 0;
-  if (keys.KeyW || keys.ArrowUp) mz += 1;
-  if (keys.KeyS || keys.ArrowDown) mz -= 1;
-  if (keys.KeyA || keys.ArrowLeft) mx -= 1;
-  if (keys.KeyD || keys.ArrowRight) mx += 1;
-  /* Street shot: Mateo walks down Ocean Drive on his own so the shot
-     catches him mid-stride, slim and animated — not standing still.
-     ?idlecheck=1: stand still instead (v3.4 idle probe). */
-  if (SHOT === 'street') { mx = 0; mz = params.has('idlecheck') ? 0 : 1; }
-  // camera-relative: forward/right from the orbit yaw
-  const fx = -Math.sin(S.yaw), fz = -Math.cos(S.yaw);
-  const rx = Math.cos(S.yaw), rz = -Math.sin(S.yaw);
-  let dx = fx * mz + rx * mx, dz = fz * mz + rz * mx;
-  const len = Math.hypot(dx, dz);
-  if (len > 0) { dx /= len; dz /= len; }
-  const moving = len > 0;
-
-  /* --- jump (Space on foot; Space is the handbrake in a car) --- */
-  const spaceDown = !!keys.Space;
-  if (spaceDown && !u.spacePrev && !u.jump && u.jumpLockT <= 0) {
-    // CanJump(): light weapon (pistol) + grounded (always, on foot here)
-    u.jump = { t: 0, dirX: moving ? dx : -Math.sin(playerMesh.rotation.y), dirZ: moving ? dz : -Math.cos(playerMesh.rotation.y) };
-  }
-  u.spacePrev = spaceDown;
-
-  /* --- pick the target state from input (priority Jump > Walk > Run > Sprint) --- */
-  let want = 'STAND';
-  if (u.jump) want = 'JUMP';
-  else if (moving) {
-    if (shifting) {
-      u.runHoldT = (u.runHoldT || 0) + dt; // hold Shift to build into a sprint
-      // runcheck probe (street shot): stay in RUN, never build to SPRINT
-      if (SHOT === 'street' && params.has('runcheck')) u.runHoldT = Math.min(u.runHoldT, 0.9);
-      want = (u.runHoldT > 1.0 && (S.aimT || 0) <= 0 && !S.aiming) ? 'SPRINT' : 'RUN'; // sprint cannot aim
-    } else { u.runHoldT = 0; want = 'WALK'; }
-  } else u.runHoldT = 0;
-  /* state switch locked 0.166 s (PedManager.cs) — except INTO Jump, which
-     must answer the button press at once (JumpState re-entry is its own lock) */
-  if (want !== u.mvState && (want === 'JUMP' || u.mvStateT >= MV_SWITCH_LOCK)) {
-    u.mvState = want; u.mvStateT = 0;
-  }
-  const state = u.mvState;
-
-  /* --- root-motion speed: the state's clip speed moves Mateo --- */
-  let target = state === 'JUMP' ? MV_JUMP_GLIDE : (moving ? (MV[state] || 0) : 0);
-  if (S.aiming) target = Math.min(target, 2.0); // v3.3: aiming is a slow walk, aim pose owns the mixer
-  const rate = target > footSpeed ? 20 : 28; // accel / decel (m/s^2)
-  footSpeed = Math.abs(target - footSpeed) <= rate * dt ? target : footSpeed + Math.sign(target - footSpeed) * rate * dt;
-  /* --- move: in the air the glide carries Mateo along the launch
-     direction at 2 m/s and the heading is frozen (JumpState.cs: no
-     rotation change in the air) --- */
-  const jx = u.jump ? u.jump.dirX : dx, jz = u.jump ? u.jump.dirZ : dz;
-  playerMesh.position.x += jx * footSpeed * dt;
-  playerMesh.position.z += jz * footSpeed * dt;
-  footVel.x = jx * footSpeed; footVel.z = jz * footSpeed;
-  playerMesh.position.x = clamp(playerMesh.position.x, -235, 155);
-  playerMesh.position.z = clamp(playerMesh.position.z, -155, 155);
-  const res = resolveBuildings(playerMesh.position.x, playerMesh.position.z, 0.4);
-  playerMesh.position.x = res.x; playerMesh.position.z = res.z;
-  // never walk through a car
-  for (const c of [...traffic, ...police, playerCar]) {
-    if (c === (S.drivenCar || playerCar) && S.mode === 'car') continue;
-    if (!c.visible && police.includes(c)) continue;
-    const d = dist2d(playerMesh.position, c.position);
-    if (d < CAR_RADIUS + 0.4 && d > 1e-3) {
-      const push = (CAR_RADIUS + 0.4 - d);
-      playerMesh.position.x += (playerMesh.position.x - c.position.x) / d * push;
-      playerMesh.position.z += (playerMesh.position.z - c.position.z) / d * push;
-    }
-  }
-  if (len > 0 && !u.jump) {
-    const targetYaw = Math.atan2(-dx, -dz);
-    playerMesh.rotation.y = angleLerp(playerMesh.rotation.y, targetYaw, clamp(12 * dt, 0, 1));
-  }
-  S.speedKmh = footSpeed * 3.6;
-
-  /* --- jump phases: launch (0.18 s) -> glide (0.37 s) -> land (0.15 s) ---
-     The GLB has no JUMP_launch/glide/land clips, so the three phases are
-     driven on the model root (rise / tucked glide / crouch recover) while
-     the mixer holds the Idle clip — the timing and the rules are the
-     JumpState.cs ones. */
-  let jumpY = 0, jumpLean = 0;
-  if (u.jump) {
-    const j = u.jump; j.t += dt;
-    const LAUNCH = 0.18, GLIDE = 0.37, LAND = 0.15, TOTAL = LAUNCH + GLIDE + LAND;
-    if (j.t < LAUNCH) { // JUMP_launch: crouch, then rise
-      const k = j.t / LAUNCH;
-      jumpY = k * k * 0.35; jumpLean = -0.08 * k;
-    } else if (j.t < LAUNCH + GLIDE) { // JUMP_glide: tucked, peak 0.9 m
-      const k = (j.t - LAUNCH) / GLIDE;
-      jumpY = 0.35 + Math.sin(k * Math.PI) * 0.55; jumpLean = -0.16;
-    } else if (j.t < TOTAL) { // JUMP_land: settle, no upward movement
-      const k = (j.t - LAUNCH - GLIDE) / LAND;
-      jumpY = Math.max(0, 0.35 * (1 - k)); jumpLean = -0.08 * (1 - k);
-    } else { // landed: back to Stand/Walk, 0.4 s before the next jump
-      u.jump = null; u.jumpLockT = MV_JUMP_REENTRY;
-      if (u.mvState === 'JUMP') { u.mvState = moving ? 'WALK' : 'STAND'; u.mvStateT = 0; }
-    }
-  }
-
-  const moving2 = footSpeed > 0.3;
-  // eased swing: amplitude ramps toward walk/run target instead of snapping
-  // (crossfade-style blend, ~0.3 s) — drives the walk-phase bob timing.
-  const targetSwing = moving2 ? (footSpeed > 6 ? 0.62 : 0.48) : 0;
-  u.swing = damp(u.swing, targetSwing, 6, dt);
-  u.walkPhase += dt * (moving2 ? (footSpeed > 6 ? 12 : 9) : 0);
-  /* v3.1: rigged GLB Mateo — AnimationMixer crossfades Idle/Walk/Run
-     (0.3 s), the openvice IDLE_STANCE / walk_player / run_player /
-     SPRINT_civi pattern. Bob + forward lean live on the model wrapper. */
-  mateoSetSpeed(u.jump ? 0 : footSpeed, state === 'SPRINT' ? 1.35 : 1);
-  const bob = u.jump ? 0 : (moving2 ? Math.abs(Math.sin(u.walkPhase)) * 0.05 : Math.sin(S.time * 1.6) * 0.012);
-  const mt = u.mateo;
-  if (mt && mt.root) {
-    mt.root.position.y = u.jump ? jumpY : bob;
-    const lean = u.jump ? jumpLean : (footSpeed > 6 ? -0.10 : 0);
-    mt.root.rotation.x = damp(mt.root.rotation.x || 0, lean, 6, dt);
-  }
-}
-
-function updatePlayer(dt, keys) {
-  if (S.transition) return; // walk-to-door animation owns the player
-  if (S.mode === 'car') {
-    const car = S.drivenCar || playerCar;
-    const input = {
-      throttle: ((keys.KeyW || keys.ArrowUp) ? 1 : 0) - ((keys.KeyS || keys.ArrowDown) ? 1 : 0),
-      steer: ((keys.KeyA || keys.ArrowLeft) ? 1 : 0) - ((keys.KeyD || keys.ArrowRight) ? 1 : 0),
-      handbrake: !!keys.Space,
-      boost: !!(keys.ShiftLeft || keys.ShiftRight),
-    };
-    /* v3.3.1 staged chase: hold full throttle so the shot reads ~150+
-       KM/H like the top-rank entries (was 41 KM/H: the staged car
-       coasted down with no input). dt is clamped to 0.05, so the car
-       only travels ~100 m during the SwiftShader load — it stays on
-       Ocean Drive and the staged police/heli follow it. */
-    if (SHOT === 'chase' && S.shotCruise) { input.throttle = 1; input.steer = 0; input.handbrake = false; }
-    const { vf } = stepCar(car, input, dt);
-    S.carYaw = car.rotation.y;
-    S.carSpeed = vf;
-    S.speedKmh = Math.abs(vf) * 3.6;
-    if (S.carHealth <= 0) {
-      toast('CAR WRECKED — GET OUT!', 3000);
-      S.carHealth = 100; car.userData.health = 100;
-      tryEnterExitCar();
-    }
-  } else {
-    updateFoot(dt, keys);
-  }
-}
-
-/* ---------- traffic: lane following + IDM-lite car following + turns ---------- */
-function laneAlong(car, x, z) { return car.userData.vertical ? z : x; }
-function laneFixed(car, x, z) { return car.userData.vertical ? x : z; }
-function updateTraffic(dt) {
-  const allCars = [...traffic, ...police.filter((p) => p.visible), playerCar];
-  if (S.drivenCar && S.drivenCar !== playerCar) allCars.push(S.drivenCar);
-  for (const car of traffic) {
-    if (S.drivenCar === car) continue;
-    const u = car.userData;
-    // --- leader: nearest car ahead in the same lane (IDM) ---
-    let gap = Infinity, leaderSpeed = 0;
-    for (const o of allCars) {
-      if (o === car) continue;
-      const of = laneFixed(o, o.position.x, o.position.z);
-      if (Math.abs(of - u.road) > 6) continue;
-      const oa = laneAlong(o, o.position.x, o.position.z);
-      const ahead = (oa - u.along) * u.dir;
-      if (ahead <= 0 || ahead > 40) continue;
-      const g = ahead - 4;
-      if (g < gap) { gap = g; leaderSpeed = Math.abs(o.userData.vertical !== undefined && o.userData.along !== undefined ? (o.userData.vertical ? o.userData.vz : o.userData.vx) : 0) || Math.hypot(o.userData.vx || 0, o.userData.vz || 0); }
-    }
-    // --- pedestrian in the path: brake so we can stop in time ---
-    let pedGap = Infinity;
-    for (const p of peds) {
-      if (p.userData.state !== 'walk') continue;
-      const pf = laneFixed(p, p.position.x, p.position.z);
-      if (Math.abs(pf - u.road) > 2.6) continue;
-      const pa = laneAlong(p, p.position.x, p.position.z);
-      const ahead = (pa - u.along) * u.dir;
-      if (ahead > 0 && ahead < 22) pedGap = Math.min(pedGap, ahead - 5);
-    }
-    // IDM: a=1.5, T=1.2s, s0=2, b=2.5 — crash-free by construction
-    let target = u.cruise;
-    if (gap < Infinity) {
-      const v = u.speed, dv = v - leaderSpeed;
-      const sStar = 2 + Math.max(0, v * 1.2 + (v * dv) / (2 * Math.sqrt(1.5 * 2.5)));
-      const accel = 1.5 * (1 - Math.pow(v / u.cruise, 4) - Math.pow(sStar / Math.max(0.5, gap), 2));
-      target = clamp(v + accel * dt * 4, 0, u.cruise);
-    }
-    if (pedGap < Infinity) target = Math.min(target, Math.sqrt(2 * 7 * Math.max(0, pedGap)));
-    // --- intersection turns: slow down, sometimes turn onto the cross street ---
-    const cross = u.vertical ? ROAD_Z : ROAD_X;
-    let nearX = null;
-    for (const c of cross) if (Math.abs(u.along - c) < 16) { nearX = c; break; }
-    if (nearX !== null && Math.abs(u.along - nearX) < 3) {
-      if (!u.turnDecided) {
-        u.turnDecided = true;
-        u.willTurn = rnd() < 0.3;
-        u.turnAt = nearX;
-      }
-      if (u.willTurn) target = Math.min(target, 7);
-    } else if (nearX === null) u.turnDecided = false;
-    if (u.willTurn && u.turnAt !== undefined && Math.abs(u.along - u.turnAt) < 1.5) {
-      const wasVertical = u.vertical;
-      const pos = wasVertical ? car.position.x : car.position.z;
-      u.vertical = !wasVertical;
-      u.road = u.turnAt;
-      u.along = pos;
-      u.dir = rnd() < 0.5 ? 1 : -1;
-      u.willTurn = false; u.turnAt = undefined;
-    }
-    u.speed = damp(u.speed, target, target < u.speed ? 5 : 2.6, dt);
-    u.along += u.speed * u.dir * dt;
-    if (u.along > CITY + 10) u.along = -CITY - 10;
-    if (u.along < -CITY - 10) u.along = CITY + 10;
-    if (u.vertical) { car.position.set(u.road + (u.dir > 0 ? 3 : -3), 0, u.along); car.rotation.y = u.dir > 0 ? Math.PI : 0; }
-    else { car.position.set(u.along, 0, u.road + (u.dir > 0 ? 3 : -3)); car.rotation.y = u.dir > 0 ? -Math.PI / 2 : Math.PI / 2; }
-    /* v3.1: velocity IS the lane velocity — never the position delta.
-       Deriving it from deltas exploded whenever a car was pushed,
-       wrapped (~320 m / dt) or turned, and the feedback loop kept
-       collided cars grinding with vn ~55 every frame (mission shot:
-       the player car was flung 280 m into the map edge on frame 1). */
-    if (u.vertical) { u.vx = 0; u.vz = u.dir * u.speed; }
-    else { u.vx = u.dir * u.speed; u.vz = 0; }
-    for (const w of u.wheels) w.rotation.x += u.wheelSpinSign * u.speed * dt / u.wheelRadius;
-  }
-  // --- car-vs-car collisions (player car, traffic, police) ---
-  const solids = [S.drivenCar || playerCar, ...traffic, ...police.filter((p) => p.visible)];
-  for (let i = 0; i < solids.length; i++) for (let j = i + 1; j < solids.length; j++) {
-    const a = solids[i], b = solids[j];
-    if (a === b) continue;
-    if (S.drivenCar === b && traffic.includes(b)) continue; // driven car is not traffic
-    const vn = collideCars(a, b);
-    if (vn > 0) {
-      // a ramming police car damages the player through the ram push, not here too
-      const driven = S.drivenCar || playerCar;
-      const policeHit = (a.userData.isPolice && b === driven) || (b.userData.isPolice && a === driven);
-      if (!policeHit) { damageCar(a, vn); damageCar(b, vn); }
-      if (a === driven || b === driven) beep(120, 0.1, 'sawtooth', 0.1);
-      // v3.5: ramming a police car IS a crime — but only when the player
-      // hits a CALM patrol car. A pursuing unit ramming the player is
-      // police action, not a new crime by the player. 5 s cooldown so
-      // one scrape cannot stack stars frame by frame.
-      if (policeHit && S.mode === 'car' && vn > 3 && S.time - S.lastRamCrime > 5) {
-        const pc = a.userData.isPolice ? a : b;
-        if (pc.userData.status === 'PATROL') {
-          S.lastRamCrime = S.time;
-          setWanted(Math.max(S.wanted, 1));
-          toast('RAMMED A PATROL CAR — WANTED ★', 2000);
-        }
-      }
-      if (a.userData.health <= 0) recycleCar(a);
-      if (b.userData.health <= 0) recycleCar(b);
-    }
-  }
-}
-function recycleCar(car) {
-  if (car === (S.drivenCar || playerCar)) return;
-  if (car.userData.isPolice) { car.visible = false; car.position.set(200, -50, 200); car.userData.health = 100; return; }
-  const vertical = rnd() < 0.5;
-  const road = pick(vertical ? ROAD_X : ROAD_Z);
-  car.userData.vertical = vertical; car.userData.road = road;
-  car.userData.along = -CITY + rnd() * CITY * 2;
-  car.userData.dir = rnd() < 0.5 ? 1 : -1;
-  car.userData.health = 100; car.userData.speed = car.userData.cruise;
-  car.userData.vx = 0; car.userData.vz = 0;
-}
-
-/* ---------- pedestrians: wander, flee, shoved / gibbed ---------- */
-function updatePeds(dt) {
-  const pp = playerPos();
-  const threat = S.mode === 'car'
-    ? { x: pp.x, z: pp.z, vx: (S.drivenCar || playerCar).userData.vx, vz: (S.drivenCar || playerCar).userData.vz, speed: Math.abs(S.carSpeed) }
-    : { x: pp.x, z: pp.z, vx: footVel.x, vz: footVel.z, speed: footSpeed };
-  for (const p of peds) {
-    const u = p.userData;
-    if (u.state === 'gone') {
-      u.timer -= dt;
-      if (u.timer <= 0) {
-        u.state = 'walk'; u.timer = 0; p.visible = true; p.rotation.x = 0;
-        p.position.set(-CITY + rnd() * CITY * 2, 0, -CITY + rnd() * CITY * 2);
-        u.vertical = rnd() < 0.5; u.road = pick(u.vertical ? ROAD_X : ROAD_Z);
-        u.along = -CITY + rnd() * CITY * 2; u.dir = rnd() < 0.5 ? 1 : -1;
-      }
-      continue;
-    }
-    if (u.state === 'down') {
-      u.timer -= dt;
-      p.rotation.x = u.timer > 0.5 ? Math.min(Math.PI / 2, p.rotation.x + dt * 9) : (u.timer / 0.5) * (Math.PI / 2);
-      if (u.timer <= 0) { u.state = 'walk'; p.rotation.x = 0; }
-      continue;
-    }
-    // fear: close proximity, or a fast threat bearing down on a path to hit them
-    let scared = false, fx = 0, fz = 0;
-    const dx = p.position.x - threat.x, dz = p.position.z - threat.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist < 5.5) {
-      scared = true; fx = dist > 1e-3 ? dx / dist : 1; fz = dist > 1e-3 ? dz / dist : 0;
-    } else if (threat.speed > 8 && dist < 18) {
-      const ts = Math.hypot(threat.vx, threat.vz) || 1;
-      const tnx = threat.vx / ts, tnz = threat.vz / ts;
-      const ahead = dx * tnx + dz * tnz;
-      const lateral = dx * tnz - dz * tnx;
-      if (ahead > 0 && Math.abs(lateral) < 3.6) {
-        scared = true;
-        const side = lateral >= 0 ? 1 : -1;
-        fx = tnz * side; fz = -tnx * side;
-      }
-    }
-    if (scared) {
-      p.rotation.y = Math.atan2(-fz, fx);
-      p.position.x += fx * 5 * dt; p.position.z += fz * 5 * dt;
-      // keep the lane data in sync so they don't snap back when calm
-      u.along = laneAlong(p, p.position.x, p.position.z);
-      u.side = clamp(laneFixed(p, p.position.x, p.position.z) - u.road, -12, 12);
-    } else {
-      u.along += u.speed * u.dir * dt;
-      if (u.along > CITY + 10) u.along = -CITY - 10;
-      if (u.along < -CITY - 10) u.along = CITY + 10;
-      if (u.vertical) { p.position.set(u.road + u.side, 0, u.along); p.rotation.y = u.dir > 0 ? 0 : Math.PI; }
-      else { p.position.set(u.along, 0, u.road + u.side); p.rotation.y = u.dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
-    }
-    u.walkPhase += dt * 7;
-    const targetSwing = u.state === 'walk' ? 0.42 : 0;
-    u.swing = damp(u.swing, targetSwing, 6, dt);
-    const sw = Math.sin(u.walkPhase) * u.swing;
-    u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
-    u.shinL.rotation.x = -Math.max(0, -sw) * 1.1;
-    u.shinR.rotation.x = -Math.max(0, sw) * 1.1;
-    u.armL.rotation.x = -sw * 0.6; u.armR.rotation.x = sw * 0.6;
-    u.foreL.rotation.x = -0.3 - Math.abs(sw) * 0.3;
-    u.foreR.rotation.x = -0.3 - Math.abs(sw) * 0.3;
-    // hit by a car: shoved (<9 m/s) or gibbed (>=9 m/s)
-    const cars = S.mode === 'car' ? [(S.drivenCar || playerCar)] : [...traffic, ...police.filter((pc) => pc.visible)];
-    for (const c of cars) {
-      if (dist2d(p.position, c.position) < 2.2) {
-        const sp = Math.hypot(c.userData.vx || 0, c.userData.vz || 0);
-        const byPlayer = c === (S.drivenCar || playerCar) && S.mode === 'car';
-        if (sp >= 9) {
-          u.state = 'gone'; u.timer = 3.5; p.visible = false;
-          // v3.5: running someone over only raises heat if a witness
-          // (cop or another ped within 30 m) saw it.
-          if (byPlayer) {
-            if (crimeWitnessed()) { setWanted(S.wanted + 1); toast('PEDESTRIAN DOWN — WITNESSED ★', 1800); }
-            else toast('PEDESTRIAN DOWN — NO WITNESS', 1800);
-            beep(90, 0.2, 'sawtooth', 0.14);
-          }
-        } else if (sp >= 2) {
-          u.state = 'down'; u.timer = 1.6;
-          if (byPlayer) {
-            if (crimeWitnessed()) { setWanted(S.wanted + 1); toast('PEDESTRIAN HIT — WITNESSED ★', 1600); }
-            beep(90, 0.15, 'sawtooth', 0.12);
-          }
-        }
-        break;
-      }
-    }
-  }
-}
-
-/* ---------- police AI: Vice City rules, translated to JS ----------
-   Logic learned from gtavc-j2me-ref World.java (updateWanted, spawnCop,
-   spawnPoliceCar, copsNear) and Ped.java (cop chase / arrest / shoot) —
-   rewritten here in our own code, distances in metres (1 unit = 1 m):
-   - wanted 0: PATROL ONLY — no pursuit. 2 foot cops walk beats, 2 cars cruise.
-   - 1 star: max 1 foot cop, walks 3.6 m/s to arrest (2.2 s within 1.5 m);
-     fights back ONLY if the player fights first; NO ram, NO shots, NO car spawn.
-   - 2+ stars: police cars spawn (1; 2 at 4+), every 9 s, 28–42 m away;
-     foot cops max 2 (3 at 3+), run 4.6 m/s, shoot on foot at 2.5–16 m
-     after a 0.6 s aim (55% hit, 4–8 dmg); lead car may ram.
-   - 3+ stars: heli; spotlight locks ~3 s, then it fires. 2nd heli at 5 stars.
-   - Decay: no cop within 40 m for 22 s -> wanted -1; at 0: "You lost the cops." */
-function copsNearCount(range) {
-  const pp = playerPos();
-  let n = 0;
-  for (const cp of copPeds) if (cp.visible && dist2d(cp.position, pp) < range) n++;
-  for (const pc of police) if (pc.visible && dist2d(pc.position, pp) < range) n++;
-  return n;
-}
-function clearCops() {
-  for (const cp of copPeds) { cp.visible = false; cp.position.set(200, -50, 200); cp.userData.status = 'PATROL'; cp.userData.closeT = 0; }
-  for (const pc of police) {
-    if (pc.userData.patrol) { pc.userData.status = 'PATROL'; }
-    else { pc.visible = false; pc.position.set(200, -50, 200); pc.userData.status = 'PATROL'; }
-  }
-  heli.visible = false; heli2.visible = false;
-  S.heliLockT = 0; S.heliLock2T = 0; S.calmT = 0;
-}
-/* Spawn a foot cop 28–42 m from the player, on a sidewalk. */
-function spawnFootCop() {
-  const cp = copPeds.find((c) => !c.visible);
-  if (!cp) return;
-  const pp = playerPos();
-  const a = rnd() * Math.PI * 2, d = 28 + rnd() * 14;
-  let x = pp.x + Math.cos(a) * d, z = pp.z + Math.sin(a) * d;
-  let rx = ROAD_X[0], rd = Infinity;
-  for (const v of ROAD_X) if (Math.abs(x - v) < rd) { rd = Math.abs(x - v); rx = v; }
-  let rz = ROAD_Z[0]; rd = Infinity;
-  for (const v of ROAD_Z) if (Math.abs(z - v) < rd) { rd = Math.abs(z - v); rz = v; }
-  if (Math.abs(x - rx) <= Math.abs(z - rz)) x = rx + (x > rx ? 8.5 : -8.5);
-  else z = rz + (z > rz ? 8.5 : -8.5);
-  const res = resolveBuildings(clamp(x, -150, 150), clamp(z, -150, 150), 0.5);
-  cp.position.set(res.x, 0, res.z);
-  cp.visible = true;
-  const u = cp.userData;
-  u.status = 'OBSERVING'; u.closeT = 0; u.attackCd = 1.5; u.aimT = 0; u.angry = false;
-  const pv = rnd() < 0.5;
-  u.patrol = { vertical: pv, road: pv ? rx : rz, along: pv ? cp.position.z : cp.position.x,
-    dir: rnd() < 0.5 ? 1 : -1, side: 8.5 };
-}
-/* Spawn a pursuit police car 28–42 m from the player, snapped onto a road. */
-function placePoliceCarNear(pc) {
-  const pp = playerPos();
-  const a = rnd() * Math.PI * 2, d = 28 + rnd() * 14;
-  const x = pp.x + Math.cos(a) * d, z = pp.z + Math.sin(a) * d;
-  let nx = ROAD_X[0], nd = Infinity;
-  for (const rx of ROAD_X) if (Math.abs(x - rx) < nd) { nd = Math.abs(x - rx); nx = rx; }
-  let nz = ROAD_Z[0]; nd = Infinity;
-  for (const rz of ROAD_Z) if (Math.abs(z - rz) < nd) { nd = Math.abs(z - rz); nz = rz; }
-  if (Math.abs(x - nx) <= Math.abs(z - nz)) pc.position.set(nx + (rnd() < 0.5 ? 3 : -3), 0, clamp(z, -150, 150));
-  else pc.position.set(clamp(x, -150, 150), 0, nz + (rnd() < 0.5 ? 3 : -3));
-  pc.userData.vx = 0; pc.userData.vz = 0; pc.userData.speed = 0;
-}
-/* Lane-following patrol cruise for a police car (no pursuit). */
-function stepPatrolCar(pc, dt) {
-  const u = pc.userData;
-  const oldX = pc.position.x, oldZ = pc.position.z;
-  let target = u.cruise;
-  for (const o of [...traffic, ...police]) {
-    if (o === pc || !o.visible) continue;
-    if (o.userData.along === undefined || o.userData.vertical === undefined) continue;
-    const of = o.userData.vertical ? o.position.x : o.position.z;
-    if (Math.abs(of - u.road) > 6) continue;
-    const oa = o.userData.vertical ? o.position.z : o.position.x;
-    const ahead = (oa - u.along) * u.dir;
-    if (ahead > 0 && ahead < 14) target = Math.min(target, Math.max(0, (ahead - 5) * 0.8));
-  }
-  u.speed = damp(u.speed, target, 3, dt);
-  u.along += u.speed * u.dir * dt;
-  if (u.along > CITY + 10) u.along = -CITY - 10;
-  if (u.along < -CITY - 10) u.along = CITY + 10;
-  if (u.vertical) { pc.position.set(u.road + (u.dir > 0 ? 3 : -3), 0, u.along); pc.rotation.y = u.dir > 0 ? Math.PI : 0; }
-  else { pc.position.set(u.along, 0, u.road + (u.dir > 0 ? 3 : -3)); pc.rotation.y = u.dir > 0 ? -Math.PI / 2 : Math.PI / 2; }
-  if (u.vertical) { u.vx = 0; u.vz = u.dir * u.speed; } // v3.1: lane velocity, never delta (see updateTraffic)
-  else { u.vx = u.dir * u.speed; u.vz = 0; }
-  for (const w of u.wheels) w.rotation.x += u.wheelSpinSign * u.speed * dt / u.wheelRadius;
-  u.status = 'PATROL';
-}
-function updateFootCops(dt, pp) {
-  const want = S.wanted;
-  const maxFoot = want === 0 ? 2 : want === 1 ? 1 : want === 2 ? 2 : 3;
-  // spawn cadence: every 4 s while below the cap (Vice City: time % 4000 < dt)
-  S.footTimer += dt;
-  let activeFoot = copPeds.filter((c) => c.visible).length;
-  if (activeFoot < maxFoot && S.footTimer >= 4) { S.footTimer = 0; spawnFootCop(); activeFoot++; }
-  for (const cp of copPeds) {
-    const u = cp.userData;
-    if (!cp.visible) continue;
-    const dx = pp.x - cp.position.x, dz = pp.z - cp.position.z;
-    const gap = Math.hypot(dx, dz) || 1e-3;
-    u.dist = gap;
-    if (gap > 160) { cp.visible = false; cp.position.set(200, -50, 200); continue; }
-    if (want === 0) {
-      // patrol beat: walk the sidewalk, turn at intersections
-      const pt = u.patrol || { vertical: true, road: -80, along: cp.position.z, dir: 1, side: 8.5 };
-      u.patrol = pt;
-      pt.along += 1.6 * pt.dir * dt;
-      if (pt.along > CITY) pt.along = -CITY;
-      if (pt.along < -CITY) pt.along = CITY;
-      if (pt.vertical) { cp.position.set(pt.road + pt.side, 0, pt.along); cp.rotation.y = pt.dir > 0 ? 0 : Math.PI; }
-      else { cp.position.set(pt.along, 0, pt.road + pt.side); cp.rotation.y = pt.dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
-      u.status = 'PATROL';
-      u.swing = damp(u.swing, 0.4, 6, dt);
-      u.walkPhase += dt * 7;
-      const sw = Math.sin(u.walkPhase) * u.swing;
-      u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
-      u.shinL.rotation.x = -Math.max(0, -sw) * 1.1;
-      u.shinR.rotation.x = -Math.max(0, sw) * 1.1;
-      u.armL.rotation.x = -sw * 0.6; u.armR.rotation.x = sw * 0.6;
-      u.foreL.rotation.x = -0.3 - Math.abs(sw) * 0.3;
-      u.foreR.rotation.x = -0.3 - Math.abs(sw) * 0.3;
-      continue;
-    }
-    // --- wanted >= 1: close in on the player ---
-    /* v3.1: 1-star foot cops run 4.6 m/s (was 3.6 — slower than Mateo's
-       4.2 walk, so a walking player could NEVER be arrested: the cop met
-       him head-on, then fell behind at 0.6 m/s and closeT kept resetting.
-       4.6 still loses to Mateo's run (8) and sprint (11.5), so escape by
-       running is always possible — the arrest rule just works now. */
-    const runSpeed = 4.6;
-    const dirX = dx / gap, dirZ = dz / gap;
-    let sp = runSpeed;
-    if (u.aimT > 0) { u.aimT -= dt; sp = 0; u.status = 'AIMING'; }
-    else if (want === 1) u.status = gap < 2.5 ? 'ARREST' : 'OBSERVING';
-    else u.status = gap < 16 ? 'PURSUIT' : 'EN ROUTE';
-    cp.position.x += dirX * sp * dt;
-    cp.position.z += dirZ * sp * dt;
-    const res = resolveBuildings(cp.position.x, cp.position.z, 0.4);
-    cp.position.x = res.x; cp.position.z = res.z;
-    if (sp > 0.3) cp.rotation.y = Math.atan2(-dirX, -dirZ);
-    u.swing = damp(u.swing, sp > 0.3 ? (want === 1 ? 0.45 : 0.55) : 0, 6, dt);
-    u.walkPhase += dt * (sp > 0.3 ? 9 : 0);
-    const sw = Math.sin(u.walkPhase) * u.swing;
-    u.legL.rotation.x = sw; u.legR.rotation.x = -sw;
-    u.shinL.rotation.x = -Math.max(0, -sw) * 1.1;
-    u.shinR.rotation.x = -Math.max(0, sw) * 1.1;
-    u.armL.rotation.x = -sw * 0.6; u.armR.rotation.x = sw * 0.6;
-    u.foreL.rotation.x = -0.3 - Math.abs(sw) * 0.3;
-    u.foreR.rotation.x = -0.3 - Math.abs(sw) * 0.3;
-    // 1 star: arrest after 2.2 s within 1.5 m (player on foot only)
-    if (want === 1 && S.mode === 'foot') {
-      if (gap < 1.5) { u.closeT += dt; if (u.closeT > 2.2) { busted(); return; } }
-      else u.closeT = 0;
-    }
-    if (u.attackCd > 0) u.attackCd -= dt;
-    // 1 star: fights back ONLY if the player fought first (or shot this cop)
-    if (want === 1 && (S.foughtT < 5 || u.angry) && S.mode === 'foot' && gap <= 1.6 && u.attackCd <= 0) {
-      u.attackCd = 2.2;
-      hurtPlayer(5 + Math.floor(rnd() * 4));
-      toast('COP FIGHTS BACK!', 900);
-    }
-    // 2+ stars: shoot on foot, 2.5–16 m, after a 0.6 s aim (55% hit, 4–8 dmg)
-    if (want >= 2 && S.mode === 'foot' && gap > 2.5 && gap < 16 && u.attackCd <= 0 && u.aimT <= 0) {
-      u.attackCd = 1.6 + rnd() * 1.2; u.aimT = 0.6;
-      beep(1200, 0.08, 'square', 0.05);
-      setTimeout(() => {
-        if (S.wanted >= 2 && cp.visible && S.mode === 'foot') {
-          gunshot();
-          if (rnd() < 0.55) hurtPlayer(4 + Math.floor(rnd() * 4));
-        }
-      }, 600);
-    }
-    // melee at any wanted >= 2 when point blank
-    if (want >= 2 && S.mode === 'foot' && gap <= 1.6 && u.attackCd <= 0) {
-      u.attackCd = 1.6 + rnd() * 0.9;
-      hurtPlayer(5 + Math.floor(rnd() * 4));
-    }
-  }
-}
-function updateHeli(h, lockKey, dt, pp, want) {
-  h.visible = true;
-  /* In a staged shot the heli holds its framed position (v3.1: the orbit
-     drifted it out of frame / cut off at the top edge between staging
-     and the screenshot). In live play it keeps orbiting. */
-  if (!SHOT) h.userData.angle += dt * 0.28;
-  const a = h.userData.angle;
-  const r = h.userData.orbitR, ht = h.userData.height;
-  /* In staged shots the heli also holds a fixed height (v3.1: the ±2 m
-     bob pushed the rotor out of the top of the frame). */
-  const bobH = SHOT ? 0 : Math.sin(S.time * 0.7) * 2;
-  h.position.set(pp.x + Math.cos(a) * r, ht + bobH, pp.z + Math.sin(a) * r);
-  h.lookAt(pp.x, 0, pp.z);
-  h.userData.rotor.rotation.y += dt * 22;
-  h.userData.spot.target.position.set(pp.x - h.position.x, -ht, pp.z - h.position.z);
-  h.userData.spot.target.updateMatrixWorld();
-  const on = Math.floor(S.time * 5) % 2 === 0;
-  h.userData.lightbar.children[0].material.color.setHex(on ? C.policeRed : 0x550000);
-  h.userData.lightbar.children[1].material.color.setHex(on ? 0x220044 : C.policeBlue);
-  // spotlight lock: ~3 s overhead, then it fires (Vice City heli behaviour)
-  S[lockKey] += dt;
-  if (S[lockKey] > 3) {
-    S.policeStatus = 'HELI LOCK';
-    h.userData.spot.intensity = 6;
-    if (Math.floor(S.time * 1.2) !== Math.floor((S.time - dt) * 1.2) && rnd() < 0.45) {
-      hurtPlayer(3);
-      toast('HELI FIRE!', 700);
-    }
-  } else h.userData.spot.intensity = 3.5;
-}
-function updatePolice(dt) {
-  const pp = playerPos();
-  const car = S.drivenCar || playerCar;
-  const pvx = S.mode === 'car' ? car.userData.vx : footVel.x;
-  const pvz = S.mode === 'car' ? car.userData.vz : footVel.z;
-  const pSpeed = Math.hypot(pvx, pvz);
-  const want = S.wanted;
-  S.foughtT += dt;
-  updateFootCops(dt, pp);
-
-  // --- police cars ---
-  // patrol units always exist; reinforcements spawn at wanted >= 2
-  // (1 car; 2 at wanted >= 4), every 9 s, 28–42 m away.
-  const reinfWant = want >= 2 ? (want >= 4 ? 2 : 1) : 0;
-  S.carTimer += dt;
-  let reinfActive = police.filter((p, i) => i >= 2 && p.visible).length;
-  if (reinfActive < reinfWant && S.carTimer >= 9) {
-    S.carTimer = 0;
-    const pc = police.find((p, i) => i >= 2 && !p.visible);
-    if (pc) { placePoliceCarNear(pc); pc.visible = true; pc.userData.health = 100; pc.userData.status = 'EN ROUTE'; reinfActive++; }
-  }
-  if (want < 2) { // stand the reinforcements down when the heat drops
-    for (let i = 2; i < police.length; i++) {
-      const pc = police[i];
-      if (pc.visible) { pc.visible = false; pc.position.set(200, -50, 200); pc.userData.status = 'PATROL'; }
-    }
-  }
-  // make sure the two patrol cars are on the road
-  for (let i = 0; i < 2; i++) {
-    const pc = police[i];
-    if (!pc.visible) {
-      const vertical = rnd() < 0.5;
-      pc.userData.vertical = vertical;
-      pc.userData.road = pick(vertical ? ROAD_X : ROAD_Z);
-      pc.userData.along = -CITY + rnd() * CITY * 2;
-      pc.userData.dir = rnd() < 0.5 ? 1 : -1;
-      pc.userData.speed = pc.userData.cruise;
-      pc.visible = true; pc.userData.status = 'PATROL';
-    }
-  }
-  let worst = want === 0 ? 'PATROL' : 'OBSERVING';
-  let idx = 0;
-  for (const pc of police) {
-    const u = pc.userData;
-    if (!pc.visible) continue;
-    /* v3.3.1 staged chase: hold formation around the player car instead
-       of converging to ram it — the v3.3 shot had two units ON the
-       player car (3-4 m, RAMMING) because pursuit AI closes the gap.
-       u.shotHold = { dx, dz } in player-car local space (dx = right,
-       dz = ahead). The unit keeps the player's heading and speed, so
-       the frame stays a flanking pursuit at readable distance. */
-    if (SHOT === 'chase' && u.shotHold) {
-      const cy = S.carYaw;
-      const fx = -Math.sin(cy), fz = -Math.cos(cy); // forward
-      const rx = Math.cos(cy), rz = -Math.sin(cy);  // right
-      pc.position.x = pp.x + rx * u.shotHold.dx + fx * u.shotHold.dz;
-      pc.position.z = pp.z + rz * u.shotHold.dx + fz * u.shotHold.dz;
-      pc.rotation.y = cy;
-      u.speed = pSpeed; u.dist = Math.hypot(u.shotHold.dx, u.shotHold.dz);
-      u.status = 'PURSUIT';
-      if (u.lightbar) {
-        const on = Math.floor(S.time * 6) % 2 === 0;
-        u.lightbar.userData.r.material.color.setHex(on ? C.policeRed : 0x550000);
-        u.lightbar.userData.b.material.color.setHex(on ? 0x220044 : C.policeBlue);
-        u.lightbar.userData.rg.material.opacity = on ? 0.95 : 0.15;
-        u.lightbar.userData.bg.material.opacity = on ? 0.15 : 0.95;
-      }
-      continue;
-    }
-    const pursuing = want >= 2;
-    if (!pursuing) {
-      stepPatrolCar(pc, dt);
-      /* v3.1 panel bug: patrol cars never wrote userData.dist, so the
-         Police Response panel showed "UNIT P-03 0m". Distance is now
-         computed for real every frame (and updateHUD recomputes live). */
-      u.dist = dist2d(pc.position, pp);
-      continue;
-    }
-    idx++;
-    let dx = pp.x - pc.position.x, dz = pp.z - pc.position.z;
-    let gap = Math.hypot(dx, dz) || 1e-3;
-    if (gap > 150) { // leash: re-summon near the player
-      placePoliceCarNear(pc);
-      dx = pp.x - pc.position.x; dz = pp.z - pc.position.z;
-      gap = Math.hypot(dx, dz) || 1e-3;
-    }
-    let targetSpeed = Math.min(40, 26 + gap * 0.35);
-    const lead = Math.min(1.2, gap / Math.max(1e-3, targetSpeed + pSpeed));
-    let dirX = (pp.x + pvx * lead) - pc.position.x;
-    let dirZ = (pp.z + pvz * lead) - pc.position.z;
-    /* De-escalation (user, 18 Nov): ram ONLY at wanted 3+, ONLY the lead
-       unit, and ONLY in short bursts — 2 s of ramming, then a 4 s cooldown
-       back to PURSUIT. At 2 stars the units chase without ramming; at 1
-       star they only observe / arrest on foot. The panel therefore shows
-       PURSUIT most of the time, RAMMING only while a burst is actually on. */
-    u.ramCd = Math.max(0, (u.ramCd || 0) - dt);
-    if ((u.ramT || 0) > 0) { // a ram burst already in progress: keep it up
-      u.ramT -= dt;
-      u.status = 'RAMMING'; targetSpeed = Math.min(16 + want * 3, pSpeed + 4);
-      if (u.ramT <= 0) u.ramCd = 4;
-    }
-    // roadblock: the 2nd unit cuts ahead of a fast-moving player car
-    else if (idx === 2 && S.mode === 'car' && Math.abs(S.carSpeed) > 8 && gap > 30) {
-      u.status = 'ROADBLOCK';
-      const aheadX = pp.x - Math.sin(S.carYaw) * 26, aheadZ = pp.z - Math.cos(S.carYaw) * 26;
-      dirX = aheadX - pc.position.x; dirZ = aheadZ - pc.position.z;
-      targetSpeed = 20;
-      if (dist2d(pc.position, { x: aheadX, z: aheadZ }) < 6) {
-        targetSpeed = 0;
-        pc.rotation.y = S.carYaw + Math.PI / 2;
-      }
-    } else if (gap < 8 && idx === 1 && want >= 3 && u.ramCd <= 0) {
-      // start a ram burst: lead unit only, 3+ stars, close range
-      u.status = 'RAMMING'; u.ramT = 2.0; targetSpeed = Math.min(16 + want * 3, pSpeed + 4);
-    } else if (gap < 45) u.status = 'PURSUIT';
-    else u.status = 'EN ROUTE';
-    if (u.status === 'RAMMING') worst = 'RAMMING';
-    else if (worst !== 'RAMMING' && u.status === 'PURSUIT') worst = 'PURSUIT';
-    // separation: fan out instead of stacking (1/d^2, radius 14 m)
-    let sx = 0, sz = 0;
-    for (const o of police) {
-      if (o === pc || !o.visible) continue;
-      const ax = pc.position.x - o.position.x, az = pc.position.z - o.position.z;
-      const d = Math.hypot(ax, az);
-      if (d > 1e-3 && d < 14) { sx += ax / (d * d); sz += az / (d * d); }
-    }
-    const sl = Math.hypot(sx, sz);
-    if (sl > 1e-3) { dirX += (sx / sl) * 1.7; dirZ += (sz / sl) * 1.7; }
-    const dl = Math.hypot(dirX, dirZ) || 1e-3;
-    dirX /= dl; dirZ /= dl;
-    u.speed = damp(u.speed, targetSpeed, 5, dt);
-    u.vx = damp(u.vx, dirX * u.speed, 5, dt);
-    u.vz = damp(u.vz, dirZ * u.speed, 5, dt);
-    pc.position.x += u.vx * dt;
-    pc.position.z += u.vz * dt;
-    if (Math.hypot(u.vx, u.vz) > 0.5) pc.rotation.y = Math.atan2(-u.vz, u.vx);
-    const res = resolveBuildings(pc.position.x, pc.position.z, CAR_RADIUS);
-    if (res.hit) {
-      const into = u.vx * res.nx + u.vz * res.nz;
-      pc.position.x = res.x; pc.position.z = res.z;
-      if (into < 0) { u.vx -= into * res.nx; u.vz -= into * res.nz; }
-    }
-    for (const w of u.wheels) w.rotation.x += u.wheelSpinSign * u.speed * dt / u.wheelRadius;
-    u.dist = gap;
-    // ram: shove the player's car + damage on contact (3+ stars, lead unit, burst only)
-    if (u.status === 'RAMMING' && S.mode === 'car' && gap < 3.6) {
-      car.position.x += (car.position.x - pc.position.x) * 0.02;
-      car.position.z += (car.position.z - pc.position.z) * 0.02;
-      S.carHealth = Math.max(0, S.carHealth - 6 * dt);
-      car.userData.health = S.carHealth;
-    }
-    if (u.lightbar) {
-      const on = Math.floor(S.time * 6) % 2 === 0;
-      u.lightbar.userData.r.material.color.setHex(on ? C.policeRed : 0x550000);
-      u.lightbar.userData.b.material.color.setHex(on ? 0x220044 : C.policeBlue);
-      u.lightbar.userData.rg.material.opacity = on ? 0.95 : 0.15;
-      u.lightbar.userData.bg.material.opacity = on ? 0.15 : 0.95;
-    }
-  }
-  // overall status: the honest headline for the Police Response panel
-  if (want === 0) S.policeStatus = 'PATROL';
-  else if (want === 1) {
-    const arresting = copPeds.some((c) => c.visible && c.userData.status === 'ARREST');
-    S.policeStatus = arresting ? 'ARREST' : 'OBSERVING';
-  } else S.policeStatus = worst;
-  // wanted decay: no cop within 40 m for 22 s -> wanted -1
-  if (want > 0) {
-    if (copsNearCount(40) === 0) {
-      S.calmT += dt;
-      if (S.calmT > 22) {
-        setWanted(want - 1);
-        S.calmT = 0;
-        if (S.wanted === 0) { toast('You lost the cops.', 3000); say('Kira: Clean. They lost you — breathe, Mateo.'); }
-      }
-    } else S.calmT = 0;
-  } else S.calmT = 0;
-  // helicopters: wanted >= 3 (2nd at 5 stars)
-  if (want >= 3) updateHeli(heli, 'heliLockT', dt, pp, want);
-  else { heli.visible = false; S.heliLockT = 0; }
-  if (want >= 5) updateHeli(heli2, 'heliLock2T', dt, pp, want);
-  else { heli2.visible = false; S.heliLock2T = 0; }
-  if (want > 0 && AC && !S.muted && Math.floor(S.time * 2) !== Math.floor((S.time - dt) * 2)) {
-    beep(Math.floor(S.time * 2) % 2 === 0 ? 720 : 540, 0.42, 'sine', 0.035);
-  }
-}
-
-/* ---------- camera: close chase cam + third-person foot orbit ---------- */
-/* Nudge a chase-cam eye position toward the road centerline so a building
-   face right beside the camera doesn't eat half the frame. */
-function roadCenterNudge(x, z, car) {
-  let rx = ROAD_X[0], d = Infinity;
-  for (const v of ROAD_X) if (Math.abs(car.position.x - v) < d) { d = Math.abs(car.position.x - v); rx = v; }
-  let rz = ROAD_Z[0]; d = Infinity;
-  for (const v of ROAD_Z) if (Math.abs(car.position.z - v) < d) { d = Math.abs(car.position.z - v); rz = v; }
-  // the road the car travels on follows its heading, not its exact position
-  const fwdX = -Math.sin(car.rotation.y), fwdZ = -Math.cos(car.rotation.y);
-  if (Math.abs(fwdZ) >= Math.abs(fwdX)) { // moving along Z: nudge x toward the road center
-    return { x: x + Math.sign(rx - x) * Math.min(3.0, Math.abs(rx - x)), z };
-  }
-  return { x, z: z + Math.sign(rz - z) * Math.min(3.0, Math.abs(rz - z)) };
-}
-const camTarget = new THREE.Vector3();
-let camYawOffset = 0, camIdle = 0;
-function updateCamera(dt, keys) {
-  if (S.mode === 'car') {
-    const car = S.drivenCar || playerCar;
-    const speed = Math.abs(S.carSpeed);
-    // mouse swings the chase cam; it auto-centers behind the car when idle
-    if (Math.abs(camYawOffset) > 0.001) camIdle += dt; else camIdle = 0;
-    if (camIdle > 1.5) camYawOffset = damp(camYawOffset, 0, 1.2, dt);
-    const ang = S.carYaw + camYawOffset;
-    const fx = -Math.sin(ang), fz = -Math.cos(ang);
-    const rx = Math.cos(ang), rz = -Math.sin(ang);
-    // pull in as speed rises; v3.1 chase cam sits closer (was 7.5 m) so
-    // the player car is LARGE in the centre of the frame, like the mockup.
-    // v3.3.1: the staged chase shot pulls back to 7.5 m — at 5 m the car
-    // was cropped and the street/sunset/police read as a pink wash.
-    const dist = SHOT === 'chase' ? 7.5 : Math.max(5.0, 6.2 - speed * 0.04);
-    const pivot = V3(car.position.x, 1.4, car.position.z);
-    const eyeDir = V3(Math.sin(ang), 0, Math.cos(ang)); // behind the car
-    const clear = cameraClear(car.position.x, 2.9, car.position.z, eyeDir.x, 0, eyeDir.z, dist);
-    const nudged = roadCenterNudge(car.position.x + Math.sin(ang) * clear, car.position.z + Math.cos(ang) * clear, car);
-    const want = V3(nudged.x, 2.9, nudged.z);
-    // v3.3.1: the staged chase shot is taken at ~140 KM/H, so the rate-4
-    // camera lags ~10-14 m behind the car (steady-state lag v/k) and the
-    // hero car shrinks to ~48 px. A stiff tracker (rate 20) holds the
-    // 7.5 m chase distance so the car reads large, like the top-rank
-    // shots. Only the staged ?shot=chase frame uses this; gameplay keeps 4.
-    const camRate = SHOT === 'chase' ? 20 : 4;
-    camera.position.x = damp(camera.position.x, want.x, camRate, dt);
-    camera.position.y = damp(camera.position.y, want.y, camRate, dt);
-    camera.position.z = damp(camera.position.z, want.z, camRate, dt);
-    // look-at leads along velocity: forward fully, lateral only 70% (bounded slide swing)
-    const vf = S.carSpeed;
-    const vl = car.userData.vx * rx + car.userData.vz * rz;
-    const leadF = vf / 4;
-    const leadL = clamp((vl / 4) * 0.7, -2, 2);
-    /* v3.1: in chase/mission shots the camera looks a touch higher so the
-       helicopter fits fully in frame (body + tail + rotor). */
-    const lookY = SHOT === 'chase' ? 2.6 : SHOT === 'mission' ? 2.6 : 1.4;
-    const look = V3(
-      car.position.x + fx * leadF + rx * leadL,
-      lookY,
-      car.position.z + fz * leadF + rz * leadL);
-    camTarget.x = damp(camTarget.x, look.x, camRate, dt);
-    camTarget.y = damp(camTarget.y, look.y, camRate, dt);
-    camTarget.z = damp(camTarget.z, look.z, camRate, dt);
-    camera.lookAt(camTarget);
-    camera.fov = damp(camera.fov, clamp(56 + speed * 0.35, 56, 66), 3, dt);
-    camera.updateProjectionMatrix();
-  } else {
-    // third-person orbit: mouse yaw/pitch around the avatar
-    const pivot = V3(playerMesh.position.x, 1.6, playerMesh.position.z);
-    const cp = Math.cos(S.pitch);
-    /* ?facecheck=1 (street shot only): put the camera AHEAD of Mateo so
-       he walks toward it — the front-view probe for the civilian check
-       (jacket/tee/hair/beard). ?sidecheck=1: 90° to the side instead.
-       v3.4: both also work on the mission shot (front/side aim probes).
-       ?dist=N (street only): orbit distance in metres (v3.4 probes use
-       2.8 — playtest distance; default 5). Normal play is unaffected. */
-    const faceCheck = params.has('facecheck') && (SHOT === 'street' || SHOT === 'mission');
-    const sideCheck = params.has('sidecheck') && (SHOT === 'street' || SHOT === 'mission');
-    const side = faceCheck ? -1 : 1;
-    const dirX = sideCheck ? Math.cos(S.yaw) * cp : Math.sin(S.yaw) * cp * side;
-    const dirY = Math.sin(S.pitch);
-    const dirZ = sideCheck ? -Math.sin(S.yaw) * cp : Math.cos(S.yaw) * cp * side;
-    // v3.3: the mission (foot-fire) shot frames Mateo LARGE so the pistol
-    // in his hand reads — 2.4 m instead of the normal 5 m orbit.
-    const orbitDist = SHOT === 'mission' ? 2.4 : (params.has('dist') ? parseFloat(params.get('dist')) || 5 : 5);
-    const clear = cameraClear(pivot.x, pivot.y, pivot.z, dirX, dirY, dirZ, orbitDist);
-    const eye = V3(pivot.x + dirX * clear, Math.max(1.0, pivot.y + dirY * clear), pivot.z + dirZ * clear);
-    // v3.3: mission shot is a 3/4 view from Mateo's right-rear (he still
-    // aims straight ahead at the cop, but the camera sits 1.4 m to his
-    // right so the pistol shows in profile instead of end-on, where a
-    // forward-pointing barrel reads as a dark dot).
-    if (SHOT === 'mission') eye.x += 1.4;
-    camera.position.x = damp(camera.position.x, eye.x, 7, dt);
-    camera.position.y = damp(camera.position.y, eye.y, 7, dt);
-    camera.position.z = damp(camera.position.z, eye.z, 7, dt);
-    const look = V3(pivot.x - Math.sin(S.yaw) * 1.5, pivot.y + 0.2, pivot.z - Math.cos(S.yaw) * 1.5);
-    camTarget.x = damp(camTarget.x, look.x, 7, dt);
-    camTarget.y = damp(camTarget.y, look.y, 7, dt);
-    camTarget.z = damp(camTarget.z, look.z, 7, dt);
-    camera.lookAt(camTarget);
-    camera.fov = damp(camera.fov, 60, 3, dt);
-    camera.updateProjectionMatrix();
-  }
-}
-
-/* ---------- HUD & minimap ---------- */
-const mm = $('minimap').getContext('2d');
-function drawMinimap() {
-  const W = 210, R = 105, scale = W / 520;
-  const pp = playerPos();
-  const toMap = (x, z) => [W / 2 + (x - pp.x) * scale * 1.6, W / 2 + (z - pp.z) * scale * 1.6];
-  mm.fillStyle = CSS.indigo; mm.fillRect(0, 0, W, W);
-  mm.save();
-  mm.beginPath(); mm.arc(R, R, R, 0, Math.PI * 2); mm.clip();
-  mm.fillStyle = CSS.sea; mm.fillRect(0, 0, W / 2 + (-CITY - 38 - pp.x) * scale * 1.6 + 60, W);
-  mm.strokeStyle = '#3a2a3a'; mm.lineWidth = 7;
-  for (const x of ROAD_X) { const [ax] = toMap(x, 0); mm.beginPath(); mm.moveTo(ax, -10); mm.lineTo(ax, W + 10); mm.stroke(); }
-  for (const z of ROAD_Z) { const [, az] = toMap(0, z); mm.beginPath(); mm.moveTo(-10, az); mm.lineTo(W + 10, az); mm.stroke(); }
-  mm.strokeStyle = CSS.sun; mm.lineWidth = 1;
-  for (const x of ROAD_X) { const [ax] = toMap(x, 0); mm.beginPath(); mm.moveTo(ax, -10); mm.lineTo(ax, W + 10); mm.stroke(); }
-  for (const z of ROAD_Z) { const [, az] = toMap(0, z); mm.beginPath(); mm.moveTo(-10, az); mm.lineTo(W + 10, az); mm.stroke(); }
-  mm.strokeStyle = CSS.pastel; mm.lineWidth = 5;
-  { const [ax, az] = toMap(-198, 30); mm.beginPath(); mm.moveTo(ax + 32, az); mm.lineTo(ax - 32, az); mm.stroke(); }
-  const m = MISSIONS[S.mission];
-  const [mx, mz] = toMap(m.target[0], m.target[2]);
-  mm.fillStyle = CSS.sun;
-  mm.beginPath(); mm.moveTo(mx, mz - 9); mm.lineTo(mx + 8, mz); mm.lineTo(mx, mz + 9); mm.lineTo(mx - 8, mz); mm.closePath(); mm.fill();
-  mm.strokeStyle = CSS.magenta; mm.lineWidth = 2; mm.stroke();
-  mm.fillStyle = CSS.cream;
-  for (const t of traffic) { const [tx, tz] = toMap(t.position.x, t.position.z); mm.fillRect(tx - 1.5, tz - 1.5, 3, 3); }
-  for (const pc of police) {
-    if (!pc.visible) continue;
-    const [px, pz] = toMap(pc.position.x, pc.position.z);
-    mm.fillStyle = (Math.floor(S.time * 4) % 2 === 0) ? '#FF2244' : '#2244FF';
-    mm.beginPath(); mm.arc(px, pz, 4, 0, Math.PI * 2); mm.fill();
-  }
-  const yaw = S.mode === 'car' ? S.carYaw : S.yaw;
-  mm.save(); mm.translate(R, R); mm.rotate(Math.PI - yaw);
-  mm.fillStyle = CSS.magenta;
-  mm.beginPath(); mm.moveTo(0, -11); mm.lineTo(8, 8); mm.lineTo(0, 4); mm.lineTo(-8, 8); mm.closePath(); mm.fill();
-  mm.restore();
-  mm.restore();
-  mm.strokeStyle = CSS.cyan; mm.lineWidth = 3;
-  mm.beginPath(); mm.arc(R, R, R - 2, 0, Math.PI * 2); mm.stroke();
-}
-function updateHUD() {
-  $('money').textContent = '$' + S.money.toLocaleString();
-  let html = '';
-  for (let i = 0; i < 5; i++) html += '<span class="' + (i < S.wanted ? 'on' : '') + '">★</span>';
-  $('stars').innerHTML = html;
-  $('speed').innerHTML = Math.round(S.speedKmh) + ' <small>KM/H</small>';
-  const car = S.mode === 'car' ? (S.drivenCar || playerCar) : null;
-  $('car-name').textContent = car ? car.userData.name + (car === playerCar ? ' ★' : '') : 'ON FOOT — MATEO VEGA';
-  const cond = car ? Math.round(S.carHealth) : 100;
-  $('car-cond-fill').style.width = cond + '%';
-  $('cond-label').textContent = 'CONDITION ~' + cond + '%';
-  // v3.3: NEVER show the camera-attached viewmodel — this game is
-  // third-person only (no first-person mode exists), so the box gun
-  // floats at the screen edge with no hand holding it while Mateo ALSO
-  // holds the pistol. The hand pistol is the weapon on screen.
-  viewmodel.visible = false;
-  $('crosshair').style.display = S.mode === 'foot' && S.started && !S.paused ? 'block' : 'none';
-  $('health-fill').style.width = Math.max(0, S.health) + '%';
-  $('health-label').textContent = 'MATEO HEALTH ~' + Math.round(S.health) + '%';
-  const list = $('police-list');
-  const act = police.filter((p) => p.visible);
-  const foot = copPeds.filter((c) => c.visible);
-  // honest headline: PATROL / OBSERVING / PURSUIT / RAMMING / ARREST / HELI LOCK
-  const statusEl = $('police-status');
-  const statusText = { PATROL: 'PATROL ONLY — NO PURSUIT', OBSERVING: S.mode === 'car' ? 'OBSERVING — PATROL UNITS WATCHING' : 'OBSERVING — FOOT UNIT CLOSING IN',
-    PURSUIT: 'PURSUIT — UNITS CHASING', RAMMING: 'RAMMING — LEAD UNIT ATTACKING',
-    ARREST: 'ARREST IMMINENT — MOVE!', 'HELI LOCK': 'HELI SPOTLIGHT LOCKED — TAKE COVER' }[S.policeStatus] || S.policeStatus;
-  statusEl.textContent = '▸ ' + statusText;
-  statusEl.style.color = S.wanted === 0 ? '#01CDFE' : S.wanted === 1 ? '#FFB347' : '#FF2A6D';
-  let plist = '';
-  /* v3.1: distances are computed LIVE from real positions every frame.
-     A unit with no valid position yet shows "--", never "0m". */
-  const pp = playerPos();
-  const distStr = (pos) => {
-    const d = Math.round(dist2d(pos, pp));
-    return (isFinite(d) && d >= 0 && d < 900) ? d + 'm' : '--';
+  var S = {
+    mateo: null,            // { group, parts }
+    playerCar: null,        // car object the player drives (or null)
+    missionCar: null,       // the orange SCARLET ARROW
+    traffic: [],            // { mesh, wheels, x, z, heading, speed, axis, dir, lane, color }
+    peds: [],               // { group, parts, x, z, heading, speed, fleeing, down, color }
+    cops: [],               // { kind:'foot'|'car'|'heli', x, z, heading, speed, mesh, wheels, lightBar, state, lockT, heli }
+    courier: null,          // mission 5 target car
+    heli: null,             // active helicopter (or null)
+    mission: null,          // current mission runtime object
+    missionStage: 0,
+    stageTimer: 0,
+    tailTime: 0,            // mission 5: seconds spent close to the courier
+    stakeTime: 0,           // mission 6: seconds inside the stakeout beacon
+    checkpoints: [],        // mission 7 checkpoint list
+    escapeTimer: 0,         // mission 8 survival timer
+    m2: { armed: false, startX: 0, startZ: 0, driven: 0, elapsed: 0, fired: false },
+    busted: false,
+    bustTimer: 0,
+    muzzle: [],             // tracer meshes, short-lived
+    smokePuffs: [],
+    empUntil: 0,
+    smokeUntil: 0,
   };
-  for (const c of foot) {
-    plist += '<li><span>👮 COP · ' + distStr(c.position) + '</span><span class="st">' + c.userData.status + '</span><span class="dot">●</span></li>';
-  }
-  for (const p of act.slice(0, 4)) {
-    plist += '<li><span>🚔 ' + p.userData.name + ' · ' + distStr(p.position) + '</span><span class="st">' + p.userData.status + '</span><span class="dot">●</span></li>';
-  }
-  if (heli.visible) plist += '<li><span>🚁 HELI H-1 · OVERHEAD</span><span class="st">' + (S.heliLockT > 3 ? 'LOCKED — FIRING' : 'SPOTLIGHT') + '</span><span class="dot">●</span></li>';
-  if (heli2.visible) plist += '<li><span>🚁 HELI H-2 · OVERHEAD</span><span class="st">' + (S.heliLock2T > 3 ? 'LOCKED — FIRING' : 'SPOTLIGHT') + '</span><span class="dot">●</span></li>';
-  list.innerHTML = plist || '<li><span>NO UNITS NEARBY</span><span class="st">CLEAR</span></li>';
-  const m = MISSIONS[S.mission];
-  const d = dist2d(playerPos(), V3(m.target[0], 0, m.target[2]));
-  $('mission-fill').style.width = Math.max(0, Math.min(100, 100 - d / 2.2)) + '%';
-  drawMinimap();
-}
 
-/* ---------- mission logic ---------- */
-function updateMissions(dt) {
-  if (S.over) return;
-  const m = MISSIONS[S.mission];
-  const pp = playerPos();
-  const d = dist2d(pp, V3(m.target[0], 0, m.target[2]));
-  beaconGem.rotation.y += dt * 2; beaconGem.position.y = 8 + Math.sin(S.time * 2) * 0.8;
-  beaconCyl.material.opacity = 0.25 + Math.sin(S.time * 3) * 0.1;
-  // v3.6 escape heat (mission 2): fires only once Mateo has driven clear
-  // of the pickup (60 m) or 12 s have passed since the steal — never in
-  // the first second in the car. When it fires, every visible police car
-  // is re-summoned to a 28–42 m ring (placePoliceCarNear) so no unit is
-  // already flanking the player when the chase starts.
-  if (S.mission === 2 && S.heatArmed && !S.heatFired) {
-    const away = Math.hypot(pp.x - S.heatX, pp.z - S.heatZ);
-    if (away > 60 || S.time - S.heatT > 12) {
-      S.heatFired = true;
-      setWanted(2);
-      say('Kira: The owner just reported the Arrow stolen — PD is on the radio. Run for the pier!');
-      toast('REPORTED STOLEN — POLICE DISPATCHED ★★', 2500);
-      for (const pc of police) if (pc.visible) { placePoliceCarNear(pc); pc.userData.status = 'EN ROUTE'; }
-      S.carTimer = 0;
+  // --- missions ---------------------------------------------------------------
+  // Eight chained jobs. Each has a Kira briefing, an objective line, a
+  // target point, a radius and a cash reward. Some missions have stages.
+  var MISSIONS = [
+    { title: 'MISSION 1 — THE ARROW', objective: 'Steal the SCARLET ARROW parked on Ocean Drive.', sub: 'Walk up to the orange car and press E. No witnesses, no heat.', target: { x: 44, z: 44 }, radius: 6, reward: 500,
+      brief: 'Mateo, it\'s Kira. The Arrow is parked on Ocean Drive, engine warm, owner inside buying coffee. Take it. Quietly.' },
+    { title: 'MISSION 2 — PIER SAFEHOUSE', objective: 'Drive the Arrow to the safehouse at the end of the pier.', sub: 'The heat comes on once you\'re rolling — stay ahead of it.', target: { x: 214, z: 0 }, radius: 8, reward: 800,
+      brief: 'Nice. Now the bad news: the owner called it in. Get to the pier safehouse before the PD boxes you in.' },
+    { title: 'MISSION 3 — PACKAGE RUN', objective: 'Deliver the package to the drop house in Little Havana.', sub: 'Cross the whole city. Fast is fine — reckless is expensive.', target: { x: -110, z: -88 }, radius: 7, reward: 1000,
+      brief: 'A friend left a package in the trunk. Little Havana, corner house, blue door. Don\'t open it. Don\'t ask.' },
+    { title: 'MISSION 4 — KIRA\'S DROP', objective: 'Pick up Kira\'s drop in Downtown, then bring it back to the pier.', sub: 'Two stops. The drop first, then home.', target: { x: 22, z: -66 }, radius: 7, reward: 1200, stage2: { x: 196, z: 0 }, stage2text: 'Drop secured. Bring it back to the pier.',
+      brief: 'Downtown, rooftop garage, black case under the bench. Grab it and bring it to the pier. I\'ll be listening.' },
+    { title: 'MISSION 5 — TAIL THE COURIER', objective: 'Tail the courier van — stay within 12 m for 5 seconds. Don\'t spook him.', sub: 'Close is good. Bumping him is not.', target: null, radius: 12, reward: 1500,
+      brief: 'A courier is moving something I want to see. Follow him, don\'t touch him. Five seconds close is all I need.' },
+    { title: 'MISSION 6 — STAKEOUT', objective: 'Watch the corner from the beacon for 8 seconds. Stay in the zone.', sub: 'Eyes open. If the PD rolls by, stay calm.', target: { x: -22, z: 66 }, radius: 9, reward: 900,
+      brief: 'Park on the corner and watch the blue door. Eight seconds of eyes on it and we know the schedule.' },
+    { title: 'MISSION 7 — CHECKPOINT DASH', objective: 'Burn through all three checkpoints, in order.', sub: 'The clock is already running.', target: { x: 88, z: -88 }, radius: 8, reward: 1800,
+      brief: 'Three checkpoints, one straight line through the city. Show me what the Arrow can do.' },
+    { title: 'MISSION 8 — MARINA FINALE', objective: 'Get to the marina, then lose the three-star heat and reach the escape point.', sub: 'Everything you have. Everything you\'ve learned.', target: { x: 196, z: -22 }, radius: 8, reward: 3000,
+      brief: 'Last job, Mateo. Marina first — then the whole city is coming for you. Make it to the north gate and you\'re a legend.' },
+  ];
+  var CHECKPOINTS = [{ x: 88, z: -88 }, { x: -88, z: -44 }, { x: -88, z: 88 }];
+
+  // --- helpers ------------------------------------------------------------------
+  function el(id) { return document.getElementById(id); }
+  function toast(text, ms) {
+    var t = el('toast');
+    t.textContent = text; t.style.display = 'block';
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { t.style.display = 'none'; }, ms || 2600);
+  }
+  function dialog(text, ms) {
+    var d = el('dialog');
+    el('dialog-text').textContent = text;
+    d.classList.remove('hidden');
+    clearTimeout(dialog._t);
+    dialog._t = setTimeout(function () { d.classList.add('hidden'); }, ms || 7000);
+  }
+  PH.toast = toast;
+  PH.dialog = dialog;
+
+  function collideCircle(x, z, r) {
+    // Push a circle out of building AABBs. Returns corrected {x,z}.
+    for (var i = 0; i < W.colliders.length; i++) {
+      var c = W.colliders[i];
+      var nx = U.clamp(x, c.x - c.hw, c.x + c.hw);
+      var nz = U.clamp(z, c.z - c.hd, c.z + c.hd);
+      var dx = x - nx, dz = z - nz;
+      var d2 = dx * dx + dz * dz;
+      if (d2 < r * r) {
+        if (d2 < 0.0001) { x = c.x + c.hw + r; continue; }
+        var d = Math.sqrt(d2);
+        x = nx + (dx / d) * r;
+        z = nz + (dz / d) * r;
+      }
+    }
+    return { x: x, z: z };
+  }
+
+  function inBounds(x, z) {
+    return { x: U.clamp(x, -158, 246), z: U.clamp(z, -158, 158) };
+  }
+
+  // --- spawning -----------------------------------------------------------------
+  function spawnMissionCar() {
+    var built = B.makeCar({ color: 0xd8542e });
+    built.group.position.set(44, 0, 44);
+    built.group.rotation.y = Math.PI / 2;
+    W.scene.add(built.group);
+    S.missionCar = {
+      mesh: built.group, wheels: built.wheels, lightBar: null,
+      x: 44, z: 44, heading: Math.PI / 2, speed: 0, hp: 100,
+      name: 'SCARLET ARROW', color: 0xd8542e, mission: true, traffic: false,
+    };
+    return S.missionCar;
+  }
+
+  function spawnTrafficCar() {
+    var axis = Math.random() < 0.5 ? 'x' : 'z';
+    var road = U.roadCoord(U.randInt(0, 6));
+    var dir = Math.random() < 0.5 ? 1 : -1;
+    var lane = (Math.random() < 0.5 ? 2.2 : -2.2);
+    var built = B.makeCar({});
+    var x, z, heading;
+    if (axis === 'x') { x = U.rand(-140, 140); z = road + lane; heading = dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
+    else { x = road + lane; z = U.rand(-140, 140); heading = dir > 0 ? 0 : Math.PI; }
+    built.group.position.set(x, 0, z);
+    built.group.rotation.y = heading;
+    W.scene.add(built.group);
+    var car = {
+      mesh: built.group, wheels: built.wheels, lightBar: null,
+      x: x, z: z, heading: heading, speed: U.rand(6, 11),
+      axis: axis, dir: dir, lane: lane, road: road,
+      hp: 100, name: 'Traffic', color: built.color, mission: false, traffic: true,
+    };
+    S.traffic.push(car);
+    return car;
+  }
+
+  function spawnPed() {
+    var built = B.makeMateo();
+    // Recolour the figure: random shirt/jacket/jeans via material clones.
+    var jacket = new THREE.MeshLambertMaterial({ color: U.pick([0x2a9d8f, 0xe63946, 0x4361ee, 0xf4d35e, 0x9b5de5, 0x06d6a0, 0xef476f]) });
+    var jeans = new THREE.MeshLambertMaterial({ color: U.pick([0x2b3a55, 0x4a4a55, 0x6b4a2f, 0x3a3a3a]) });
+    // Swap materials by mesh position: torso/arms get jacket, legs get jeans.
+    built.parts.torso.children.forEach(function (m) { if (m.material && m.material.color) m.material = jacket; });
+    [built.parts.armL, built.parts.armR].forEach(function (a) {
+      a.children.forEach(function (m) { if (m.isMesh) m.material = jacket; });
+      a.children.forEach(function (e) { if (e.isGroup) e.children.forEach(function (m) { if (m.isMesh && m.position.y > -0.4) m.material = jacket; }); });
+    });
+    [built.parts.legL, built.parts.legR].forEach(function (l) {
+      l.children.forEach(function (m) { if (m.isMesh) m.material = jeans; });
+    });
+    var road = U.roadCoord(U.randInt(0, 6));
+    var x = U.rand(-140, 140), z = road + (Math.random() < 0.5 ? 6.4 : -6.4);
+    built.group.position.set(x, 0, z);
+    W.scene.add(built.group);
+    var ped = {
+      group: built.group, parts: built.parts,
+      x: x, z: z, heading: U.rand(0, Math.PI * 2), speed: U.rand(1.2, 2.2),
+      walkPhase: U.rand(0, 6), fleeing: false, down: false, axis: 'x',
+    };
+    S.peds.push(ped);
+    return ped;
+  }
+
+  function spawnFootCop(x, z) {
+    var built = B.makeMateo();
+    var navy = new THREE.MeshLambertMaterial({ color: 0x1c2f5a });
+    built.parts.torso.children.forEach(function (m) { if (m.isMesh) m.material = navy; });
+    [built.parts.armL, built.parts.armR].forEach(function (a) {
+      a.children.forEach(function (m) { if (m.isMesh) m.material = navy; });
+    });
+    var cap = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.27, 0.12, 12), navy);
+    cap.position.y = 0.22;
+    built.parts.head.add(cap);
+    built.group.position.set(x, 0, z);
+    W.scene.add(built.group);
+    var cop = {
+      kind: 'foot', x: x, z: z, heading: 0, speed: 0,
+      mesh: built.group, parts: built.parts, state: 'pursuit',
+      walkPhase: U.rand(0, 6), name: 'Unit ' + U.randInt(10, 99),
+    };
+    S.cops.push(cop);
+    return cop;
+  }
+
+  function spawnPoliceCar(x, z) {
+    var built = B.makeCar({ police: true });
+    built.group.position.set(x, 0, z);
+    W.scene.add(built.group);
+    var cop = {
+      kind: 'car', x: x, z: z, heading: 0, speed: 0,
+      mesh: built.group, wheels: built.wheels, lightBar: built.lightBar,
+      state: 'pursuit', name: 'Cruiser ' + U.randInt(10, 99), hp: 100,
+    };
+    S.cops.push(cop);
+    return cop;
+  }
+
+  function spawnHeli() {
+    if (S.heli) return S.heli;
+    var built = B.makeHeli();
+    built.group.position.set(G.player.x + 30, 55, G.player.z - 30);
+    W.scene.add(built.group);
+    var cop = {
+      kind: 'heli', x: built.group.position.x, z: built.group.position.z,
+      heading: 0, speed: 0, mesh: built.group, heli: built,
+      state: 'pursuit', lockT: 0, name: 'Air-1', shootT: 0,
+    };
+    S.cops.push(cop);
+    S.heli = cop;
+    return cop;
+  }
+
+  function removeCop(cop) {
+    W.scene.remove(cop.mesh);
+    var i = S.cops.indexOf(cop);
+    if (i >= 0) S.cops.splice(i, 1);
+    if (S.heli === cop) S.heli = null;
+  }
+
+  // --- police response ------------------------------------------------------------
+  function desiredPolice() {
+    var w = G.wanted;
+    return {
+      foot: w >= 1 ? Math.min(1 + w, 4) : 2, // two patrol cops even at 0 stars
+      cars: w >= 2 ? Math.min(w - 1, 4) : 0,
+      heli: w >= 3 ? 1 : 0,
+    };
+  }
+
+  function maintainPolice(dt) {
+    if (PH.test && PH.test.suppressPolice) return; // probe hook: hold the cavalry
+    var want = desiredPolice();
+    var foot = 0, cars = 0, heli = 0;
+    S.cops.forEach(function (c) {
+      if (c.kind === 'foot') foot++;
+      else if (c.kind === 'car') cars++;
+      else heli++;
+    });
+    if (foot < want.foot) {
+      // Spawn beyond the 40 m decay radius, so a player who flees can
+      // actually cool off; the chase still closes in from there.
+      var a = U.rand(0, Math.PI * 2), r = U.rand(45, 60);
+      spawnFootCop(G.player.x + Math.cos(a) * r, G.player.z + Math.sin(a) * r);
+    }
+    if (cars < want.cars) {
+      var a2 = U.rand(0, Math.PI * 2), r2 = U.rand(45, 60);
+      var px = G.player.x + Math.cos(a2) * r2, pz = G.player.z + Math.sin(a2) * r2;
+      px = U.nearestRoad(px); pz = U.nearestRoad(pz);
+      spawnPoliceCar(px, pz);
+    }
+    if (heli < want.heli) spawnHeli();
+    if (heli > want.heli && S.heli) removeCop(S.heli);
+    // Trim extras when wanted falls.
+    for (var i = S.cops.length - 1; i >= 0; i--) {
+      var c = S.cops[i];
+      if (c.kind === 'foot' && foot > want.foot) { removeCop(c); foot--; }
+      else if (c.kind === 'car' && cars > want.cars) { removeCop(c); cars--; }
     }
   }
-  if (d < m.r) {
-    if (S.mission === 0) { completeStage(); return; }
-    if (S.mission === 1) {
-      if (S.mode === 'car' && S.drivenCar === playerCar) {
-        // v3.6: entering the Arrow completes the steal with NO heat.
-        // The mission-1 beacon sits exactly on the car, so the old
-        // "heat at the beacon" fired in the same second as entering
-        // (user, 19 Nov: "baru masuk mobil langsung bintang 2" — the
-        // v3.5 repro confirmed wanted 2 the instant mode became 'car',
-        // and a witness was standing by the car, so entry alone could
-        // also have given +1). The escape heat is a separate beat,
-        // armed here and fired later (see mission 2 above).
-        completeStage();
-        // completeStage() just said KIRA_LINES[2] ("Police on your
-        // tail...") — wrong until the heat actually fires. The Arrow
-        // line is the right one for this moment.
-        say(KIRA_LINES[1]);
-        S.heatArmed = true; S.heatFired = false;
-        S.heatX = pp.x; S.heatZ = pp.z; S.heatT = S.time;
+
+  // --- missions ---------------------------------------------------------------------
+  function startMission(idx) {
+    var m = MISSIONS[idx];
+    if (!m) { finishStory(); return; }
+    S.mission = m;
+    S.missionStage = 0;
+    S.stageTimer = 0;
+    S.tailTime = 0;
+    S.stakeTime = 0;
+    S.escapeTimer = 0;
+    S.m2 = { armed: false, startX: G.player.x, startZ: G.player.z, driven: 0, elapsed: 0, fired: false };
+    if (idx === 4) spawnCourier();
+    if (idx === 6) { S.checkpoints = CHECKPOINTS.map(function (c) { return { x: c.x, z: c.z, done: false }; }); }
+    el('mission-title').textContent = m.title;
+    el('mission-objective').textContent = m.objective;
+    el('mission-sub').textContent = m.sub || '';
+    dialog(m.brief, 8000);
+    updateBeacon();
+    PH.save.saveGame();
+  }
+
+  function spawnCourier() {
+    if (S.courier) return;
+    var built = B.makeCar({ color: 0xf4d35e });
+    built.group.position.set(-88, 0, 44);
+    W.scene.add(built.group);
+    S.courier = {
+      mesh: built.group, wheels: built.wheels, x: -88, z: 44,
+      heading: Math.PI / 2, speed: 9, axis: 'x', dir: 1, road: 44, lane: 2.2,
+      hp: 100, name: 'Courier', traffic: true, courier: true,
+    };
+  }
+
+  function updateBeacon() {
+    var t = currentTarget();
+    if (!t) { W.beacon.group.visible = false; return; }
+    W.beacon.group.visible = true;
+    W.beacon.group.position.set(t.x, 0, t.z);
+  }
+
+  function currentTarget() {
+    if (!S.mission) return null;
+    var idx = G.missionIndex;
+    if (idx === 3 && S.missionStage === 1) return S.mission.stage2;
+    if (idx === 4 && S.courier) return { x: S.courier.x, z: S.courier.z };
+    if (idx === 6) {
+      var next = S.checkpoints.find(function (c) { return !c.done; });
+      return next ? { x: next.x, z: next.z } : null;
+    }
+    if (idx === 7 && S.missionStage === 1) return { x: -132, z: 132 };
+    return S.mission.target;
+  }
+
+  function missionRadius() {
+    if (G.missionIndex === 4) return 12;
+    return S.mission ? S.mission.radius : 8;
+  }
+
+  function completeMission() {
+    var m = S.mission;
+    G.money += m.reward;
+    G.stats.missionsPaid++;
+    G.missionDone++;
+    toast('JOB DONE  •  +' + U.fmtMoney(m.reward), 3000);
+    dialog('Kira: Clean work, Mateo. ' + U.fmtMoney(m.reward) + ' is yours. Next job\'s already on the board.', 6000);
+    if (window.PH && window.PH.sfx) window.PH.sfx('cash');
+    G.missionIndex++;
+    PH.save.saveGame();
+    if (G.missionIndex >= MISSIONS.length) { finishStory(); return; }
+    startMission(G.missionIndex);
+  }
+
+  function finishStory() {
+    S.mission = null;
+    el('mission-title').textContent = 'SUNSET BAY — COMPLETE';
+    el('mission-objective').textContent = 'All eight jobs done. The city is yours, Mateo.';
+    el('mission-sub').textContent = 'Free roam: keep driving, keep the heat off, keep the money.';
+    W.beacon.group.visible = false;
+    dialog('Kira: That\'s all eight, Mateo. Sunset Bay is yours now. Don\'t spend it all in one place.', 9000);
+    toast('★ PIER HEAT COMPLETE ★', 5000);
+    PH.save.saveGame();
+  }
+
+  function updateMissions(dt) {
+    if (!S.mission) return;
+    var idx = G.missionIndex;
+    var px = G.player.x, pz = G.player.z;
+    // Mission 2 heat: only after driving 60 m from the pickup, or 12 s.
+    if (idx === 1 && !S.m2.fired) {
+      if (!G.player.onFoot && S.playerCar) {
+        S.m2.driven += Math.abs(S.playerCar.speed) * dt;
+      }
+      S.m2.elapsed += dt;
+      if (S.m2.driven >= 60 || S.m2.elapsed >= 12) {
+        S.m2.fired = true;
+        PH.crime.setWanted(2, 'mission-2-heat');
+        // Police called from 28-42 m away, never beside the car.
+        for (var k = 0; k < 2; k++) {
+          var a = U.rand(0, Math.PI * 2), r = U.rand(28, 42);
+          spawnPoliceCar(U.nearestRoad(px + Math.cos(a) * r), U.nearestRoad(pz + Math.sin(a) * r));
+        }
+        dialog('Kira: There it is — the PD just lit you up. Two stars. Run for the pier, don\'t stop!', 7000);
+        toast('★ WANTED — 2 STARS ★', 3000);
+      }
+    }
+    // Mission 5: tail the courier.
+    if (idx === 4 && S.courier) {
+      var d = U.dist2(px, pz, S.courier.x, S.courier.z);
+      if (d <= 12) {
+        S.tailTime += dt;
+        el('mission-sub').textContent = 'On his tail: ' + S.tailTime.toFixed(1) + 's / 5s — stay close, don\'t touch.';
+      } else {
+        el('mission-sub').textContent = 'Get within 12 m of the courier van.';
+      }
+      if (S.tailTime >= 5) { completeMission(); return; }
+    }
+    // Mission 6: stakeout.
+    if (idx === 5) {
+      var t = S.mission.target;
+      var dd = U.dist2(px, pz, t.x, t.z);
+      if (dd <= S.mission.radius) {
+        S.stakeTime += dt;
+        el('mission-sub').textContent = 'Watching… ' + S.stakeTime.toFixed(1) + 's / 8s — stay in the zone.';
+      } else {
+        S.stakeTime = Math.max(0, S.stakeTime - dt * 0.5);
+        el('mission-sub').textContent = 'Stand inside the gold beacon zone.';
+      }
+      if (S.stakeTime >= 8) { completeMission(); return; }
+    }
+    // Mission 8 stage 2: survive the heat, then reach the escape point.
+    if (idx === 7 && S.missionStage === 1) {
+      S.escapeTimer += dt;
+      el('mission-sub').textContent = 'Heat is on — reach the north gate! (' + Math.ceil(25 - S.escapeTimer) + 's of chaos left)';
+      var et = currentTarget();
+      if (et && U.dist2(px, pz, et.x, et.z) <= 10 && S.escapeTimer >= 10) { completeMission(); return; }
+      if (S.escapeTimer >= 25) { completeMission(); return; }
+    }
+    // Generic arrival check (skip missions with their own win condition).
+    if (idx === 4 || idx === 5 || (idx === 7 && S.missionStage === 1)) { updateBeacon(); return; }
+    var target = currentTarget();
+    if (!target) { updateBeacon(); return; }
+    var dist = U.dist2(px, pz, target.x, target.z);
+    if (idx === 6) {
+      var next = S.checkpoints.find(function (c) { return !c.done; });
+      if (next && U.dist2(px, pz, next.x, next.z) <= 8) {
+        next.done = true;
+        if (window.PH && window.PH.sfx) window.PH.sfx('checkpoint');
+        var left = S.checkpoints.filter(function (c) { return !c.done; }).length;
+        toast(left > 0 ? 'CHECKPOINT! ' + left + ' to go' : 'LAST CHECKPOINT!', 2200);
+        if (left === 0) { completeMission(); return; }
+      }
+      updateBeacon();
+      return;
+    }
+    if (idx === 0) {
+      // Mission 1 completes by entering the Arrow (handled in enterCar).
+      updateBeacon();
+      return;
+    }
+    if (dist <= missionRadius()) {
+      if (idx === 3 && S.missionStage === 0) {
+        S.missionStage = 1;
+        el('mission-objective').textContent = S.mission.stage2text;
+        el('mission-sub').textContent = 'Back to the pier, Mateo.';
+        dialog('Kira: Got it. Now bring the case home to the pier.', 6000);
+        updateBeacon();
         return;
       }
-      if (S.mode === 'foot') { toast('GET IN THE SCARLET ARROW — PRESS E', 1600); return; }
+      if (idx === 7 && S.missionStage === 0) {
+        S.missionStage = 1;
+        S.escapeTimer = 0;
+        PH.crime.setWanted(3, 'mission-8-finale');
+        el('mission-objective').textContent = 'Lose the heat — reach the north gate escape point!';
+        dialog('Kira: The whole PD is coming. Three stars! Get to the north gate and disappear!', 7000);
+        toast('★ WANTED — 3 STARS ★', 3000);
+        updateBeacon();
+        return;
+      }
+      completeMission();
+      return;
     }
-    if (S.mission === 2) { setWanted(0); completeStage(); return; }
-    if (S.mission === 3) { if (S.mode === 'car') completeStage(); else { toast('DELIVER BY CAR', 1400); return; } return; }
-    if (S.mission === 4) { if (S.wanted === 0) completeStage(); else { toast('STILL WANTED — HIDE!', 1400); return; } return; }
-    if (S.mission === 5) { completeStage(); return; }
-    if (S.mission === 6) { completeStage(); return; }
-    if (S.mission === 7) { completeStage(); return; }
+    updateBeacon();
   }
-  if (S.mission === 4 && S.wanted === 0 && d < m.r) completeStage();
-}
+
+  // --- entering / exiting cars ------------------------------------------------
+  function nearestCar(maxD) {
+    var best = null, bestD = maxD;
+    var cars = [S.missionCar].concat(S.traffic);
+    if (S.courier) cars.push(S.courier);
+    for (var i = 0; i < cars.length; i++) {
+      var c = cars[i];
+      if (!c || c === S.playerCar) continue;
+      var d = U.dist2(G.player.x, G.player.z, c.x, c.z);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  }
+
+  function enterCar(car) {
+    if (!car) return false;
+    // Stealing a traffic car is a crime — but only with a witness.
+    if (car.traffic && !car.courier) {
+      var rose = PH.crime.commitCrime(1, S.cops, S.peds, 'car theft');
+      G.stats.carsStolen++;
+      if (rose) toast('STOLEN — WITNESSED! ★', 2500);
+      else toast('Car taken — nobody saw a thing.', 2200);
+      // Remove it from traffic so it stops following its loop.
+      var ti = S.traffic.indexOf(car);
+      if (ti >= 0) S.traffic.splice(ti, 1);
+    }
+    if (car.mission) {
+      toast('SCARLET ARROW — yours now.', 2500);
+      if (G.missionIndex === 0) {
+        G.money += 0;
+        completeMission(); // mission 1 done by taking the car
+      }
+    }
+    if (car.courier) { toast('That\'s the courier — don\'t touch him!', 2200); return false; }
+    S.playerCar = car;
+    G.player.onFoot = false;
+    G.player.car = car;
+    S.mateo.group.visible = false;
+    if (window.PH && window.PH.sfx) window.PH.sfx('door');
+    return true;
+  }
+
+  function exitCar() {
+    if (!S.playerCar) return;
+    var car = S.playerCar;
+    var side = car.heading + Math.PI / 2;
+    var x = car.x + Math.cos(side) * 2.2, z = car.z - Math.sin(side) * 2.2;
+    var fixed = collideCircle(x, z, 0.6);
+    G.player.x = fixed.x; G.player.z = fixed.z;
+    G.player.heading = car.heading;
+    G.player.onFoot = true;
+    G.player.car = null;
+    S.playerCar = null;
+    S.mateo.group.visible = true;
+    S.mateo.group.position.set(G.player.x, 0, G.player.z);
+    if (window.PH && window.PH.sfx) window.PH.sfx('door');
+  }
+
+  // --- shooting ------------------------------------------------------------------
+  function shoot() {
+    if (!G.player.onFoot) return false;
+    G.stats.shots++;
+    if (window.PH && window.PH.sfx) window.PH.sfx('shot');
+    // Muzzle flash tracer.
+    var from = { x: G.player.x, z: G.player.z };
+    var yaw = G.cam.yaw;
+    var fx = Math.sin(yaw), fz = Math.cos(yaw);
+    var endX = from.x + fx * 40, endZ = from.z + fz * 40;
+    var geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(from.x, 1.3, from.z),
+      new THREE.Vector3(endX, 1.3, endZ),
+    ]);
+    var line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.9 }));
+    W.scene.add(line);
+    S.muzzle.push({ mesh: line, t: 0.08 });
+    // Hit test: nearest ped / cop / traffic car inside a narrow cone.
+    var best = null, bestD = 42;
+    function consider(x, z, obj, kind) {
+      var dx = x - from.x, dz = z - from.z;
+      var d = Math.sqrt(dx * dx + dz * dz);
+      if (d > 42 || d < 0.5) return;
+      var ang = Math.abs(U.angDiff(Math.atan2(dx, dz), yaw));
+      if (ang < 0.22 && d < bestD) { bestD = d; best = { obj: obj, kind: kind }; }
+    }
+    S.peds.forEach(function (p) { if (!p.down) consider(p.x, p.z, p, 'ped'); });
+    S.cops.forEach(function (c) { if (c.kind !== 'heli') consider(c.x, c.z, c, 'cop'); });
+    S.traffic.forEach(function (c) { consider(c.x, c.z, c, 'car'); });
+    if (best) {
+      if (best.kind === 'ped') {
+        best.obj.down = true;
+        best.obj.group.rotation.x = -Math.PI / 2;
+        best.obj.group.position.y = 0.3;
+        PH.crime.commitCrime(1, S.cops, S.peds, 'shooting');
+        toast('Pedestrian down!', 1800);
+      } else if (best.kind === 'cop') {
+        if (best.obj.kind === 'foot') {
+          best.obj.state = 'down';
+          best.obj.mesh.rotation.x = -Math.PI / 2;
+          best.obj.mesh.position.y = 0.3;
+          setTimeout(function () { removeCop(best.obj); }, 4000);
+        } else {
+          best.obj.hp -= 50;
+          if (best.obj.hp <= 0) removeCop(best.obj);
+        }
+        PH.crime.commitCrime(1, S.cops, S.peds, 'shooting a cop');
+        toast('Officer down!', 1800);
+      } else {
+        best.obj.hp -= 34;
+        best.obj.speed *= 0.4;
+        PH.crime.commitCrime(1, S.cops, S.peds, 'shooting a car');
+      }
+    } else {
+      // A shot in the open is still a crime — if anyone sees it.
+      PH.crime.commitCrime(1, S.cops, S.peds, 'firing a gun');
+    }
+    // Nearby peds flee from the shot.
+    S.peds.forEach(function (p) {
+      if (!p.down && U.dist2(p.x, p.z, from.x, from.z) < 28) p.fleeing = true;
+    });
+    return true;
+  }
+
+  // --- items ------------------------------------------------------------------------
+  function useEmp() {
+    if (G.emp <= 0) { toast('No EMP left.', 1500); return; }
+    G.emp--;
+    S.empUntil = G.time + 6;
+    S.cops.forEach(function (c) { if (c.kind === 'car') c.speed = 0; });
+    toast('EMP BURST — police cars stalled!', 2500);
+    if (window.PH && window.PH.sfx) window.PH.sfx('emp');
+  }
+  function useSmoke() {
+    if (G.smoke <= 0) { toast('No smoke left.', 1500); return; }
+    G.smoke--;
+    S.smokeUntil = G.time + 5;
+    // Smoke breaks line of sight: cops lose the trail, wanted drops one.
+    if (G.wanted > 0) { G.wanted--; G.wantedTimer = 0; }
+    toast('SMOKE — you vanished from the chase!', 2500);
+    if (window.PH && window.PH.sfx) window.PH.sfx('smoke');
+  }
+
+  // --- per-frame updates -------------------------------------------------------------
+  function animateMateo(dt, moving, sprint) {
+    var p = S.mateo.parts;
+    var phase = G.time * (sprint ? 13 : 9);
+    var amp = moving ? (sprint ? 0.75 : 0.55) : 0;
+    var swing = Math.sin(phase) * amp;
+    if (G.player.aiming) {
+      p.armR.rotation.x = -Math.PI / 2 + 0.15;
+      p.armL.rotation.x = -Math.PI / 2 + 0.25;
+      p.armL.rotation.z = 0.5;
+      p.foreR.rotation.x = 0; p.foreL.rotation.x = -0.3;
+      p.legL.rotation.x = 0.15; p.legR.rotation.x = -0.15;
+      p.pistol.visible = true;
+    } else {
+      p.armR.rotation.x = swing;
+      p.armL.rotation.x = -swing;
+      p.armR.rotation.z = 0; p.armL.rotation.z = 0;
+      p.foreR.rotation.x = moving ? -0.5 : -0.1;
+      p.foreL.rotation.x = moving ? -0.5 : -0.1;
+      p.legL.rotation.x = -swing;
+      p.legR.rotation.x = swing;
+      p.pistol.visible = false;
+    }
+    p.torso.rotation.x = moving ? 0.08 : 0;
+    p.torso.position.y = 0.95 + (moving ? Math.abs(Math.sin(phase)) * 0.05 : 0);
+  }
+
+  function updatePlayer(dt, input) {
+    var p = G.player;
+    if (S.busted) {
+      S.bustTimer -= dt;
+      if (S.bustTimer <= 0) { S.busted = false; G.health = 100; }
+      return;
+    }
+    if (!p.onFoot) return;
+    var fwd = (input.w ? 1 : 0) - (input.s ? 1 : 0);
+    var strafe = (input.d ? 1 : 0) - (input.a ? 1 : 0);
+    var moving = fwd !== 0 || strafe !== 0;
+    var sprint = !!input.shift;
+    var speed = sprint ? 10.5 : (p.aiming ? 3.2 : 6.2);
+    var yaw = G.cam.yaw;
+    var mx = 0, mz = 0;
+    if (moving) {
+      var len = Math.sqrt(fwd * fwd + strafe * strafe);
+      mx = (Math.sin(yaw) * fwd + Math.cos(yaw) * strafe) / len;
+      mz = (Math.cos(yaw) * fwd - Math.sin(yaw) * strafe) / len;
+      var nx = p.x + mx * speed * dt, nz = p.z + mz * speed * dt;
+      var fixed = collideCircle(nx, nz, 0.6);
+      var b = inBounds(fixed.x, fixed.z);
+      p.x = b.x; p.z = b.z;
+      var targetHeading = Math.atan2(mx, mz);
+      p.heading += U.angDiff(targetHeading, p.heading) * Math.min(1, dt * 12);
+    }
+    p.walking = moving && !sprint;
+    p.running = moving && sprint;
+    p.speed = moving ? speed : 0;
+    S.mateo.group.position.set(p.x, 0, p.z);
+    S.mateo.group.rotation.y = p.heading;
+    animateMateo(dt, moving, sprint);
+    // Car collision while on foot: a fast car hitting Mateo hurts.
+    S.traffic.concat(S.cops.filter(function (c) { return c.kind === 'car'; }).map(function (c) { return { x: c.x, z: c.z, speed: c.speed }; })).forEach(function (c) {
+      if (c.speed > 4 && U.dist2(p.x, p.z, c.x, c.z) < 1.8) {
+        damagePlayer(12, 'hit by a car');
+        p.x += (p.x - c.x) * 0.6; p.z += (p.z - c.z) * 0.6;
+      }
+    });
+  }
+
+  function updateDriving(dt, input) {
+    var car = S.playerCar;
+    if (!car) return;
+    var accel = (input.w ? 1 : 0) - (input.s ? 1 : 0);
+    var steer = (input.a ? 1 : 0) - (input.d ? 1 : 0);
+    var boost = input.shift ? 1.35 : 1;
+    var drifting = !!input.space;
+    var maxSpeed = 34 * boost;
+    var maxReverse = 12;
+    if (accel > 0) car.speed += 22 * boost * dt;
+    else if (accel < 0) car.speed -= (car.speed > 0.5 ? 30 : 14) * dt;
+    else car.speed -= Math.sign(car.speed) * 8 * dt;
+    if (Math.abs(car.speed) < 0.15 && accel === 0) car.speed = 0;
+    car.speed = U.clamp(car.speed, -maxReverse, maxSpeed);
+    var turnRate = steer * (drifting ? 2.4 : 1.5) * U.clamp(Math.abs(car.speed) / 10, 0, 1) * (car.speed < 0 ? -1 : 1);
+    car.heading += turnRate * dt * (drifting ? 1.15 : 1);
+    var nx = car.x + Math.sin(car.heading) * car.speed * dt;
+    var nz = car.z + Math.cos(car.heading) * car.speed * dt;
+    var fixed = collideCircle(nx, nz, 1.6);
+    if (fixed.x !== nx || fixed.z !== nz) {
+      car.speed *= 0.45;
+      car.hp = Math.max(0, car.hp - 2);
+      PH.crime.commitCrime(0, S.cops, S.peds, 'crash'); // crash alone: no witness rule trigger
+    }
+    var b = inBounds(fixed.x, fixed.z);
+    car.x = b.x; car.z = b.z;
+    car.mesh.position.set(car.x, 0, car.z);
+    car.mesh.rotation.y = car.heading;
+    car.mesh.rotation.z = drifting ? -steer * 0.08 : 0;
+    car.wheels.forEach(function (w, i) { w.rotation.x += car.speed * dt * 1.4; });
+    // Sync the player to the car.
+    G.player.x = car.x; G.player.z = car.z;
+    G.player.heading = car.heading;
+    G.player.speed = Math.abs(car.speed);
+    // Run over pedestrians.
+    S.peds.forEach(function (ped) {
+      if (ped.down) return;
+      if (Math.abs(car.speed) > 3 && U.dist2(car.x, car.z, ped.x, ped.z) < 2.0) {
+        ped.down = true;
+        ped.group.rotation.x = -Math.PI / 2;
+        ped.group.position.y = 0.3;
+        G.stats.pedsHit++;
+        car.hp = Math.max(0, car.hp - 3);
+        PH.crime.commitCrime(1, S.cops, S.peds, 'hit a pedestrian');
+      }
+    });
+    // Ram a police car: a crime, witnessed by definition.
+    S.cops.forEach(function (c) {
+      if (c.kind === 'car' && Math.abs(car.speed) > 5 && U.dist2(car.x, car.z, c.x, c.z) < 3.2) {
+        c.hp -= 25;
+        car.hp = Math.max(0, car.hp - 6);
+        car.speed *= 0.5;
+        PH.crime.commitCrime(1, S.cops, S.peds, 'rammed a police car');
+        if (c.hp <= 0) removeCop(c);
+      }
+    });
+    // Bump traffic cars.
+    S.traffic.forEach(function (t) {
+      if (U.dist2(car.x, car.z, t.x, t.z) < 3.4) {
+        var push = 3.4 - U.dist2(car.x, car.z, t.x, t.z);
+        t.x += (t.x - car.x) * 0.1 + 0.01;
+        t.z += (t.z - car.z) * 0.1 + 0.01;
+        car.speed *= 0.85;
+        car.hp = Math.max(0, car.hp - 1);
+      }
+    });
+    if (car.hp <= 0) {
+      toast('The Arrow is wrecked! Get out and find another ride.', 3500);
+      exitCar();
+      car.hp = 40; // it smoulders on, drivable again later
+    }
+  }
+
+  function updateTraffic(dt) {
+    S.traffic.forEach(function (c) {
+      // Simple avoidance: slow down if a car is close ahead.
+      var ahead = 99;
+      S.traffic.forEach(function (o) {
+        if (o === c) return;
+        var dx = o.x - c.x, dz = o.z - c.z;
+        var d = Math.sqrt(dx * dx + dz * dz);
+        if (d < 12) {
+          var ang = Math.abs(U.angDiff(Math.atan2(dx, dz), c.heading));
+          if (ang < 0.5) ahead = Math.min(ahead, d);
+        }
+      });
+      var target = ahead < 9 ? 0 : U.rand(6, 11);
+      if (S.empUntil > G.time) target = 0;
+      c.speed = U.lerp(c.speed, target, Math.min(1, dt * 2));
+      var nx = c.x + Math.sin(c.heading) * c.speed * dt;
+      var nz = c.z + Math.cos(c.heading) * c.speed * dt;
+      // Loop around the city edge, or turn at a random intersection.
+      var out = Math.abs(nx) > 148 || Math.abs(nz) > 148;
+      if (out) {
+        if (c.axis === 'x') { c.x = -c.dir * 145; c.z = c.road + c.lane; }
+        else { c.z = -c.dir * 145; c.x = c.road + c.lane; }
+      } else {
+        c.x = nx; c.z = nz;
+        if (Math.random() < dt * 0.02) {
+          // Random turn at an intersection onto the crossing road.
+          var nr = U.nearestRoad(c.x), nr2 = U.nearestRoad(c.z);
+          if (Math.abs(c.x - nr) < 2 && Math.abs(c.z - nr2) < 2) {
+            c.axis = c.axis === 'x' ? 'z' : 'x';
+            c.heading += (Math.random() < 0.5 ? 1 : -1) * Math.PI / 2;
+            c.road = c.axis === 'x' ? c.z : c.x;
+          }
+        }
+      }
+      c.mesh.position.set(c.x, 0, c.z);
+      c.mesh.rotation.y = c.heading;
+      c.wheels.forEach(function (w) { w.rotation.x += c.speed * dt * 1.4; });
+    });
+    // The courier drives his loop.
+    if (S.courier) {
+      var cu = S.courier;
+      cu.x += Math.sin(cu.heading) * cu.speed * dt;
+      cu.z += Math.cos(cu.heading) * cu.speed * dt;
+      if (Math.abs(cu.x) > 140 || Math.abs(cu.z) > 140) {
+        cu.heading += Math.PI / 2;
+        cu.x = U.clamp(cu.x, -140, 140);
+        cu.z = U.clamp(cu.z, -140, 140);
+      }
+      cu.mesh.position.set(cu.x, 0, cu.z);
+      cu.mesh.rotation.y = cu.heading;
+    }
+  }
+
+  function updatePeds(dt) {
+    S.peds.forEach(function (p) {
+      if (p.down) return;
+      var speed = p.speed;
+      if (p.fleeing) {
+        speed = 5.5;
+        var dx = p.x - G.player.x, dz = p.z - G.player.z;
+        var d = Math.sqrt(dx * dx + dz * dz) || 1;
+        p.heading = Math.atan2(dx / d, dz / d);
+        if (d > 45) p.fleeing = false;
+      } else if (Math.random() < dt * 0.08) {
+        p.heading += U.pick([-Math.PI / 2, Math.PI / 2, 0, 0]);
+      }
+      p.x += Math.sin(p.heading) * speed * dt;
+      p.z += Math.cos(p.heading) * speed * dt;
+      var b = inBounds(p.x, p.z);
+      if (b.x !== p.x || b.z !== p.z) { p.heading += Math.PI; p.x = b.x; p.z = b.z; }
+      p.walkPhase += dt * (p.fleeing ? 12 : 8);
+      var swing = Math.sin(p.walkPhase) * 0.5;
+      p.parts.legL.rotation.x = -swing;
+      p.parts.legR.rotation.x = swing;
+      p.parts.armL.rotation.x = swing * 0.7;
+      p.parts.armR.rotation.x = -swing * 0.7;
+      p.group.position.set(p.x, 0, p.z);
+      p.group.rotation.y = p.heading;
+    });
+  }
+
+  function updateCops(dt) {
+    var px = G.player.x, pz = G.player.z;
+    S.cops.forEach(function (c) {
+      if (c.kind === 'foot') {
+        if (c.state === 'down') return;
+        var d = U.dist2(px, pz, c.x, c.z);
+        var target = G.wanted >= 1 ? 4.6 : 1.6;
+        var heading = Math.atan2(px - c.x, pz - c.z);
+        c.heading += U.angDiff(heading, c.heading) * Math.min(1, dt * 6);
+        if (G.wanted >= 1) {
+          c.speed = U.lerp(c.speed, target, dt * 2);
+          c.x += Math.sin(c.heading) * c.speed * dt;
+          c.z += Math.cos(c.heading) * c.speed * dt;
+          if (d < 1.6) {
+            // Caught! Busted: lose cash, wake up at the pier with no heat.
+            bustPlayer();
+          }
+        } else {
+          // Patrol: wander the sidewalk.
+          c.speed = U.lerp(c.speed, 1.6, dt);
+          if (Math.random() < dt * 0.1) c.heading += U.pick([-1, 1]) * Math.PI / 2;
+          c.x += Math.sin(c.heading) * c.speed * dt;
+          c.z += Math.cos(c.heading) * c.speed * dt;
+        }
+        c.walkPhase += dt * 9;
+        var swing = Math.sin(c.walkPhase) * 0.5;
+        c.parts.legL.rotation.x = -swing;
+        c.parts.legR.rotation.x = swing;
+        c.parts.armL.rotation.x = swing * 0.7;
+        c.parts.armR.rotation.x = -swing * 0.7;
+        c.mesh.position.set(c.x, 0, c.z);
+        c.mesh.rotation.y = c.heading;
+      } else if (c.kind === 'car') {
+        var empStalled = G.time < S.empUntil;
+        var d2 = U.dist2(px, pz, c.x, c.z);
+        var wantSpeed = empStalled ? 0 : (G.wanted >= 2 ? U.clamp(d2 * 0.55, 10, 30) : 8);
+        // Roadblock behaviour at 2+ stars: one cruiser cuts across ahead.
+        if (G.wanted >= 2 && d2 < 26 && c.state !== 'block') {
+          if (Math.random() < dt * 0.05) c.state = 'block';
+        }
+        if (c.state === 'block') {
+          wantSpeed = 0;
+          c.heading += U.angDiff(Math.atan2(px - c.x, pz - c.z) + Math.PI / 2, c.heading) * Math.min(1, dt * 2);
+          if (d2 > 40) c.state = 'pursuit';
+        } else {
+          var heading2 = Math.atan2(px - c.x, pz - c.z);
+          c.heading += U.angDiff(heading2, c.heading) * Math.min(1, dt * 2.2);
+        }
+        c.speed = U.lerp(c.speed, wantSpeed, Math.min(1, dt * 1.5));
+        var nx = c.x + Math.sin(c.heading) * c.speed * dt;
+        var nz = c.z + Math.cos(c.heading) * c.speed * dt;
+        var fixed = collideCircle(nx, nz, 1.6);
+        c.x = fixed.x; c.z = fixed.z;
+        c.mesh.position.set(c.x, 0, c.z);
+        c.mesh.rotation.y = c.heading;
+        c.wheels.forEach(function (w) { w.rotation.x += c.speed * dt * 1.4; });
+        if (c.lightBar) {
+          var blink = Math.floor(G.time * 6) % 2 === 0;
+          c.lightBar.red.material.color.setHex(blink ? 0xff2222 : 0x550000);
+          c.lightBar.blue.material.color.setHex(blink ? 0x000055 : 0x2244ff);
+        }
+        // Ram the player on foot.
+        if (d2 < 2.2 && c.speed > 4) damagePlayer(10, 'rammed by a cruiser');
+      } else if (c.kind === 'heli') {
+        // Circle above the player, lock on, then shoot.
+        var ang = G.time * 0.35;
+        var hx = px + Math.cos(ang) * 26, hz = pz + Math.sin(ang) * 26;
+        c.x = U.lerp(c.x, hx, Math.min(1, dt * 0.8));
+        c.z = U.lerp(c.z, hz, Math.min(1, dt * 0.8));
+        c.mesh.position.set(c.x, 55 + Math.sin(G.time * 0.7) * 2, c.z);
+        c.mesh.rotation.y = Math.atan2(px - c.x, pz - c.z);
+        c.heli.rotor.rotation.y += dt * 28;
+        c.heli.tailRotor.rotation.x += dt * 30;
+        c.heli.spotlight.target.position.set(px, 0, pz);
+        c.heli.spotlight.target.updateMatrixWorld();
+        var hd = U.dist2(px, pz, c.x, c.z);
+        if (hd < 34) {
+          c.lockT += dt;
+          if (c.lockT > 3) {
+            c.shootT -= dt;
+            if (c.shootT <= 0) {
+              c.shootT = 0.7;
+              damagePlayer(4, 'heli fire');
+              if (window.PH && window.PH.sfx) window.PH.sfx('heliShot');
+            }
+          }
+        } else c.lockT = Math.max(0, c.lockT - dt);
+      }
+    });
+  }
+
+  function damagePlayer(amount, cause) {
+    if (S.busted) return;
+    G.health -= amount;
+    if (window.PH && window.PH.sfx) window.PH.sfx('hurt');
+    if (G.health <= 0) {
+      G.health = 0;
+      bustPlayer();
+    }
+  }
+
+  function bustPlayer() {
+    if (S.busted) return;
+    S.busted = true;
+    S.bustTimer = 2.2;
+    var lost = Math.min(G.money, 200);
+    G.money -= lost;
+    var wasDriving = !!S.playerCar;
+    if (wasDriving) exitCar();
+    G.wanted = 0;
+    G.wantedTimer = 0;
+    // Wake up at the pier safehouse, heat gone.
+    G.player.x = 196; G.player.z = 6;
+    G.player.heading = -Math.PI / 2;
+    S.mateo.group.position.set(196, 0, 6);
+    S.cops.slice().forEach(removeCop);
+    toast('BUSTED! The PD took $' + lost + '. You wake up at the pier.', 4000);
+    dialog('Kira: You\'re awake. Pier safehouse, no heat, no car. Get moving, Mateo.', 6000);
+    PH.save.saveGame();
+  }
+
+  // --- camera ----------------------------------------------------------------------
+  function updateCamera(dt) {
+    var cam = W.camera;
+    var p = G.player;
+    if (!p.onFoot) {
+      var car = S.playerCar;
+      var back = 11, up = 4.6;
+      var tx = car.x - Math.sin(car.heading) * back;
+      var tz = car.z - Math.cos(car.heading) * back;
+      var k = Math.min(1, dt * 4.5);
+      cam.position.x = U.lerp(cam.position.x, tx, k);
+      cam.position.y = U.lerp(cam.position.y, up, k);
+      cam.position.z = U.lerp(cam.position.z, tz, k);
+      cam.lookAt(car.x + Math.sin(car.heading) * 8, 1.6, car.z + Math.cos(car.heading) * 8);
+    } else {
+      var yaw = G.cam.yaw, pitch = G.cam.pitch;
+      var dist = p.aiming ? 5.0 : 7.5;
+      var cx = p.x - Math.sin(yaw) * Math.cos(pitch) * dist;
+      var cz = p.z - Math.cos(yaw) * Math.cos(pitch) * dist;
+      var cy = (p.aiming ? 2.7 : 2.2) + Math.sin(pitch) * dist;
+      cam.position.set(cx, Math.max(0.8, cy), cz);
+      // Aim further ahead so Mateo sits in the lower third, not dead centre.
+      var lookD = p.aiming ? 4 : 2;
+      cam.lookAt(p.x + Math.sin(yaw) * lookD, p.aiming ? 1.25 : 1.5, p.z + Math.cos(yaw) * lookD);
+    }
+  }
+
+  // --- HUD ---------------------------------------------------------------------------
+  var mm = null;
+  function drawMinimap() {
+    if (!mm) mm = el('minimap').getContext('2d');
+    var c = mm, S2 = 190, R = S2 / 2;
+    c.clearRect(0, 0, S2, S2);
+    c.save();
+    c.beginPath(); c.arc(R, R, R - 2, 0, Math.PI * 2); c.clip();
+    c.fillStyle = '#0d0a24'; c.fillRect(0, 0, S2, S2);
+    function toMap(x, z) {
+      return [R + (x / 260) * S2, R + (z / 260) * S2];
+    }
+    // Sea + beach on the east.
+    c.fillStyle = '#1d6f8e'; c.fillRect(toMap(205, -150)[0], 0, S2, S2);
+    c.fillStyle = '#e8c98f'; c.fillRect(toMap(168, -150)[0], 0, toMap(205, -150)[0] - toMap(168, -150)[0], S2);
+    // Roads.
+    c.strokeStyle = '#5a5a72'; c.lineWidth = 5;
+    for (var i = 0; i < 7; i++) {
+      var rc = U.roadCoord(i);
+      var a = toMap(-150, rc), b = toMap(150, rc);
+      c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
+      var d = toMap(rc, -150), e = toMap(rc, 150);
+      c.beginPath(); c.moveTo(d[0], d[1]); c.lineTo(e[0], e[1]); c.stroke();
+    }
+    // Pier.
+    c.strokeStyle = '#8a5f38'; c.lineWidth = 4;
+    var p1 = toMap(168, 0), p2 = toMap(240, 0);
+    c.beginPath(); c.moveTo(p1[0], p1[1]); c.lineTo(p2[0], p2[1]); c.stroke();
+    // Mission target.
+    var t = currentTarget();
+    if (t) {
+      var tp = toMap(t.x, t.z);
+      var pulse = 5 + Math.sin(G.time * 5) * 2;
+      c.fillStyle = '#ffd23e';
+      c.beginPath(); c.arc(tp[0], tp[1], pulse + 3, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#1a0f2e';
+      c.font = 'bold 11px Arial'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('★', tp[0], tp[1]);
+    }
+    // Traffic (white), peds (grey), cops (red/blue), heli (purple).
+    c.fillStyle = '#ffffff';
+    S.traffic.forEach(function (car) { var q = toMap(car.x, car.z); c.fillRect(q[0] - 1.5, q[1] - 1.5, 3, 3); });
+    c.fillStyle = '#9a9ab0';
+    S.peds.forEach(function (ped) { if (!ped.down) { var q = toMap(ped.x, ped.z); c.fillRect(q[0] - 1, q[1] - 1, 2, 2); } });
+    S.cops.forEach(function (cop) {
+      var q = toMap(cop.x, cop.z);
+      c.fillStyle = cop.kind === 'heli' ? '#c77dff' : (cop.kind === 'car' ? '#ff5555' : '#ff2222');
+      c.beginPath(); c.arc(q[0], q[1], cop.kind === 'car' ? 4 : 3, 0, Math.PI * 2); c.fill();
+    });
+    // Player arrow.
+    var pp = toMap(G.player.x, G.player.z);
+    c.save();
+    c.translate(pp[0], pp[1]);
+    c.rotate(Math.PI - G.player.heading);
+    c.fillStyle = '#7dff9e';
+    c.beginPath(); c.moveTo(0, -8); c.lineTo(5, 6); c.lineTo(-5, 6); c.closePath(); c.fill();
+    c.restore();
+    c.restore();
+    // Ring label: district name.
+    c.fillStyle = 'rgba(255,255,255,0.85)';
+    c.font = 'bold 10px Arial'; c.textAlign = 'center';
+    c.fillText(U.districtAt(G.player.x, G.player.z).toUpperCase(), R, S2 - 8);
+  }
+
+  function updateHUD() {
+    el('money').textContent = U.fmtMoney(G.money);
+    var stars = '';
+    for (var i = 0; i < 5; i++) stars += '<span class="' + (i < G.wanted ? 'on' : 'off') + '">★</span>';
+    el('stars').innerHTML = stars;
+    var list = el('police-list');
+    var html = '';
+    el('police-panel').querySelector('.p-title').textContent =
+      '📻 Sunset Bay PD — ' + U.wantedLabel(G.wanted);
+    if (S.cops.length === 0) {
+      html = '<div>No units in the area. <span class="st-patrol">All quiet.</span></div>';
+    } else {
+      S.cops.slice(0, 5).forEach(function (c) {
+        var d = Math.round(U.dist2(G.player.x, G.player.z, c.x, c.z));
+        var st = G.wanted >= 1 ? '<span class="st-pursuit">PURSUIT</span>' : '<span class="st-patrol">PATROL</span>';
+        if (c.kind === 'heli') st = '<span class="st-pursuit">AIR SUPPORT' + (c.lockT > 3 ? ' — FIRING' : ' — LOCKING') + '</span>';
+        html += '<div>' + c.name + ' • ' + d + 'm • ' + st + '</div>';
+      });
+      if (S.cops.length > 5) html += '<div>+' + (S.cops.length - 5) + ' more units…</div>';
+    }
+    list.innerHTML = html;
+    var speedEl = el('speed');
+    if (G.player.onFoot) {
+      speedEl.innerHTML = Math.round(G.player.speed * 2.2) + ' <small>mph</small>';
+      el('car-name').textContent = 'ON FOOT — ' + U.districtAt(G.player.x, G.player.z).toUpperCase();
+      el('car-hp').textContent = 'Health ' + Math.round(G.health) + '  •  Vehicle —';
+    } else {
+      var car = S.playerCar;
+      speedEl.innerHTML = Math.round(Math.abs(car.speed) * 2.2) + ' <small>mph</small>';
+      el('car-name').textContent = car.name;
+      el('car-hp').textContent = 'Health ' + Math.round(G.health) + '  •  Vehicle ' + Math.round(car.hp) + '%';
+    }
+    el('health-fill').style.width = Math.max(0, G.health) + '%';
+    el('emp-count').textContent = '×' + G.emp;
+    el('smoke-count').textContent = '×' + G.smoke;
+    el('radio-name').textContent = PH.STATIONS[G.radio].name;
+    el('radio-track').textContent = PH.STATIONS[G.radio].track;
+    el('crosshair').style.display = G.player.aiming ? 'block' : 'none';
+    drawMinimap();
+  }
+
+  // --- main update ----------------------------------------------------------------------
+  function update(dt, input) {
+    G.time += dt;
+    if (G.started && !G.paused) G.playTime += dt;
+    // Tracer cleanup.
+    for (var i = S.muzzle.length - 1; i >= 0; i--) {
+      S.muzzle[i].t -= dt;
+      if (S.muzzle[i].t <= 0) {
+        W.scene.remove(S.muzzle[i].mesh);
+        S.muzzle.splice(i, 1);
+      }
+    }
+    if (!G.started || G.paused) return;
+    updatePlayer(dt, input);
+    updateDriving(dt, input);
+    updateTraffic(dt);
+    updatePeds(dt);
+    maintainPolice(dt);
+    updateCops(dt);
+    PH.crime.tickWantedDecay(dt, S.cops);
+    updateMissions(dt);
+    updateCamera(dt);
+    updateHUD();
+    // Sea shimmer.
+    if (W.sea) W.sea.position.y = Math.sin(G.time * 0.6) * 0.08;
+    // Beacon pulse.
+    if (W.beacon.group.visible) {
+      var s = 1 + Math.sin(G.time * 4) * 0.15;
+      W.beacon.group.scale.set(s, 1, s);
+    }
+  }
+
+  function initSim() {
+    var mateo = B.makeMateo();
+    mateo.group.position.set(G.player.x, 0, G.player.z);
+    W.scene.add(mateo.group);
+    S.mateo = mateo;
+    spawnMissionCar();
+    for (var i = 0; i < 14; i++) spawnTrafficCar();
+    for (var j = 0; j < 26; j++) spawnPed();
+    // A few patrol cops already on the street at start (wanted 0: patrol only).
+    spawnFootCop(20, 44);
+    spawnFootCop(-44, -20);
+    var saved = PH.save.loadGame();
+    if (saved) {
+      toast('Save loaded — ' + U.fmtMoney(G.money) + ', job ' + (G.missionIndex + 1) + ' of 8.', 3500);
+    }
+    if (G.missionIndex >= MISSIONS.length) finishStory();
+    else startMission(G.missionIndex);
+    return S;
+  }
+
+  PH.sim = S;
+  PH.simInit = initSim;
+  PH.simUpdate = update;
+  PH.missions = MISSIONS;
+  PH.simApi = {
+    startMission: startMission, enterCar: enterCar, exitCar: exitCar,
+    nearestCar: nearestCar, shoot: shoot, useEmp: useEmp, useSmoke: useSmoke,
+    spawnPoliceCar: spawnPoliceCar, spawnFootCop: spawnFootCop,
+    currentTarget: currentTarget, updateCamera: updateCamera,
+  };
+  // Probe/debug hooks: read-only state plus small setters the playtest uses.
+  PH.test = {
+    state: function () {
+      return {
+        wanted: G.wanted, money: G.money, missionIndex: G.missionIndex,
+        x: G.player.x, z: G.player.z, onFoot: G.player.onFoot,
+        health: G.health, cops: S.cops.length,
+        copsNear40: S.cops.filter(function (c) { return U.dist2(G.player.x, G.player.z, c.x, c.z) <= 40; }).length,
+        pedsNear30: S.peds.filter(function (p) { return !p.down && !p.fleeing && U.dist2(G.player.x, G.player.z, p.x, p.z) <= 30; }).length,
+        traffic: S.traffic.length, peds: S.peds.length,
+        missionTitle: S.mission ? S.mission.title : null,
+        m2: S.m2,
+      };
+    },
+    teleport: function (x, z) {
+      if (!G.player.onFoot) exitCar();
+      G.player.x = x; G.player.z = z;
+      S.mateo.group.position.set(x, 0, z);
+    },
+    setMission: function (i) { G.missionIndex = i; startMission(i); },
+    clearCops: function () { S.cops.slice().forEach(removeCop); },
+    spawnPedNear: function (x, z) {
+      var p = spawnPed();
+      p.x = x; p.z = z; p.group.position.set(x, 0, z);
+      return p;
+    },
+    spawnCopNear: function (x, z) { return spawnFootCop(x, z); },
+  };
+})();

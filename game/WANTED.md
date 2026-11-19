@@ -1,68 +1,64 @@
-# Wanted — witness rule (v3.5)
+# WANTED — Sunset Bay PD rules (PIER HEAT)
 
-Aturan wanted PIER HEAT sejak v3.5, atas keluhan pengguna (19 Nov 2026):
-"baru naik mobil langsung bintang 3 — harusnya tanpa bintang, baru ada
-bintang kalau melakukan kejahatan".
+How the heat works in Sunset Bay, in plain words.
 
-## Aturan
+## Stars
 
-- **Mulai game + naik mobil biasa = 0 bintang.** Masuk mobil bukan
-  kejahatan. `finishEnterCar()` (`main.js`) tidak lagi menaikkan wanted
-  sendiri.
-- **Wanted naik HANYA bila ada saksi** — `crimeWitnessed()` (`core.js`):
-  polisi jalan kaki / mobil polisi yang terlihat, atau pejalan kaki yang
-  masih berjalan, dalam jarak 30 m dari pemain. Tanpa saksi = tanpa
-  bintang. Jarak saja — build ini tidak punya tes garis pandang /
-  oklusi, jadi saksi di balik gedung tetap terhitung; itu perkiraan
-  yang didokumentasikan, bukan aturan tersembunyi.
-- Kejahatan yang menaikkan wanted:
-  - Mencuri mobil yang DILIHAT saksi: +1 (`main.js finishEnterCar`).
-  - Menembak dan meleset tapi disaksikan: naik ke 1 (`main.js shoot`).
-    Tembakan yang tidak disaksikan = suara saja, tanpa bintang.
-    Unsur acak lama (50% dapat bintang saat meleset) DIHAPUS.
-  - Menabrak / melukai pejalan kaki dengan mobil pemain, disaksikan: +1
-    (`sim.js updatePeds`). Tanpa saksi: toast "NO WITNESS", tanpa bintang.
-  - Menabrak mobil polisi patroli (status PATROL, tabrakan keras, cooldown
-    5 detik): naik ke minimal 1 (`sim.js updateTraffic`). Mobil polisi
-    yang sedang mengejar / menabrak pemain TIDAK dihitung — itu aksi
-    polisi, bukan kejahatan baru pemain.
-  - Menyerang polisi (tembak polisi / mobil polisi sampai rusak):
-    langsung minimal 2 — korban adalah polisi, jadi disaksikan menurut
-    definisi (`main.js shoot`, tidak diubah v3.5).
-- **0 bintang:** polisi hanya patroli, tidak mengejar / menabrak /
-  menembak. **1 bintang:** polisi jalan kaki menangkap saja (hanya saat
-  pemain jalan kaki), tidak menabrak mobil. **2+:** mobil polisi
-  mengejar + roadblock; ram hanya 3+ (hanya unit terdepan, burst 2 detik);
-  heli 3+, heli kedua 5.
-- **Decay (tidak diubah):** tidak ada polisi dalam 40 m selama 22 detik
-  → wanted turun 1; di 0: "You lost the cops."
+- **0 stars** — The PD patrols. Foot cops wander the sidewalks; cruisers
+  cruise. Nobody is after you.
+- **1 star** — Foot cops chase you on foot to make an arrest. They do not
+  ram your car.
+- **2 stars** — Cruisers join the chase, and they set roadblocks across
+  your road.
+- **3 stars** — The police helicopter arrives, circles above you, locks on
+  for a few seconds, then opens fire.
+- **4–5 stars** — More cruisers, more foot cops, the helicopter stays on
+  you. There is no 6th star; 5 is the whole city.
 
-## Heat misi 2 — pengecualian yang dijelaskan (diperbaiki v3.6)
+## The witness rule
 
-Misi 1 (STEAL THE SCARLET ARROW) dulu memaksa `setWanted(3)` begitu
-pemain masuk mobil — itu penyebab keluhan pertama. v3.5 memindahkan heat
-ke "saat misi 1 selesai di beacon", TAPI beacon misi 1 terletak persis di
-posisi mobil (-104, -24, r=7), jadi heat tetap menyala di detik yang sama
-dengan masuk mobil — reproduksi v3.6 (probe Playwright, saksi dibiarkan
-hidup) mengonfirmasi: wanted 2 di saat yang sama mode menjadi 'car', dan
-`crimeWitnessed()` di samping mobil bernilai true, jadi masuk mobil saja
-bisa memberi +1 juga. Keluhan lanjutan pengguna 19 Nov 09:33 WIB: "baru
-masuk mobil langsung bintang 2".
+A crime only counts when someone sees it. Shooting, running over a
+pedestrian, ramming a police car, or stealing a traffic car raises your
+wanted level **only** if a police unit or a pedestrian still on their feet
+is within about **30 metres** of you. No witness, no stars — the city
+never knew.
 
-v3.6: masuk Arrow = misi 1 selesai dengan **0 bintang** (dialog Kira saat
-itu: "Nice. The Arrow is yours now."). Heat misi 2 adalah beat terpisah
-yang baru menyala bila **salah satu** terpenuhi: pemain sudah mengemudi
-**60 m dari titik ambil mobil**, ATAU **12 detik** sudah lewat sejak
-mencuri. Saat heat menyala, Kira berkata pemilik baru saja melaporkan
-pencurian, wanted menjadi **2**, dan semua mobil polisi yang terlihat
-dipanggil ulang ke cincin **28–42 m** dari pemain (bukan menempel di
-samping mobil). Mengambil Arrow pertama kali tidak lagi memberi bintang
-meski disaksikan — itu mobil misi yang disuruh Kira ambil; aturan saksi
-tetap berlaku untuk mobil traffic lain.
+Two things are never crimes at all:
 
-## HUD
+- Getting into an ordinary parked car, and
+- Getting into a mission car (the SCARLET ARROW and other job cars).
 
-Panel POLICE RESPONSE jujur terhadap mode: status OBSERVING saat
-mengemudi tertulis "PATROL UNITS WATCHING" (bukan "FOOT UNIT CLOSING
-IN" — unit jalan kaki tidak bisa mengejar mobil). "HELI FIRE!" hanya
-muncul saat heli benar-benar menembak setelah spotlight lock 3 detik.
+## What raises stars
+
+| Crime | Stars | Notes |
+| --- | --- | --- |
+| Firing a gun | +1 | Only with a witness within ~30 m |
+| Running over a pedestrian | +1 | Only with a witness within ~30 m |
+| Ramming a police car | +1 | The rammed unit always sees it |
+| Stealing a traffic car | +1 | Only with a witness within ~30 m |
+| Entering a mission car | 0 | Never a crime |
+| Crashing into a wall | 0 | Hurts the car, not your record |
+
+## Cooling off
+
+If no police unit is within **40 metres** of you for **22 seconds** straight,
+your wanted level drops by one star. Keep your distance and the heat fades.
+
+## Getting busted
+
+If a foot cop catches you, or your health hits zero, you are busted: the PD
+takes $200, your wanted level resets to zero, and you wake up at the pier
+safehouse. Your money above $200 and your mission progress stay yours.
+
+## Tools to lose the heat
+
+- **EMP (key 1)** — stalls every police car nearby for 6 seconds.
+- **Smoke (key 2)** — breaks the chase and drops one star at once.
+- You start with 2 of each.
+
+## Scripted heat
+
+Some missions light you up on purpose: the pier getaway in Mission 2 turns
+the heat on only after you have driven 60 m from the pickup or 12 seconds
+have passed, and the marina finale in Mission 8 puts you at 3 stars. That
+heat follows the same rules — cool off the same way, or finish the job.

@@ -37,16 +37,28 @@ bintang kalau melakukan kejahatan".
 - **Decay (tidak diubah):** tidak ada polisi dalam 40 m selama 22 detik
   → wanted turun 1; di 0: "You lost the cops."
 
-## Heat misi 2 — pengecualian yang dijelaskan
+## Heat misi 2 — pengecualian yang dijelaskan (diperbaiki v3.6)
 
 Misi 1 (STEAL THE SCARLET ARROW) dulu memaksa `setWanted(3)` begitu
-pemain masuk mobil — itu penyebab keluhan. v3.5: masuk mobil = 0 bintang.
-Heat untuk misi 2 (ESCAPE TO THE PIER SAFEHOUSE) adalah beat cerita
-yang terpisah dan dijelaskan di dalam game: begitu misi 1 selesai di
-beacon, Kira berkata pemilik mobil baru saja melaporkannya dicuri dan
-polisi dikerahkan — wanted menjadi **2** (cukup untuk mobil polisi
-mengejar + roadblock; heli butuh 3). Jadi pemain sempat mengemudi
-tanpa bintang sebelum laporan itu masuk.
+pemain masuk mobil — itu penyebab keluhan pertama. v3.5 memindahkan heat
+ke "saat misi 1 selesai di beacon", TAPI beacon misi 1 terletak persis di
+posisi mobil (-104, -24, r=7), jadi heat tetap menyala di detik yang sama
+dengan masuk mobil — reproduksi v3.6 (probe Playwright, saksi dibiarkan
+hidup) mengonfirmasi: wanted 2 di saat yang sama mode menjadi 'car', dan
+`crimeWitnessed()` di samping mobil bernilai true, jadi masuk mobil saja
+bisa memberi +1 juga. Keluhan lanjutan pengguna 19 Nov 09:33 WIB: "baru
+masuk mobil langsung bintang 2".
+
+v3.6: masuk Arrow = misi 1 selesai dengan **0 bintang** (dialog Kira saat
+itu: "Nice. The Arrow is yours now."). Heat misi 2 adalah beat terpisah
+yang baru menyala bila **salah satu** terpenuhi: pemain sudah mengemudi
+**60 m dari titik ambil mobil**, ATAU **12 detik** sudah lewat sejak
+mencuri. Saat heat menyala, Kira berkata pemilik baru saja melaporkan
+pencurian, wanted menjadi **2**, dan semua mobil polisi yang terlihat
+dipanggil ulang ke cincin **28–42 m** dari pemain (bukan menempel di
+samping mobil). Mengambil Arrow pertama kali tidak lagi memberi bintang
+meski disaksikan — itu mobil misi yang disuruh Kira ambil; aturan saksi
+tetap berlaku untuk mobil traffic lain.
 
 ## HUD
 

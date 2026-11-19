@@ -1144,19 +1144,42 @@ function updateMissions(dt) {
   const d = dist2d(pp, V3(m.target[0], 0, m.target[2]));
   beaconGem.rotation.y += dt * 2; beaconGem.position.y = 8 + Math.sin(S.time * 2) * 0.8;
   beaconCyl.material.opacity = 0.25 + Math.sin(S.time * 3) * 0.1;
+  // v3.6 escape heat (mission 2): fires only once Mateo has driven clear
+  // of the pickup (60 m) or 12 s have passed since the steal — never in
+  // the first second in the car. When it fires, every visible police car
+  // is re-summoned to a 28–42 m ring (placePoliceCarNear) so no unit is
+  // already flanking the player when the chase starts.
+  if (S.mission === 2 && S.heatArmed && !S.heatFired) {
+    const away = Math.hypot(pp.x - S.heatX, pp.z - S.heatZ);
+    if (away > 60 || S.time - S.heatT > 12) {
+      S.heatFired = true;
+      setWanted(2);
+      say('Kira: The owner just reported the Arrow stolen — PD is on the radio. Run for the pier!');
+      toast('REPORTED STOLEN — POLICE DISPATCHED ★★', 2500);
+      for (const pc of police) if (pc.visible) { placePoliceCarNear(pc); pc.userData.status = 'EN ROUTE'; }
+      S.carTimer = 0;
+    }
+  }
   if (d < m.r) {
     if (S.mission === 0) { completeStage(); return; }
     if (S.mission === 1) {
       if (S.mode === 'car' && S.drivenCar === playerCar) {
-        // v3.5: taking the car raised NO heat by itself. The heat for
-        // the escape (mission 2) is a separate story beat, not the car
-        // entry: the owner reports the Arrow stolen, so PD is
-        // dispatched. 2 stars is enough for pursuit cars + roadblock
-        // (heli needs 3) — the old forced 3 on entry is gone.
-        setWanted(2);
-        say('Kira: The owner just reported the Arrow stolen — PD is on the radio. Run for the pier!');
-        toast('REPORTED STOLEN — POLICE DISPATCHED ★★', 2500);
-        completeStage(); return;
+        // v3.6: entering the Arrow completes the steal with NO heat.
+        // The mission-1 beacon sits exactly on the car, so the old
+        // "heat at the beacon" fired in the same second as entering
+        // (user, 19 Nov: "baru masuk mobil langsung bintang 2" — the
+        // v3.5 repro confirmed wanted 2 the instant mode became 'car',
+        // and a witness was standing by the car, so entry alone could
+        // also have given +1). The escape heat is a separate beat,
+        // armed here and fired later (see mission 2 above).
+        completeStage();
+        // completeStage() just said KIRA_LINES[2] ("Police on your
+        // tail...") — wrong until the heat actually fires. The Arrow
+        // line is the right one for this moment.
+        say(KIRA_LINES[1]);
+        S.heatArmed = true; S.heatFired = false;
+        S.heatX = pp.x; S.heatZ = pp.z; S.heatT = S.time;
+        return;
       }
       if (S.mode === 'foot') { toast('GET IN THE SCARLET ARROW — PRESS E', 1600); return; }
     }

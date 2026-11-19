@@ -46,6 +46,7 @@ const S = {
      within 40 m (decay), foughtT = seconds since the player last
      fought a cop (1★ cops only fight back after this). */
   footTimer: 0, carTimer: 0, calmT: 0, foughtT: 99, heliLockT: 0, heliLock2T: 0, lastRamCrime: -99, // seconds of the last ramming-a-patrol-car crime (5 s cooldown)
+  heatArmed: false, heatFired: false, heatX: 0, heatZ: 0, heatT: 0, // v3.6 escape heat: armed when the Arrow is taken, fired once Mateo has driven clear of the pickup (60 m) or 12 s pass
   aimT: 0, // seconds left of the 0.33 s aim re-entry lock (PedManager.cs)
   aiming: false, // right-mouse hold: aim pose + viewmodel (v3.3)
   missionGlow: false, // staged mission shot: hold the muzzle flash on (v3.3)

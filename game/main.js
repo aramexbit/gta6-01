@@ -133,8 +133,10 @@ function finishEnterCar() {
     if (crimeWitnessed()) { setWanted(S.wanted + 1); toast('CAR STOLEN — WITNESSED ★', 2000); }
     else toast('CAR TAKEN — NO ONE SAW', 2000);
   } else if (best === playerCar && stolen) {
-    // first time taking the Scarlet Arrow: same witness rule.
-    if (crimeWitnessed()) { setWanted(S.wanted + 1); toast('SCARLET ARROW TAKEN — WITNESSED ★', 2000); }
+    // v3.6: the Arrow is the mission car Kira sent Mateo to take —
+    // taking it is never a witnessed crime by itself (user: entering a
+    // car = 0 stars first). The escape heat comes later, as its own
+    // story beat (see updateMissions, mission 2).
   }
   S.transition = null;
   saveGame();

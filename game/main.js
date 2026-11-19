@@ -16,19 +16,46 @@ addEventListener('keydown', (e) => {
   if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
 });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
+/* v3.5 foot camera: free look. Root causes of "hard to look around on
+   foot": (1) foot sensitivity was 0.0022 rad/px — ~714 px of mouse travel
+   for a 90° turn; (2) pitch was clamped to [-0.55, +1.2] rad, so looking
+   UP stopped at 31°; (3) mouse look only worked while pointer lock was
+   held — without a click the camera was locked facing forward. The car
+   chase cam is untouched: it was smooth, keep its 0.0022. */
+const FOOT_LOOK_SENS = 0.0040; // ~393 px for a 90° turn
+const FOOT_PITCH_MIN = -1.05, FOOT_PITCH_MAX = 1.05; // ±60° up/down
+let footDrag = null; // {x, y, moved} while the left button is held without pointer lock
+let suppressClickShoot = false;
+function applyFootLook(dx, dy) {
+  S.yaw -= dx * FOOT_LOOK_SENS; // yaw is free, full 360°
+  S.pitch = clamp(S.pitch + dy * FOOT_LOOK_SENS, FOOT_PITCH_MIN, FOOT_PITCH_MAX);
+}
 document.addEventListener('mousemove', (e) => {
-  if (document.pointerLockElement !== renderer.domElement || S.paused || !S.started) return;
+  if (document.pointerLockElement !== renderer.domElement || S.paused || !S.started) {
+    // no pointer lock: drag to look (foot only)
+    if (footDrag && S.mode === 'foot' && S.started && !S.paused) {
+      const dx = e.clientX - footDrag.x, dy = e.clientY - footDrag.y;
+      footDrag.x = e.clientX; footDrag.y = e.clientY;
+      if (dx || dy) { applyFootLook(dx, dy); footDrag.moved = true; }
+    }
+    return;
+  }
   if (S.mode === 'car') {
     camYawOffset += e.movementX * 0.0022; // swing the chase cam; it re-centers when idle
     camIdle = 0;
-  } else {
-    S.yaw -= e.movementX * 0.0022;
-    S.pitch = clamp(S.pitch + e.movementY * 0.0022, -0.55, 1.2);
-  }
+  } else applyFootLook(e.movementX, e.movementY);
+});
+renderer.domElement.addEventListener('mousedown', (e) => {
+  if (e.button === 0 && document.pointerLockElement !== renderer.domElement)
+    footDrag = { x: e.clientX, y: e.clientY, moved: false };
+});
+addEventListener('mouseup', (e) => {
+  if (e.button === 0 && footDrag) { suppressClickShoot = footDrag.moved; footDrag = null; }
 });
 renderer.domElement.addEventListener('click', () => {
   audioInit();
   if (S.started && !S.paused) {
+    if (suppressClickShoot) { suppressClickShoot = false; return; } // was a look-drag, not a shot
     if (document.pointerLockElement !== renderer.domElement) renderer.domElement.requestPointerLock();
     else if (S.mode === 'foot') shoot();
   }
@@ -100,9 +127,14 @@ function finishEnterCar() {
   camYawOffset = 0; camIdle = 0;
   playerMesh.visible = false;
   if (best !== playerCar && !best.userData.stolen) {
-    best.userData.stolen = true; setWanted(S.wanted + 1); toast('CAR STOLEN — WANTED ★', 2000);
+    // v3.5: taking a car is not itself a crime the police know about —
+    // it only raises heat if someone SAW it (witness rule).
+    best.userData.stolen = true;
+    if (crimeWitnessed()) { setWanted(S.wanted + 1); toast('CAR STOLEN — WITNESSED ★', 2000); }
+    else toast('CAR TAKEN — NO ONE SAW', 2000);
   } else if (best === playerCar && stolen) {
-    setWanted(S.wanted + 1); toast('SCARLET ARROW STOLEN', 2000);
+    // first time taking the Scarlet Arrow: same witness rule.
+    if (crimeWitnessed()) { setWanted(S.wanted + 1); toast('SCARLET ARROW TAKEN — WITNESSED ★', 2000); }
   }
   S.transition = null;
   saveGame();
@@ -178,7 +210,12 @@ function shoot() {
     toast('HIT ' + hit.userData.name + '!', 900);
     if (hit.userData.health <= 0) { hit.visible = false; hit.position.set(200, -50, 200); setWanted(S.wanted + 1); }
     else setWanted(Math.max(S.wanted, 2));
-  } else if (S.wanted === 0 && rnd() < 0.5) setWanted(1);
+  } else if (crimeWitnessed()) {
+    // v3.5: a shot nobody saw is just noise — the old 50% random star
+    // on a miss is gone. A witness only ever takes wanted to 1 here;
+    // hitting police (above) is what escalates to 2.
+    if (S.wanted === 0) { setWanted(1); toast('SHOTS FIRED — WITNESSED ★', 1600); }
+  }
 }
 
 /* ---------- main loop ---------- */

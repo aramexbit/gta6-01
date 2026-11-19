@@ -425,6 +425,18 @@ function updateTraffic(dt) {
       const policeHit = (a.userData.isPolice && b === driven) || (b.userData.isPolice && a === driven);
       if (!policeHit) { damageCar(a, vn); damageCar(b, vn); }
       if (a === driven || b === driven) beep(120, 0.1, 'sawtooth', 0.1);
+      // v3.5: ramming a police car IS a crime — but only when the player
+      // hits a CALM patrol car. A pursuing unit ramming the player is
+      // police action, not a new crime by the player. 5 s cooldown so
+      // one scrape cannot stack stars frame by frame.
+      if (policeHit && S.mode === 'car' && vn > 3 && S.time - S.lastRamCrime > 5) {
+        const pc = a.userData.isPolice ? a : b;
+        if (pc.userData.status === 'PATROL') {
+          S.lastRamCrime = S.time;
+          setWanted(Math.max(S.wanted, 1));
+          toast('RAMMED A PATROL CAR — WANTED ★', 2000);
+        }
+      }
       if (a.userData.health <= 0) recycleCar(a);
       if (b.userData.health <= 0) recycleCar(b);
     }
@@ -514,10 +526,19 @@ function updatePeds(dt) {
         const byPlayer = c === (S.drivenCar || playerCar) && S.mode === 'car';
         if (sp >= 9) {
           u.state = 'gone'; u.timer = 3.5; p.visible = false;
-          if (byPlayer) { setWanted(S.wanted + 1); toast('PEDESTRIAN DOWN — WANTED ★', 1800); beep(90, 0.2, 'sawtooth', 0.14); }
+          // v3.5: running someone over only raises heat if a witness
+          // (cop or another ped within 30 m) saw it.
+          if (byPlayer) {
+            if (crimeWitnessed()) { setWanted(S.wanted + 1); toast('PEDESTRIAN DOWN — WITNESSED ★', 1800); }
+            else toast('PEDESTRIAN DOWN — NO WITNESS', 1800);
+            beep(90, 0.2, 'sawtooth', 0.14);
+          }
         } else if (sp >= 2) {
           u.state = 'down'; u.timer = 1.6;
-          if (byPlayer) { setWanted(S.wanted + 1); beep(90, 0.15, 'sawtooth', 0.12); }
+          if (byPlayer) {
+            if (crimeWitnessed()) { setWanted(S.wanted + 1); toast('PEDESTRIAN HIT — WITNESSED ★', 1600); }
+            beep(90, 0.15, 'sawtooth', 0.12);
+          }
         }
         break;
       }
@@ -1087,7 +1108,7 @@ function updateHUD() {
   const foot = copPeds.filter((c) => c.visible);
   // honest headline: PATROL / OBSERVING / PURSUIT / RAMMING / ARREST / HELI LOCK
   const statusEl = $('police-status');
-  const statusText = { PATROL: 'PATROL ONLY — NO PURSUIT', OBSERVING: 'OBSERVING — FOOT UNIT CLOSING IN',
+  const statusText = { PATROL: 'PATROL ONLY — NO PURSUIT', OBSERVING: S.mode === 'car' ? 'OBSERVING — PATROL UNITS WATCHING' : 'OBSERVING — FOOT UNIT CLOSING IN',
     PURSUIT: 'PURSUIT — UNITS CHASING', RAMMING: 'RAMMING — LEAD UNIT ATTACKING',
     ARREST: 'ARREST IMMINENT — MOVE!', 'HELI LOCK': 'HELI SPOTLIGHT LOCKED — TAKE COVER' }[S.policeStatus] || S.policeStatus;
   statusEl.textContent = '▸ ' + statusText;
@@ -1126,7 +1147,17 @@ function updateMissions(dt) {
   if (d < m.r) {
     if (S.mission === 0) { completeStage(); return; }
     if (S.mission === 1) {
-      if (S.mode === 'car' && S.drivenCar === playerCar) { setWanted(3); completeStage(); return; }
+      if (S.mode === 'car' && S.drivenCar === playerCar) {
+        // v3.5: taking the car raised NO heat by itself. The heat for
+        // the escape (mission 2) is a separate story beat, not the car
+        // entry: the owner reports the Arrow stolen, so PD is
+        // dispatched. 2 stars is enough for pursuit cars + roadblock
+        // (heli needs 3) — the old forced 3 on entry is gone.
+        setWanted(2);
+        say('Kira: The owner just reported the Arrow stolen — PD is on the radio. Run for the pier!');
+        toast('REPORTED STOLEN — POLICE DISPATCHED ★★', 2500);
+        completeStage(); return;
+      }
       if (S.mode === 'foot') { toast('GET IN THE SCARLET ARROW — PRESS E', 1600); return; }
     }
     if (S.mission === 2) { setWanted(0); completeStage(); return; }

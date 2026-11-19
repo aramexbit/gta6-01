@@ -45,7 +45,7 @@ const S = {
      footTimer/carTimer = spawn cadence, calmT = seconds with no cop
      within 40 m (decay), foughtT = seconds since the player last
      fought a cop (1★ cops only fight back after this). */
-  footTimer: 0, carTimer: 0, calmT: 0, foughtT: 99, heliLockT: 0, heliLock2T: 0,
+  footTimer: 0, carTimer: 0, calmT: 0, foughtT: 99, heliLockT: 0, heliLock2T: 0, lastRamCrime: -99, // seconds of the last ramming-a-patrol-car crime (5 s cooldown)
   aimT: 0, // seconds left of the 0.33 s aim re-entry lock (PedManager.cs)
   aiming: false, // right-mouse hold: aim pose + viewmodel (v3.3)
   missionGlow: false, // staged mission shot: hold the muzzle flash on (v3.3)
@@ -216,6 +216,20 @@ function setWanted(n) {
     'Kira: Stars on you — keep moving, do not let them box you in!',
     'Kira: Sunset Bay PD is on the radio about you. Drive!',
   ]));
+}
+/* ---------- wanted: witness rule (v3.5) ----------
+   A crime only raises the wanted level if someone SAW it: a visible
+   police unit (foot cop or car) or a visible walking pedestrian within
+   30 m of the player. Distance-only — this build has no line-of-sight /
+   occlusion test, so a witness behind a building still counts; that is
+   a documented approximation, not a hidden rule. Entering a car is NOT
+   a crime by itself, and a shot nobody saw is just noise. */
+function crimeWitnessed() {
+  const pp = playerPos();
+  for (const cp of copPeds) if (cp.visible && dist2d(cp.position, pp) < 30) return true;
+  for (const pc of police) if (pc.visible && dist2d(pc.position, pp) < 30) return true;
+  for (const p of peds) if (p.visible && p.userData.state === 'walk' && dist2d(p.position, pp) < 30) return true;
+  return false;
 }
 /* Damage Mateo on foot (cop punch / cop shot / heli fire). */
 function hurtPlayer(dmg) {

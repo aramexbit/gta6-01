@@ -1,350 +1,379 @@
-// PIER HEAT — main.js
-// Boot, keyboard/mouse input, shooting and car entry, the main loop, and
-// all procedural WebAudio: engine hum, two-tone siren, gunshots and the
-// original Nightwave radio loop (oscillators only — no recorded music).
+// PIER HEAT — Sunset Bay: boot, input, shooting, main loop, procedural sound.
+// Wires the HUD in index.html to the simulation in sim.js and the world in
+// world.js. No network, no assets: every sound is a WebAudio oscillator.
+
 (function () {
   'use strict';
-  var PH = window.PH, G = PH.G, U = PH.utils;
-  var W = PH.world;
-
-  var input = { w: false, a: false, s: false, d: false, shift: false, space: false };
-  var mouse = { down: false, aiming: false };
-  var lastE = 0, lastF = 0;
-  var clock = { last: performance.now() };
-  var idleAngle = 0;
-
-  // --- audio ---------------------------------------------------------------
-  var AC = null, master = null, engineOsc = null, engineGain = null,
-      sirenOsc = null, sirenGain = null, radioTimer = null, radioStep = 0;
-
-  function ensureAudio() {
-    if (AC) { if (AC.state === 'suspended') AC.resume(); return; }
-    try {
-      AC = new (window.AudioContext || window.webkitAudioContext)();
-      master = AC.createGain();
-      master.gain.value = 0.5;
-      master.connect(AC.destination);
-      // Engine: a low sawtooth whose pitch follows speed.
-      engineOsc = AC.createOscillator();
-      engineOsc.type = 'sawtooth';
-      engineOsc.frequency.value = 55;
-      engineGain = AC.createGain();
-      engineGain.gain.value = 0.0;
-      var engineFilter = AC.createBiquadFilter();
-      engineFilter.type = 'lowpass'; engineFilter.frequency.value = 420;
-      engineOsc.connect(engineFilter);
-      engineFilter.connect(engineGain);
-      engineGain.connect(master);
-      engineOsc.start();
-      // Siren: a sine that alternates between two notes.
-      sirenOsc = AC.createOscillator();
-      sirenOsc.type = 'sine';
-      sirenOsc.frequency.value = 700;
-      sirenGain = AC.createGain();
-      sirenGain.gain.value = 0.0;
-      sirenOsc.connect(sirenGain);
-      sirenGain.connect(master);
-      sirenOsc.start();
-      startRadioLoop();
-    } catch (e) { AC = null; }
-  }
-
-  function startRadioLoop() {
-    if (radioTimer || !AC) return;
-    radioTimer = setInterval(function () {
-      if (!G.started || G.paused) return;
-      var st = PH.STATIONS[G.radio];
-      var beat = 60 / st.bpm / 2; // eighth notes
-      var step = radioStep++;
-      var scale = st.minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
-      var deg = scale[step % scale.length];
-      var freq = st.root * Math.pow(2, deg / 12) * (step % 16 < 8 ? 1 : 2);
-      // Bass on the beat.
-      if (step % 2 === 0) {
-        var bass = AC.createOscillator();
-        bass.type = 'triangle';
-        bass.frequency.value = st.root / 2;
-        var bg = AC.createGain();
-        bg.gain.setValueAtTime(0.16, AC.currentTime);
-        bg.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + beat * 1.8);
-        bass.connect(bg); bg.connect(master);
-        bass.start(); bass.stop(AC.currentTime + beat * 2);
-      }
-      // Plucky lead note.
-      var lead = AC.createOscillator();
-      lead.type = 'square';
-      lead.frequency.value = freq;
-      var lg = AC.createGain();
-      lg.gain.setValueAtTime(0.05, AC.currentTime);
-      lg.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + beat * 0.9);
-      lead.connect(lg); lg.connect(master);
-      lead.start(); lead.stop(AC.currentTime + beat);
-      // Hat tick.
-      if (step % 2 === 1) {
-        var hat = AC.createOscillator();
-        hat.type = 'sine'; hat.frequency.value = 6000;
-        var hg = AC.createGain();
-        hg.gain.setValueAtTime(0.02, AC.currentTime);
-        hg.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + 0.03);
-        hat.connect(hg); hg.connect(master);
-        hat.start(); hat.stop(AC.currentTime + 0.04);
-      }
-    }, 60 / PH.STATIONS[G.radio].bpm * 500);
-  }
-
-  function sfx(name) {
-    if (!AC) return;
-    var t = AC.currentTime;
-    function blip(freq, dur, type, vol, slideTo) {
-      var o = AC.createOscillator();
-      o.type = type || 'sine';
-      o.frequency.setValueAtTime(freq, t);
-      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
-      var g = AC.createGain();
-      g.gain.setValueAtTime(vol || 0.2, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(g); g.connect(master);
-      o.start(t); o.stop(t + dur + 0.02);
-    }
-    function noise(dur, vol, freq) {
-      var len = Math.floor(AC.sampleRate * dur);
-      var buf = AC.createBuffer(1, len, AC.sampleRate);
-      var data = buf.getChannelData(0);
-      for (var i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
-      var src = AC.createBufferSource();
-      src.buffer = buf;
-      var f = AC.createBiquadFilter();
-      f.type = 'lowpass'; f.frequency.value = freq || 3000;
-      var g = AC.createGain();
-      g.gain.value = vol || 0.3;
-      src.connect(f); f.connect(g); g.connect(master);
-      src.start(t);
-    }
-    if (name === 'shot') noise(0.14, 0.5, 2400);
-    else if (name === 'heliShot') noise(0.1, 0.18, 1800);
-    else if (name === 'door') blip(180, 0.12, 'triangle', 0.25, 90);
-    else if (name === 'cash') { blip(880, 0.12, 'sine', 0.25); setTimeout(function () { if (AC) blip(1320, 0.2, 'sine', 0.25); }, 110); }
-    else if (name === 'checkpoint') { blip(660, 0.1, 'square', 0.18); setTimeout(function () { if (AC) blip(990, 0.16, 'square', 0.18); }, 100); }
-    else if (name === 'hurt') blip(140, 0.25, 'sawtooth', 0.25, 60);
-    else if (name === 'emp') { noise(0.5, 0.3, 900); blip(1200, 0.4, 'sine', 0.2, 100); }
-    else if (name === 'smoke') noise(0.6, 0.2, 600);
-  }
-  PH.sfx = sfx;
-
-  function updateAudio(dt) {
-    if (!AC) return;
-    var speed = G.player.onFoot ? G.player.speed : (PH.sim.playerCar ? Math.abs(PH.sim.playerCar.speed) : 0);
-    var target = G.started && !G.paused ? U.clamp(0.03 + speed * 0.004, 0, 0.16) : 0;
-    engineGain.gain.setTargetAtTime(target, AC.currentTime, 0.1);
-    engineOsc.frequency.setTargetAtTime(50 + speed * 6, AC.currentTime, 0.1);
-    // Two-tone siren while wanted.
-    if (G.wanted >= 1 && G.started && !G.paused) {
-      sirenGain.gain.setTargetAtTime(0.045, AC.currentTime, 0.2);
-      var phase = Math.floor(G.time * 1.6) % 2 === 0;
-      sirenOsc.frequency.setTargetAtTime(phase ? 720 : 960, AC.currentTime, 0.05);
-    } else {
-      sirenGain.gain.setTargetAtTime(0, AC.currentTime, 0.2);
-    }
-  }
-
-  // --- input ---------------------------------------------------------------
-  function keyCode(e) { return e.code || e.key; }
-
-  window.addEventListener('keydown', function (e) {
-    var c = keyCode(e);
-    if (c === 'KeyW' || c === 'ArrowUp') input.w = true;
-    else if (c === 'KeyA' || c === 'ArrowLeft') input.a = true;
-    else if (c === 'KeyS' || c === 'ArrowDown') input.s = true;
-    else if (c === 'KeyD' || c === 'ArrowRight') input.d = true;
-    else if (c === 'ShiftLeft' || c === 'ShiftRight') input.shift = true;
-    else if (c === 'Space') { input.space = true; e.preventDefault(); }
-    else if (c === 'KeyE') {
-      var now = performance.now();
-      if (now - lastE > 350) { lastE = now; toggleCar(); }
-    }
-    else if (c === 'KeyF') {
-      var nowF = performance.now();
-      if (nowF - lastF > 260) { lastF = nowF; tryShoot(); }
-    }
-    else if (c === 'KeyR') {
-      G.radio = (G.radio + 1) % PH.STATIONS.length;
-      radioStep = 0;
-      PH.toast('📻 ' + PH.STATIONS[G.radio].name + ' — ' + PH.STATIONS[G.radio].track, 2000);
-    }
-    else if (c === 'KeyP') togglePause();
-    else if (c === 'Digit1') PH.simApi.useEmp();
-    else if (c === 'Digit2') PH.simApi.useSmoke();
-  });
-  window.addEventListener('keyup', function (e) {
-    var c = keyCode(e);
-    if (c === 'KeyW' || c === 'ArrowUp') input.w = false;
-    else if (c === 'KeyA' || c === 'ArrowLeft') input.a = false;
-    else if (c === 'KeyS' || c === 'ArrowDown') input.s = false;
-    else if (c === 'KeyD' || c === 'ArrowRight') input.d = false;
-    else if (c === 'ShiftLeft' || c === 'ShiftRight') input.shift = false;
-    else if (c === 'Space') input.space = false;
-  });
+  var PH = window.PH;
+  var sim = PH.sim;
 
   var canvas = document.getElementById('game-canvas');
-  canvas.addEventListener('click', function () {
-    if (G.started && !G.paused && document.pointerLockElement !== canvas) {
-      try { canvas.requestPointerLock(); } catch (e) {}
-    }
-  });
-  document.addEventListener('mousemove', function (e) {
-    if (!G.started || G.paused) return;
-    var dx = 0, dy = 0;
-    if (document.pointerLockElement === canvas) {
-      dx = e.movementX || 0; dy = e.movementY || 0;
-    } else if (mouse.down) {
-      dx = (e.clientX - (mouse.lx || e.clientX));
-      dy = (e.clientY - (mouse.ly || e.clientY));
-      mouse.lx = e.clientX; mouse.ly = e.clientY;
-    } else return;
-    G.cam.yaw -= dx * 0.0032;
-    G.cam.pitch = U.clamp(G.cam.pitch + dy * 0.0026, -1.05, 1.05); // ±60°
-  });
-  canvas.addEventListener('mousedown', function (e) {
-    mouse.down = true; mouse.lx = e.clientX; mouse.ly = e.clientY;
-    if (e.button === 2) { mouse.aiming = true; G.player.aiming = true; }
-    if (e.button === 0 && G.player.aiming) tryShoot();
-  });
-  window.addEventListener('mouseup', function (e) {
-    mouse.down = false;
-    if (e.button === 2) { mouse.aiming = false; G.player.aiming = false; }
-  });
-  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
 
-  function toggleCar() {
-    if (!G.started || G.paused) return;
-    if (G.player.onFoot) {
-      var car = PH.simApi.nearestCar(4.5);
-      if (car) PH.simApi.enterCar(car);
-      else PH.toast('No car close by — walk up to one and press E.', 1800);
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2000);
+  camera.position.set(20, 4, 8);
+
+  sim.init(scene);
+  sim.updateCamera(0.01, camera);
+
+  // ------------------------------------------------------------ audio
+  var AudioSys = {
+    ctx: null, engineOsc: null, engineGain: null, musicOsc: [], musicGain: null, sirenOsc: null, sirenGain: null, started: false,
+    init: function () {
+      if (this.ctx) return;
+      try {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        // Engine hum: two detuned saws through a lowpass, gain follows speed.
+        this.engineGain = this.ctx.createGain(); this.engineGain.gain.value = 0;
+        var filt = this.ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 420;
+        this.engineOsc = this.ctx.createOscillator(); this.engineOsc.type = 'sawtooth'; this.engineOsc.frequency.value = 55;
+        var osc2 = this.ctx.createOscillator(); osc2.type = 'sawtooth'; osc2.frequency.value = 82;
+        this.engineOsc.connect(filt); osc2.connect(filt);
+        filt.connect(this.engineGain); this.engineGain.connect(this.ctx.destination);
+        this.engineOsc.start(); osc2.start(); this.engineOsc2 = osc2;
+        // Siren: two-tone square, quiet until wanted >= 1.
+        this.sirenGain = this.ctx.createGain(); this.sirenGain.gain.value = 0;
+        this.sirenOsc = this.ctx.createOscillator(); this.sirenOsc.type = 'square'; this.sirenOsc.frequency.value = 700;
+        this.sirenOsc.connect(this.sirenGain); this.sirenGain.connect(this.ctx.destination);
+        this.sirenOsc.start();
+        // Radio: original synth loop — a slow minor arpeggio.
+        this.musicGain = this.ctx.createGain(); this.musicGain.gain.value = 0.05;
+        this.musicGain.connect(this.ctx.destination);
+        this.musicStep = 0;
+        this.musicTimer = setInterval(this.musicTick.bind(this), 240);
+        this.started = true;
+      } catch (e) { /* audio unavailable: play silent */ }
+    },
+    musicTick: function () {
+      if (!this.ctx || !PH.state.radioOn) return;
+      var scale = PH.state.radio === 0 ? [110, 130.8, 164.8, 196, 220, 261.6] : PH.state.radio === 1 ? [98, 123.5, 146.8, 196, 246.9] : [82.4, 110, 164.8, 220];
+      var f = scale[this.musicStep % scale.length];
+      this.musicStep++;
+      var o = this.ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = f * 2;
+      var g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.12, this.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.5);
+      o.connect(g); g.connect(this.musicGain);
+      o.start(); o.stop(this.ctx.currentTime + 0.55);
+    },
+    gunshot: function () {
+      if (!this.ctx) return;
+      var dur = 0.14;
+      var buf = this.ctx.createBuffer(1, this.ctx.sampleRate * dur, this.ctx.sampleRate);
+      var data = buf.getChannelData(0);
+      for (var i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 2);
+      var src = this.ctx.createBufferSource(); src.buffer = buf;
+      var g = this.ctx.createGain(); g.gain.value = 0.5;
+      src.connect(g); g.connect(this.ctx.destination); src.start();
+    },
+    update: function () {
+      if (!this.ctx) return;
+      var st = PH.state;
+      var speed = st.inCar ? Math.abs(sim.playerCarData ? sim.playerCarData.speed : 0) : 0;
+      if (this.engineGain) this.engineGain.gain.value = st.inCar ? 0.03 + speed * 0.002 : 0;
+      if (this.engineOsc) this.engineOsc.frequency.value = 50 + speed * 4;
+      if (this.engineOsc2) this.engineOsc2.frequency.value = 75 + speed * 6;
+      if (this.sirenGain) {
+        this.sirenGain.gain.value = st.wanted >= 1 ? 0.02 : 0;
+        if (this.sirenOsc) this.sirenOsc.frequency.value = 620 + 180 * Math.sin(sim.elapsed * 4);
+      }
+    },
+  };
+
+  // ------------------------------------------------------------ HUD
+  var el = {};
+  ['mission-title', 'mission-objective', 'mission-progress', 'money', 'stars', 'wanted-label',
+   'radio-name', 'radio-desc', 'police-feed', 'ammo', 'items', 'speed', 'health-bar', 'car-bar',
+   'health-num', 'car-num', 'dialogue', 'dialogue-name', 'dialogue-text', 'toast',
+   'start-screen', 'pause-screen', 'busted-screen', 'busted-text'].forEach(function (id) {
+    el[id] = document.getElementById(id);
+  });
+  var minimap = document.getElementById('minimap');
+  var mm = minimap.getContext('2d');
+
+  function updateHUD() {
+    var st = PH.state;
+    var m = PH.currentMission();
+    if (m) {
+      el['mission-title'].textContent = m.title;
+      var obj = m.objective;
+      if (st.missionIndex === 3 && st.missionStage === 1) obj = 'Return Kira’s drop to the pier';
+      if (st.missionIndex === 7 && st.missionStage === 1) obj = 'Lose the 3-star tail — stay unseen 22 s';
+      if (st.missionIndex === 6) obj = 'Escape through checkpoint ' + (sim.checkpointIndex + 1) + ' of 3';
+      el['mission-objective'].textContent = obj;
+      el['mission-progress'].style.width = Math.round(PH.clamp(st.missionProgress, 0, 1) * 100) + '%';
     } else {
-      PH.simApi.exitCar();
+      el['mission-title'].textContent = 'FREE ROAM — SUNSET BAY';
+      el['mission-objective'].textContent = 'All 8 missions complete. The bay is yours, Mateo.';
+      el['mission-progress'].style.width = '100%';
     }
+    el.money.textContent = PH.fmtMoney(st.money);
+    el.stars.textContent = PH.starsText(st.wanted);
+    el['wanted-label'].textContent = 'WANTED ' + st.wanted + (st.wanted > 0 ? ' — LOSE THE TAIL' : ' — CLEAN');
+    el['wanted-label'].style.color = st.wanted > 0 ? '#ff7070' : '#9dffb0';
+    var radio = PH.RADIO_STATIONS[st.radio];
+    el['radio-name'].textContent = radio.name;
+    el['radio-desc'].textContent = ' — ' + radio.desc + (st.radioOn ? '' : ' (muted)');
+    el['police-feed'].innerHTML = PH.feed.map(function (f) { return '<div class="feed-line">▸ ' + f.text + '</div>'; }).join('') ||
+      '<div class="feed-line">▸ All quiet on the bay.</div>';
+    el.ammo.textContent = '🔫 Pistol — ' + st.ammo + (st.aiming ? '  [AIMING]' : '');
+    el.items.textContent = 'EMP ×' + st.emp + '   SMOKE ×' + st.smoke + (st.inCar ? '   🚗 SCARLET ARROW' : '   🚶 ON FOOT');
+    el.speed.textContent = Math.round(st.speedKmh);
+    el['health-bar'].firstElementChild.style.width = st.health + '%';
+    el['car-bar'].firstElementChild.style.width = st.carHealth + '%';
+    el['health-num'].textContent = Math.round(st.health);
+    el['car-num'].textContent = Math.round(st.carHealth);
+    if (PH.dialogue.text && st.timePlayed < PH.dialogue.until) {
+      el.dialogue.style.display = 'block';
+      el['dialogue-name'].textContent = PH.dialogue.name;
+      el['dialogue-text'].textContent = PH.dialogue.text;
+    } else el.dialogue.style.display = 'none';
+    drawMinimap();
   }
 
-  function tryShoot() {
-    if (!G.started || G.paused || !G.player.onFoot) return;
-    G.player.aiming = true;
-    setTimeout(function () { if (!mouse.aiming) G.player.aiming = false; }, 350);
-    PH.simApi.shoot();
-  }
-
-  function togglePause() {
-    if (!G.started) return;
-    G.paused = !G.paused;
-    document.getElementById('pause-screen').style.display = G.paused ? 'flex' : 'none';
-    if (document.pointerLockElement) document.exitPointerLock();
-  }
-
-  // --- scene presets (for screenshots and playtests) ------------------------
-  function applyScene(name) {
-    if (name === 'chase') {
-      // Player in the Arrow, mid-chase toward the sunset: wanted 3, two
-      // cruisers close behind, the heli overhead, traffic ahead.
-      var car = PH.sim.missionCar;
-      PH.simApi.enterCar(car);
-      car.x = 60; car.z = 44; car.heading = Math.PI / 2; car.speed = 22;
-      G.player.x = car.x; G.player.z = car.z;
-      PH.crime.setWanted(3, 'scene-chase');
-      PH.simApi.spawnPoliceCar(52, 44);
-      PH.simApi.spawnPoliceCar(44, 44);
-      // One cruiser ahead on the road, in frame, lights flashing.
-      var ahead = PH.simApi.spawnPoliceCar(96, 44);
-      ahead.heading = Math.PI / 2;
-      PH.simApi.spawnFootCop(70, 52);
-      PH.sim.heli = null;
-      var heli = PH.builders.makeHeli();
-      heli.group.position.set(95, 32, 58);
-      W.scene.add(heli.group);
-      var cop = { kind: 'heli', x: 80, z: 20, heading: 0, speed: 0, mesh: heli.group, heli: heli, state: 'pursuit', lockT: 4, name: 'Air-1', shootT: 0 };
-      PH.sim.cops.push(cop);
-      PH.sim.heli = cop;
-      G.cam.yaw = Math.PI / 2;
-      PH.simApi.updateCamera(1);
-      // Face the sun: the camera sits behind the car looking east.
-      G.cam.yaw = Math.PI / 2;
-    } else if (name === 'street') {
-      PH.test.teleport(120, 44);
-      G.cam.yaw = -Math.PI / 2;
-      G.player.heading = -Math.PI / 2;
-      PH.simApi.updateCamera(1);
-    } else if (name === 'mission') {
-      // Mateo on the road north of the Arrow, aiming straight at it and the
-      // gold beacon — no palm or building between camera and target.
-      PH.test.teleport(44, 28);
-      G.player.heading = 0;
-      G.player.aiming = true;
-      G.cam.yaw = 0;
-      G.cam.pitch = 0.1;
-      PH.simApi.updateCamera(1);
+  function drawMinimap() {
+    var S = 168, C = S / 2;
+    var scale = S / 460; // world -230..230 -> map
+    mm.clearRect(0, 0, S, S);
+    mm.fillStyle = 'rgba(16,12,40,0.9)';
+    mm.beginPath(); mm.arc(C, C, C, 0, Math.PI * 2); mm.fill();
+    mm.save();
+    mm.beginPath(); mm.arc(C, C, C - 2, 0, Math.PI * 2); mm.clip();
+    // Sea (east) and sand.
+    mm.fillStyle = '#1d6f8e'; mm.fillRect(C + 150 * scale, 0, S, S);
+    mm.fillStyle = '#e8c98f'; mm.fillRect(C + 150 * scale - 14, 0, 14, S);
+    // Street grid.
+    mm.strokeStyle = 'rgba(255,255,255,0.35)'; mm.lineWidth = 2;
+    PH.CITY.streets.forEach(function (s) {
+      mm.beginPath(); mm.moveTo(C + s * scale, 0); mm.lineTo(C + s * scale, S); mm.stroke();
+      mm.beginPath(); mm.moveTo(0, C + s * scale); mm.lineTo(S, C + s * scale); mm.stroke();
+    });
+    // Beacon (mission target).
+    var m = PH.currentMission();
+    if (m && sim.beacon && sim.beacon.visible) {
+      var bx = C + sim.beaconPos.x * scale, by = C + sim.beaconPos.z * scale;
+      mm.fillStyle = '#ffc93c';
+      mm.beginPath(); mm.arc(bx, by, 6, 0, Math.PI * 2); mm.fill();
+      mm.strokeStyle = '#fff'; mm.lineWidth = 1.5;
+      mm.beginPath(); mm.arc(bx, by, 9 + Math.sin(sim.elapsed * 4) * 2, 0, Math.PI * 2); mm.stroke();
     }
+    // Police dots.
+    sim.police.forEach(function (cop) {
+      if (cop.dead) return;
+      mm.fillStyle = cop.kind === 'heli' ? '#ff5a5a' : '#5a8aff';
+      mm.beginPath(); mm.arc(C + cop.x * scale, C + cop.z * scale, 3, 0, Math.PI * 2); mm.fill();
+    });
+    // Player arrow.
+    var px = C + sim.player.x * scale, py = C + sim.player.z * scale;
+    mm.save();
+    mm.translate(px, py); mm.rotate(Math.atan2(Math.sin(sim.player.heading), Math.cos(sim.player.heading)) * 0 + sim.player.heading);
+    mm.fillStyle = '#fff';
+    mm.beginPath(); mm.moveTo(0, -7); mm.lineTo(5, 6); mm.lineTo(-5, 6); mm.closePath(); mm.fill();
+    mm.restore();
+    mm.restore();
   }
 
-  // --- boot -----------------------------------------------------------------
-  function boot() {
-    var loading = document.getElementById('loading');
-    try {
-      PH.worldInit(canvas);
-      PH.simInit();
-      // Idle camera framing for the start screen.
-      W.camera.position.set(-60, 26, 150);
-      W.camera.lookAt(40, 4, 0);
-      loading.style.display = 'none';
-    } catch (err) {
-      loading.textContent = 'Could not start the game: ' + err.message;
-      window.__PH_ERROR__ = String(err && err.stack || err);
-      return;
+  function toast(text, ms) {
+    el.toast.textContent = text;
+    el.toast.style.display = 'block';
+    setTimeout(function () { el.toast.style.display = 'none'; }, ms || 2200);
+  }
+
+  // ------------------------------------------------------------ input
+  var dragging = false, lastX = 0, lastY = 0;
+
+  function keyOf(e) {
+    var k = (e.key || '').toLowerCase();
+    if (k === ' ') return ' ';
+    return k.length === 1 ? k : k;
+  }
+
+  window.addEventListener('keydown', function (e) {
+    var k = keyOf(e);
+    if (['w', 'a', 's', 'd', ' '].indexOf(k) >= 0) e.preventDefault();
+    sim.keys[k] = true;
+    if (!PH.state.started) return;
+    if (k === 'p') togglePause();
+    if (k === 'e' && !e.repeat) {
+      var r = sim.enterExitCar();
+      if (r === 'enter') toast('🚗 In the car — drive!');
+      else if (r === 'exit') toast('On foot');
     }
-    document.getElementById('start-btn').addEventListener('click', startGame);
-    document.getElementById('resume-btn').addEventListener('click', togglePause);
-    var params = new URLSearchParams(window.location.search);
-    if (params.get('autostart') === '1') startGame();
-    if (params.get('scene')) setTimeout(function () { applyScene(params.get('scene')); }, 600);
-    requestAnimationFrame(loop);
-  }
+    if (k === 'f' && !e.repeat) {
+      PH.state.aiming = true;
+      var res = sim.shoot();
+      AudioSys.gunshot();
+      if (res && res.hit) toast(res.hit === 'cop' ? 'Officer down!' : 'Target down');
+      setTimeout(function () { if (!sim.keys['f']) PH.state.aiming = false; }, 350);
+    }
+    if (k === 'r' && !e.repeat) {
+      PH.state.radio = (PH.state.radio + 1) % PH.RADIO_STATIONS.length;
+      toast('📻 ' + PH.RADIO_STATIONS[PH.state.radio].name);
+    }
+    if (k === 'q' && !e.repeat && PH.state.emp > 0) {
+      PH.state.emp--;
+      PH.setWanted(Math.max(0, PH.state.wanted - 2));
+      toast('⚡ EMP pulse — heat dropping');
+    }
+  });
+  window.addEventListener('keyup', function (e) {
+    sim.keys[keyOf(e)] = false;
+    if (keyOf(e) === 'f') PH.state.aiming = false;
+  });
 
+  canvas.addEventListener('mousedown', function (e) {
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    if (canvas.requestPointerLock) { try { canvas.requestPointerLock(); } catch (err) {} }
+  });
+  window.addEventListener('mouseup', function () { dragging = false; if (document.pointerLockElement) document.exitPointerLock(); });
+  window.addEventListener('mousemove', function (e) {
+    var dx, dy;
+    if (document.pointerLockElement === canvas) { dx = e.movementX || 0; dy = e.movementY || 0; }
+    else if (dragging) { dx = e.clientX - lastX; dy = e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; }
+    else return;
+    if (PH.state.inCar) return; // driving camera follows the car
+    sim.player.camYaw -= dx * 0.0035;
+    sim.player.camPitch = PH.clamp(sim.player.camPitch - dy * 0.002, -0.6, 0.5);
+    if (PH.state.aiming) sim.player.heading = sim.player.camYaw;
+  });
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ------------------------------------------------------------ screens
   function startGame() {
-    if (G.started) return;
-    ensureAudio();
-    G.started = true;
-    document.getElementById('start-screen').style.display = 'none';
-    document.getElementById('hud').classList.remove('hidden');
-    PH.simApi.updateCamera(1);
-    PH.toast('Welcome to Sunset Bay, Mateo.', 3000);
+    var save = PH.loadSave();
+    if (save && save.missionIndex > 0 && PH.state.missionIndex === 0) {
+      PH.applySave(save);
+      PH.startMission(PH.state.missionIndex);
+    }
+    PH.state.started = true;
+    PH.state.paused = false;
+    document.body.classList.remove('pre-start');
+    el['start-screen'].style.display = 'none';
+    el['pause-screen'].style.display = 'none';
+    el['busted-screen'].style.display = 'none';
+    AudioSys.init();
+    if (AudioSys.ctx && AudioSys.ctx.resume) AudioSys.ctx.resume();
+    PH.sayKira(PH.currentMission() ? PH.currentMission().brief : 'Free roam, Mateo.', 8);
+    toast('🌅 Welcome to Sunset Bay');
   }
-  PH.startGame = startGame;
-  PH.applyScene = applyScene;
+  function togglePause() {
+    if (!PH.state.started || PH.state.over) return;
+    PH.state.paused = !PH.state.paused;
+    el['pause-screen'].style.display = PH.state.paused ? 'flex' : 'none';
+  }
+  document.getElementById('start-btn').addEventListener('click', startGame);
+  document.getElementById('resume-btn').addEventListener('click', togglePause);
+  document.getElementById('retry-btn').addEventListener('click', function () {
+    location.reload();
+  });
 
+  PH.onBusted = function () {
+    PH.state.over = true;
+    PH.state.health = 0;
+    el['busted-text'].textContent = 'Sunset Bay PD caught up with Mateo at wanted level ' + PH.state.wanted + '.';
+    el['busted-screen'].style.display = 'flex';
+    PH.saveGame();
+  };
+  PH.onWantedChange = function (n) {
+    if (n >= 3) toast('★★★ HEAT IS ON — helicopter inbound!');
+    else if (n === 2) toast('★★ Police cars inbound!');
+    else if (n === 1) toast('★ Police on foot — run or hide');
+    else if (n === 0) toast('Clean — heat is off');
+  };
+  PH.onMissionChange = function () { /* HUD reads state each frame */ };
+
+  // Auto-start for headless screenshots / probes (?autostart=1).
+  if (/[?&]autostart=1/.test(location.search)) {
+    setTimeout(startGame, 300);
+  }
+
+  // ------------------------------------------------------------ main loop
+  var last = performance.now();
   function loop(now) {
     requestAnimationFrame(loop);
-    var dt = Math.min(0.05, (now - clock.last) / 1000 || 0.016);
-    clock.last = now;
-    if (!G.started) {
-      // Slow cinematic orbit behind the start screen.
-      idleAngle += dt * 0.03;
-      W.camera.position.set(Math.sin(idleAngle) * 170, 42 + Math.sin(idleAngle * 0.6) * 8, Math.cos(idleAngle) * 170);
-      W.camera.lookAt(20, 6, 0);
-      W.renderer.render(W.scene, W.camera);
-      return;
-    }
-    if (!G.paused) {
-      PH.simUpdate(dt, input);
-      updateAudio(dt);
-    }
-    W.renderer.render(W.scene, W.camera);
+    var dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    sim.update(dt, camera);
+    AudioSys.update();
+    updateHUD();
+    renderer.render(scene, camera);
   }
+  requestAnimationFrame(loop);
 
-  window.addEventListener('error', function (e) {
-    window.__PH_ERROR__ = String(e.message);
-  });
-  window.addEventListener('unhandledrejection', function (e) {
-    window.__PH_ERROR__ = String(e.reason);
-  });
+  // ------------------------------------------------------------ debug API (probe / screenshots)
+  PH.debug = {
+    start: startGame,
+    state: function () {
+      return {
+        money: PH.state.money, wanted: PH.state.wanted, health: PH.state.health,
+        ammo: PH.state.ammo, mission: PH.state.missionIndex, stage: PH.state.missionStage,
+        inCar: PH.state.inCar, started: PH.state.started, completed: PH.state.completed,
+        x: sim.player.x, z: sim.player.z, speed: PH.state.speedKmh,
+        drivingDistance: PH.state.drivingDistance, heatArmed: PH.state.heatArmed,
+        police: sim.police.filter(function (c) { return !c.dead; }).length,
+        peds: sim.peds.filter(function (p) { return !p.dead; }).length,
+        traffic: sim.traffic.length, beacon: { x: sim.beaconPos.x, z: sim.beaconPos.z },
+      };
+    },
+    teleport: function (x, z) {
+      if (PH.state.inCar && sim.playerCarData) { sim.playerCarData.x = x; sim.playerCarData.z = z; }
+      sim.player.x = x; sim.player.z = z;
+      sim.mateo.position.set(x, 0, z);
+    },
+    setCamYaw: function (yaw) { sim.player.camYaw = yaw; },
+    aim: function (on) { PH.state.aiming = !!on; },
+    setMission: function (i) { PH.startMission(i); },
+    setWanted: function (n) { PH.setWanted(n); },
+    spawnPolice: function (n, kind) {
+      for (var i = 0; i < n; i++) {
+        var a = Math.random() * Math.PI * 2, r = PH.rand(15, 30);
+        if (kind === 'foot') sim.spawnPoliceFoot(sim.player.x + Math.cos(a) * r, sim.player.z + Math.sin(a) * r);
+        else sim.spawnPoliceCar(sim.player.x + Math.cos(a) * r, sim.player.z + Math.sin(a) * r);
+      }
+    },
+    spawnPedNear: function (n, d) {
+      for (var i = 0; i < n; i++) {
+        var a = Math.random() * Math.PI * 2;
+        sim.spawnPed(sim.player.x + Math.cos(a) * (d || 10), sim.player.z + Math.sin(a) * (d || 10));
+      }
+    },
+    clearPoliceFar: function () {
+      // Remove every police unit (used by probes to test decay cleanly).
+      sim.police.forEach(function (c) { c.dead = true; c.g.visible = false; });
+      sim.police = [];
+      sim.heli = null;
+    },
+    clearWitnesses: function () {
+      // Move every pedestrian far away and remove all police: a clean room
+      // for witness-rule tests (no witness within 30 m of the player).
+      sim.police.forEach(function (c) { c.dead = true; c.g.visible = false; });
+      sim.police = [];
+      sim.heli = null;
+      sim.peds.forEach(function (p) { p.x = 195; p.z = 135; p.g.position.set(195, 0, 135); });
+    },
+    enterArrow: function () {
+      sim.teleport(sim.arrowCar.x - 2, sim.arrowCar.z);
+      return sim.enterExitCar();
+    },
+    driveForward: function (seconds) { sim.keys['w'] = true; },
+    stopDriving: function () { sim.keys['w'] = false; sim.keys['s'] = false; },
+    shoot: function () { return sim.shoot(); },
+    enterCar: function () { return sim.enterExitCar(); },
+    setKeys: function (keys) { sim.keys = keys; },
+  };
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  window.PH = PH;
 })();

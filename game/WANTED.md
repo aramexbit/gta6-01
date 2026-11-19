@@ -1,64 +1,32 @@
-# WANTED — Sunset Bay PD rules (PIER HEAT)
+# WANTED — how the heat works in Sunset Bay
 
-How the heat works in Sunset Bay, in plain words.
-
-## Stars
-
-- **0 stars** — The PD patrols. Foot cops wander the sidewalks; cruisers
-  cruise. Nobody is after you.
-- **1 star** — Foot cops chase you on foot to make an arrest. They do not
-  ram your car.
-- **2 stars** — Cruisers join the chase, and they set roadblocks across
-  your road.
-- **3 stars** — The police helicopter arrives, circles above you, locks on
-  for a few seconds, then opens fire.
-- **4–5 stars** — More cruisers, more foot cops, the helicopter stays on
-  you. There is no 6th star; 5 is the whole city.
+Sunset Bay PD does not see everything. It only knows what a witness saw.
 
 ## The witness rule
 
-A crime only counts when someone sees it. Shooting, running over a
-pedestrian, ramming a police car, or stealing a traffic car raises your
-wanted level **only** if a police unit or a pedestrian still on their feet
-is within about **30 metres** of you. No witness, no stars — the city
-never knew.
+A crime raises your wanted level **only** when someone can see it happen:
 
-Two things are never crimes at all:
+- a police officer within **30 metres**, or
+- a pedestrian who is still **walking** (not already fleeing) within **30 metres**.
 
-- Getting into an ordinary parked car, and
-- Getting into a mission car (the SCARLET ARROW and other job cars).
+Crimes: shooting, hitting a pedestrian with a car, ramming a police car, stealing a traffic car. If nobody is close enough to witness it, nothing happens — no stars, no dispatch call.
 
-## What raises stars
+Getting into an ordinary car or a mission car is never a crime. The Scarlet Arrow is a mission car: taking it in Mission 1 is free.
 
-| Crime | Stars | Notes |
-| --- | --- | --- |
-| Firing a gun | +1 | Only with a witness within ~30 m |
-| Running over a pedestrian | +1 | Only with a witness within ~30 m |
-| Ramming a police car | +1 | The rammed unit always sees it |
-| Stealing a traffic car | +1 | Only with a witness within ~30 m |
-| Entering a mission car | 0 | Never a crime |
-| Crashing into a wall | 0 | Hurts the car, not your record |
+## Cooling down
 
-## Cooling off
+If no police unit is within **40 metres** for **22 seconds**, your wanted level drops by one star. Keep moving, break line of sight, and the city forgets.
 
-If no police unit is within **40 metres** of you for **22 seconds** straight,
-your wanted level drops by one star. Keep your distance and the heat fades.
+## What each level brings
 
-## Getting busted
+- **0 stars — Clean.** Patrol cars cruise the grid. Nobody is looking for you.
+- **1 star — Foot pursuit.** Officers on foot chase Mateo and try to grab him. Lose them or get in a car.
+- **2 stars — Car pursuit.** Police cars chase, ram, and call roadblocks. The pier run (Mission 2) starts here once you are 60 m clear of the pickup or 12 seconds have passed.
+- **3 stars — Air unit.** A helicopter circles overhead, locks on for a few seconds, then opens fire.
+- **4–5 stars — Full response.** More cars, faster pressure, the helicopter stays. Survive by breaking contact, not by standing your ground.
 
-If a foot cop catches you, or your health hits zero, you are busted: the PD
-takes $200, your wanted level resets to zero, and you wake up at the pier
-safehouse. Your money above $200 and your mission progress stay yours.
+## Tools
 
-## Tools to lose the heat
-
-- **EMP (key 1)** — stalls every police car nearby for 6 seconds.
-- **Smoke (key 2)** — breaks the chase and drops one star at once.
-- You start with 2 of each.
-
-## Scripted heat
-
-Some missions light you up on purpose: the pier getaway in Mission 2 turns
-the heat on only after you have driven 60 m from the pickup or 12 seconds
-have passed, and the marina finale in Mission 8 puts you at 3 stars. That
-heat follows the same rules — cool off the same way, or finish the job.
+- **EMP (Q):** drops the heat by two stars. One charge at a time — use it when the tail is thick.
+- **SMOKE:** breaks pursuit in a tight spot. EMP and SMOKE are replenished when a mission is completed.
+- Distance is your friend: police are summoned 28–42 m away, never on top of you.

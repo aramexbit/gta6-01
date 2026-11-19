@@ -310,6 +310,24 @@ function glowTexture() {
   return new THREE.CanvasTexture(cv);
 }
 const glowTex = glowTexture();
+/* Solid-disc texture for the sun sprite: a hard-edged circle in the
+   palette sun colour, 2 px feather so the rim antialiases instead of
+   stair-stepping. (A radial gradient here would read as a glow, not
+   a disc.) */
+function sunDiscTexture() {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#' + C.sun.toString(16).padStart(6, '0');
+  g.beginPath(); g.arc(128, 128, 126, 0, Math.PI * 2); g.fill();
+  const tex = new THREE.CanvasTexture(cv);
+  /* v3.5 colour fix: a CanvasTexture defaults to linear (NoColorSpace),
+     so the sRGB canvas values were treated as linear and rendered
+     washed-out pale (238,220,143 instead of the old mesh disc's
+     241,210,51). Mark it sRGB like the other colour textures above
+     so the disc keeps the exact palette sun colour. */
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 function glowSprite(color, scale) {
   const m = new THREE.SpriteMaterial({ map: glowTex, color, transparent: true,
     blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.9 });
@@ -435,10 +453,20 @@ function buildWorld() {
   }
   /* v3.3.1: the sun sits LOW AHEAD (+Z) so the chase and street shots
      drive/walk toward the sunset, sun near the centre of the frame like
-     the top-rank entries (was (-260, 30, 160), off to the side). */
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(22, 32),
-    new THREE.MeshBasicMaterial({ color: C.sun, fog: false }));
-  sunDisc.position.set(-130, 30, 260); sunDisc.lookAt(-120, 10, 0); world.add(sunDisc);
+     the top-rank entries (was (-260, 30, 160), off to the side).
+     v3.5 ROUND SUN (user, 19 Nov 2026): the old sun was a flat
+     CircleGeometry mesh with a FIXED lookAt — round only from the
+     chase direction, foreshortened to an ellipse (0.72 at 45 deg,
+     0.21 edge-on) from any other angle: "mataharinya tidak bundar
+     tapi gepeng". It is now a Sprite with the solid-disc texture:
+     sprites always face the camera with uniform scale, so the disc
+     renders a perfect circle from every direction and aspect ratio.
+     Same position, same diameter (44), same colour — only the shape
+     is fixed; golden hour is untouched. */
+  const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: sunDiscTexture(), transparent: true, fog: false, depthWrite: false }));
+  sunDisc.scale.set(44, 44, 1);
+  sunDisc.position.set(-130, 30, 260); world.add(sunDisc);
   const sunGlow = glowSprite(C.sun, 150); sunGlow.position.set(-128, 32, 255); world.add(sunGlow);
   /* v3.3.1 REALISTIC CLOUDS (user, 18 Nov 2026): the old clouds were
      pink/orange BOXES floating in a purple sky — "aneh malah kotak",

@@ -241,45 +241,107 @@
     return g;
   };
 
-  // The hero: Scarlet Arrow, an orange wedge coupe, plate SUN-8821.
+  // The hero: Scarlet Arrow, a burnt-orange (#FF7A1A) wedge sports coupe
+  // with a long low nose diving at the road, a short low glasshouse under
+  // a painted roof, doors with seams and chrome handles, dark side glass,
+  // mirrors, grille, lit lamps, plate SUN-8821 front + rear, a spoiler on
+  // two struts and four wheels with rims. Faces +Z, like the traffic cars.
   PH.buildHeroCar = function () {
     var g = new THREE.Group();
-    var paint = new THREE.MeshStandardMaterial({ color: 0xff6a1a, roughness: 0.3, metalness: 0.6 });
+    var paint = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.45, metalness: 0.15 });
     var glass = new THREE.MeshStandardMaterial({ color: 0x0e1a24, roughness: 0.1, metalness: 0.85 });
-    // Wedge side profile, extruded across the width, then turned to face +Z.
+    var chrome = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.2, metalness: 0.95 });
+    var dark = stdMat(0x1a1a1a, 0.4);
+    // Wedge side profile, extruded across the width, then centred: the
+    // long low nose is the shape's -x end, which lands at +Z (the front).
     var s = new THREE.Shape();
-    s.moveTo(-2.15, 0.28); s.lineTo(2.2, 0.28); s.lineTo(2.28, 0.52);
+    s.moveTo(-2.45, 0.26); s.lineTo(2.2, 0.28); s.lineTo(2.28, 0.52);
     s.lineTo(1.55, 0.72); s.lineTo(0.85, 1.02); s.lineTo(0.1, 1.08);
-    s.lineTo(-0.95, 1.02); s.lineTo(-1.95, 0.78); s.lineTo(-2.2, 0.5);
+    s.lineTo(-0.95, 1.02); s.lineTo(-1.95, 0.78); s.lineTo(-2.5, 0.48);
     s.closePath();
     var body = new THREE.Mesh(new THREE.ExtrudeGeometry(s, { depth: 1.7, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 2 }), paint);
     body.rotation.y = Math.PI / 2;
-    body.position.set(0, 0, 0);
+    body.position.x = -0.85;
     body.castShadow = true;
     g.add(body);
-    // Glasshouse.
-    var cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.42, 1.5), glass);
-    cabin.position.set(0, 1.08, -0.35); cabin.rotation.x = -0.06; cabin.castShadow = true; g.add(cabin);
-    // Spoiler, stripe, lights, plate.
-    var spoiler = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.4), stdMat(0x1a1a1a, 0.4));
-    spoiler.position.set(0, 1.02, -2.05); g.add(spoiler);
+    // Flat vertical rear fascia (Kamm tail): a proper orange face at the
+    // back, so the car reads orange from behind — the wedge's sloping
+    // deck alone catches full sun and washes pale in daylight.
+    var tail = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.64, 0.08), paint);
+    tail.position.set(0, 0.6, -2.42); tail.castShadow = true; g.add(tail);
+    // Short low glasshouse with a painted roof, so the side reads as a
+    // slim dark glass band under an orange roof, not a big black box.
+    var cabin = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.34, 1.05), glass);
+    cabin.position.set(0, 1.0, -0.3); cabin.castShadow = true; g.add(cabin);
+    var roof = new THREE.Mesh(new THREE.BoxGeometry(1.44, 0.06, 0.95), paint);
+    roof.position.set(0, 1.19, -0.3); g.add(roof);
+    // Sloped windshield + rear glass at the glasshouse ends.
+    var shield = new THREE.Mesh(new THREE.BoxGeometry(1.38, 0.05, 0.5), glass);
+    shield.position.set(0, 1.08, 0.32); shield.rotation.x = 0.5; g.add(shield);
+    var rearGlass = new THREE.Mesh(new THREE.BoxGeometry(1.38, 0.05, 0.45), glass);
+    rearGlass.position.set(0, 1.08, -0.92); rearGlass.rotation.x = -0.42; g.add(rearGlass);
+    // Doors on both sides: seam lines, chrome handles, mirrors.
     [-1, 1].forEach(function (s2) {
-      var strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), stdMat(0x1a1a1a));
-      strut.position.set(s2 * 0.6, 0.9, -2.05); g.add(strut);
-      var hl = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.06),
-        new THREE.MeshStandardMaterial({ color: 0xfff6c0, emissive: 0xffedb0, emissiveIntensity: 1.2 }));
-      hl.position.set(s2 * 0.6, 0.5, 2.32); g.add(hl);
-      var tl = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.12, 0.06),
-        new THREE.MeshStandardMaterial({ color: 0xdd2222, emissive: 0xff3333, emissiveIntensity: 1 }));
-      tl.position.set(s2 * 0.6, 0.62, -2.28); g.add(tl);
+      var seamF = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.52, 0.03), stdMat(0x111111));
+      seamF.position.set(s2 * 0.93, 0.62, 0.55); g.add(seamF);
+      var seamR = seamF.clone(); seamR.position.z = -0.85; g.add(seamR);
+      var sill = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.05, 1.5), stdMat(0x111111));
+      sill.position.set(s2 * 0.93, 0.38, -0.15); g.add(sill);
+      var handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.32), chrome);
+      handle.position.set(s2 * 0.94, 0.88, 0.1); g.add(handle);
+      var mirror = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.24), paint);
+      mirror.position.set(s2 * 1.0, 1.02, 0.62); g.add(mirror);
+      var mirrorArm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.12), dark);
+      mirrorArm.position.set(s2 * 0.92, 1.0, 0.62); g.add(mirrorArm);
     });
-    var stripe = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.02, 4.3), stdMat(0xfff2d8, 0.5));
-    stripe.position.set(0, 0.86, 0); stripe.rotation.x = 0.02; g.add(stripe);
+    // Grille, low front splitter, lamps.
+    var grille = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.2, 0.08), stdMat(0x181818));
+    grille.position.set(0, 0.5, 2.5); g.add(grille);
+    var splitter = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.5), dark);
+    splitter.position.set(0, 0.22, 2.35); g.add(splitter);
+    [-1, 1].forEach(function (s2) {
+      var hl = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.06),
+        new THREE.MeshStandardMaterial({ color: 0xfff6c0, emissive: 0xffedb0, emissiveIntensity: 1.4 }));
+      hl.position.set(s2 * 0.62, 0.62, 2.5); g.add(hl);
+      var tl = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.13, 0.06),
+        new THREE.MeshStandardMaterial({ color: 0xdd2222, emissive: 0xff3333, emissiveIntensity: 1.2 }));
+      tl.position.set(s2 * 0.62, 0.66, -2.49); g.add(tl);
+    });
+    // Full-width rear light bar + diffuser + twin exhausts, so the car
+    // reads as a sports car from behind too.
+    var lightBar = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.09, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0xdd2222, emissive: 0xff3333, emissiveIntensity: 1.0 }));
+    lightBar.position.set(0, 0.82, -2.49); g.add(lightBar);
+    var diffuser = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.16, 0.3), dark);
+    diffuser.position.set(0, 0.26, -2.36); g.add(diffuser);
+    [-1, 1].forEach(function (s2) {
+      var ex = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.16, 10), chrome);
+      ex.rotation.x = Math.PI / 2; ex.position.set(s2 * 0.35, 0.32, -2.5); g.add(ex);
+    });
+    // Spoiler on two struts.
+    var spoiler = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.42), dark);
+    spoiler.position.set(0, 1.06, -2.0); g.add(spoiler);
+    [-1, 1].forEach(function (s2) {
+      var strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.08), dark);
+      strut.position.set(s2 * 0.6, 0.93, -2.0); g.add(strut);
+    });
     var plate = plateMesh('SUN-8821');
-    plate.position.set(0, 0.42, -2.32); plate.rotation.y = Math.PI; g.add(plate);
-    var plateF = plateMesh('SUN-8821');
-    plateF.position.set(0, 0.4, 2.33); g.add(plateF);
-    [[-0.82, 1.45], [0.82, 1.45], [-0.82, -1.45], [0.82, -1.45]].forEach(function (p) { g.add(wheel(p[0], p[1])); });
+    plate.position.set(0, 0.42, 2.54); g.add(plate);
+    var plateR = plateMesh('SUN-8821');
+    plateR.position.set(0, 0.44, -2.52); plateR.rotation.y = Math.PI; g.add(plateR);
+    // Wheels with rims: tyre + silver rim + dark hub.
+    function heroWheel(x, z) {
+      var wg = new THREE.Group();
+      var tire = new THREE.Mesh(new THREE.CylinderGeometry(0.37, 0.37, 0.28, 16), stdMat(0x141414, 0.9));
+      tire.rotation.z = Math.PI / 2; tire.position.y = 0.37; tire.castShadow = true; wg.add(tire);
+      var rim = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.3, 12), chrome);
+      rim.rotation.z = Math.PI / 2; rim.position.y = 0.37; wg.add(rim);
+      var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.32, 8), dark);
+      hub.rotation.z = Math.PI / 2; hub.position.y = 0.37; wg.add(hub);
+      wg.position.set(x, 0, z);
+      return wg;
+    }
+    [[-0.82, 1.45], [0.82, 1.45], [-0.82, -1.45], [0.82, -1.45]].forEach(function (p) { g.add(heroWheel(p[0], p[1])); });
     return g;
   };
 
@@ -597,33 +659,80 @@
       scene.add(o.group);
       officers.push(o);
     }
-    // Police helicopter with spinning rotors and a searchlight cone.
+    // Police helicopter: a bright white police body with a blue belly
+    // stripe, dark cockpit glass, a big main rotor with blue tips, a
+    // spinning tail rotor, landing skids, a searchlight with a visible
+    // beam, and POLICE markings on both flanks — it reads as a helicopter
+    // even as a small shape high in the sky, never as a black blob.
     var heli = new THREE.Group();
-    var hBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.9, 2.4, 4, 10),
-      new THREE.MeshStandardMaterial({ color: 0x1d3557, roughness: 0.4, metalness: 0.4 }));
+    var hWhite = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.35, metalness: 0.25 });
+    var hBlue = new THREE.MeshStandardMaterial({ color: 0x1d4f9c, roughness: 0.4, metalness: 0.3 });
+    var hGlass = new THREE.MeshStandardMaterial({ color: 0x0e1a24, roughness: 0.08, metalness: 0.85 });
+    var hBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.95, 2.4, 4, 10), hWhite);
     hBody.rotation.z = Math.PI / 2; hBody.castShadow = true; heli.add(hBody);
-    var hGlass = new THREE.Mesh(new THREE.SphereGeometry(0.75, 12, 10),
-      new THREE.MeshStandardMaterial({ color: 0x9fd8ff, roughness: 0.1, metalness: 0.7 }));
-    hGlass.scale.set(1, 0.8, 0.9); hGlass.position.set(1.6, -0.1, 0); heli.add(hGlass);
-    var tail = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.4, 3.4, 8), hBody.material);
-    tail.rotation.z = Math.PI / 2; tail.position.set(-2.8, 0.3, 0); heli.add(tail);
-    var fin = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.1, 0.7), hBody.material);
-    fin.position.set(-4.4, 0.8, 0); heli.add(fin);
+    var hStripe = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.22, 1.5), hBlue);
+    hStripe.position.set(0, -0.55, 0); heli.add(hStripe);
+    var cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.8, 12, 10), hGlass);
+    cockpit.scale.set(1, 0.82, 0.9); cockpit.position.set(1.65, -0.05, 0); heli.add(cockpit);
+    [-1, 1].forEach(function (s) {
+      var hWin = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.55, 0.06), hGlass);
+      hWin.position.set(0.3, 0.15, s * 0.92); heli.add(hWin);
+    });
+    var tail = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.38, 3.4, 8), hWhite);
+    tail.rotation.z = Math.PI / 2; tail.position.set(-2.9, 0.35, 0); heli.add(tail);
+    var fin = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.2, 0.75), hBlue);
+    fin.position.set(-4.5, 0.85, 0); heli.add(fin);
+    var tailRotor = new THREE.Group();
+    var tb = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.7, 0.18), stdMat(0x222222));
+    tailRotor.add(tb);
+    var tb2 = tb.clone(); tb2.rotation.z = Math.PI / 2; tailRotor.add(tb2);
+    tailRotor.position.set(-4.55, 0.85, 0.42); heli.add(tailRotor);
     var rotor = new THREE.Group();
-    var blade = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 7.5), stdMat(0x222222));
+    var bladeMat = new THREE.MeshStandardMaterial({ color: 0xc8ccd0, roughness: 0.5, metalness: 0.4 });
+    var blade = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 8.4), bladeMat);
     rotor.add(blade);
     var blade2 = blade.clone(); blade2.rotation.y = Math.PI / 2; rotor.add(blade2);
-    rotor.position.y = 1.15; heli.add(rotor);
-    var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.5, 8), stdMat(0x222222));
-    mast.position.y = 0.9; heli.add(mast);
-    var spot = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2b0, emissiveIntensity: 2 }));
-    spot.position.set(1.8, -0.7, 0); heli.add(spot);
+    [-1, 1].forEach(function (s) {
+      var tip = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.07, 0.7), hBlue);
+      tip.position.set(0, 0, s * 3.85); rotor.add(tip);
+      var tip2 = tip.clone(); tip2.rotation.y = Math.PI / 2; tip2.position.set(s * 3.85, 0, 0); rotor.add(tip2);
+    });
+    rotor.position.y = 1.25; heli.add(rotor);
+    var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.6, 8), stdMat(0x222222));
+    mast.position.y = 0.95; heli.add(mast);
+    [-1, 1].forEach(function (s) {
+      var skid = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.2, 6), stdMat(0x333333));
+      skid.rotation.z = Math.PI / 2; skid.position.set(0, -1.15, s * 0.8); heli.add(skid);
+      [-0.9, 0.9].forEach(function (dx) {
+        var skidStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.5, 6), stdMat(0x333333));
+        skidStrut.position.set(dx, -0.9, s * 0.8); heli.add(skidStrut);
+      });
+    });
+    var spot = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2b0, emissiveIntensity: 2.5 }));
+    spot.position.set(1.7, -0.85, 0); heli.add(spot);
+    var beam = new THREE.Mesh(new THREE.ConeGeometry(1.6, 5, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }));
+    beam.position.set(2.6, -3.2, 0); beam.rotation.z = -0.5; heli.add(beam);
+    var pdTex = PH.makeCanvasTexture(256, 64, function (ctx, w, h) {
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#1d4f9c'; ctx.font = '900 34px Arial Black, Arial, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('POLICE', w / 2, h / 2);
+    });
+    [-1, 1].forEach(function (s) {
+      var decal = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 0.5),
+        new THREE.MeshStandardMaterial({ map: pdTex, roughness: 0.5 }));
+      decal.position.set(-0.2, 0.1, s * 0.99);
+      decal.rotation.y = s > 0 ? 0 : Math.PI;
+      heli.add(decal);
+    });
     scene.add(heli);
     return {
-      cars: cars, officers: officers, heli: heli, rotor: rotor, frozen: false,
+      cars: cars, officers: officers, heli: heli, rotor: rotor, tailRotor: tailRotor, frozen: false,
       update: function (dt, t, focus) {
         rotor.rotation.y += dt * 22;
+        tailRotor.rotation.z += dt * 30;
         if (!this.frozen) {
           var cx = focus ? focus.x : 0, cz = focus ? focus.z : 0;
           var a = t * 0.12;

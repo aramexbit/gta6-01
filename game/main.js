@@ -18,7 +18,7 @@
   var seed = parseInt(params.get('seed') || '1', 10) || 1;
   PH.setSeed(seed);
   var SHOT_MODE = shotNum >= 1 && shotNum <= 4;
-  var SAVE_KEY = 'pierheat-save-v68';
+  var SAVE_KEY = 'pierheat-save-v69';
 
   var renderer, scene, camera, clock;
   var world, traffic, cityCrowd, beachCrowd, police, hero, heroState;
@@ -81,6 +81,20 @@
     return rec;
   }
 
+  // Keep moving traffic off a lane segment: a through car on the hero's
+  // own avenue lane can park itself exactly in front of the hero and hide
+  // it (shot 4's first v6.9 render). Staged cars already have speed 0,
+  // so they are never touched.
+  function clearLaneTraffic(laneX, z0, z1) {
+    traffic.cars.forEach(function (rec) {
+      if (rec.speed > 0 && rec.route.axis === 'z' && rec.route.lane === laneX && rec.pos > z0 && rec.pos < z1) {
+        rec.pos = (rec.route.dir > 0) ? -120 : 120;
+        rec.speed = 0;
+        traffic.place(rec);
+      }
+    });
+  }
+
   function placePoliceCar(i, x, z, ry) {
     var car = police.cars[i % police.cars.length];
     car.position.set(x, 0, z);
@@ -121,6 +135,9 @@
     PH.hud.setSpeed(96);
     PH.hud.setVitals(100, 80);
     PH.hud.setAmmo(12);
+    clearLaneTraffic(-23.5, -80, 30);
+    clearLaneTraffic(-16.5, -80, 30);
+    PH.buildForegroundProps(scene, 1);
   }
 
   function stageShot2() {
@@ -147,6 +164,7 @@
     PH.hud.setSpeed(0);
     PH.hud.setVitals(100, 80);
     PH.hud.setAmmo(12);
+    PH.buildForegroundProps(scene, 2);
   }
 
   function stageShot3() {
@@ -187,6 +205,7 @@
     PH.hud.setVitals(100, 80);
     PH.hud.setAmmo(12);
     PH.hud.setSpeed(0);
+    PH.buildForegroundProps(scene, 3);
   }
 
   function stageShot4() {
@@ -228,6 +247,9 @@
       pos.y = 1.45;
       flash.showAt(pos);
     }
+    clearLaneTraffic(-23.5, -80, 70);
+    clearLaneTraffic(-16.5, -80, 70);
+    PH.buildForegroundProps(scene, 4);
   }
 
   function stageShot(n) {
@@ -333,6 +355,11 @@
   function loadCharacters() {
     var jobs = [];
     jobs.push(PH.loadMateo('vendor/mateo.glb').then(function (loaded) {
+      // Art bible: burnt-orange jacket. #FF9900 was tried first and still
+      // rendered amber (sampled hue ~42 deg in daylight), so the jacket
+      // uses the same burnt orange as the Scarlet Arrow (#FF7A1A), which
+      // renders as burnt orange in this engine's sun.
+      PH.retint(loaded.group, { MateoJacket: 0xff7a1a });
       mateo = PH.makeMateo(loaded);
       mateo.group.visible = false;
       scene.add(mateo.group);

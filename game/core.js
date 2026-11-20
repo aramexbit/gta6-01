@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   var PH = window.PH = window.PH || {};
-  PH.VERSION = '6.8';
+  PH.VERSION = '6.9';
 
   // ---------- tiny DOM helper ----------
   PH.el = function (id) { return document.getElementById(id); };
@@ -316,55 +316,63 @@
     var b = data.bounds;
     function px(x) { return (x - b.x0) / (b.x1 - b.x0) * W; }
     function pz(z) { return (z - b.z0) / (b.z1 - b.z0) * H; }
-    // base: deep water west, sand strip, city blocks — high contrast so the
-    // map still reads when the screenshot is shrunk to a thumbnail.
-    ctx.fillStyle = '#1e6f92'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#d8b878'; ctx.fillRect(0, 0, px(-28), H);
-    ctx.fillStyle = '#22303d'; ctx.fillRect(px(-28), 0, W - px(-28), H);
-    // city blocks
-    ctx.fillStyle = '#3d5a73';
+    // base: dark street-map ground — the city reads as streets, not as
+    // a grid of building facades. Water west, sand strip, then blocks
+    // barely lighter than the ground, so the roads are the subject.
+    ctx.fillStyle = '#0a141d'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#0d3b52'; ctx.fillRect(0, 0, px(-102), H);
+    ctx.fillStyle = '#8a744e'; ctx.fillRect(px(-102), 0, px(-28) - px(-102), H);
+    ctx.fillStyle = '#152433';
     for (var gx = -10; gx < 160; gx += 40) {
       for (var gz = -160; gz < 160; gz += 40) {
         ctx.fillRect(px(gx + 4), pz(gz + 4), px(gx + 36) - px(gx + 4), pz(gz + 36) - pz(gz + 4));
       }
     }
-    // roads
-    ctx.strokeStyle = '#93a9bd'; ctx.lineCap = 'round';
+    // roads: bright, wide, high-contrast lines on the dark ground, each
+    // drawn over a darker casing so the edge stays crisp.
+    ctx.lineCap = 'round';
     (data.roads || []).forEach(function (r) {
-      ctx.lineWidth = Math.max(3, (r.w || 8) / (b.x1 - b.x0) * W);
+      var lw = Math.max(3, (r.w || 8) / (b.x1 - b.x0) * W * 0.85);
+      ctx.strokeStyle = '#05090d'; ctx.lineWidth = lw + 3;
+      ctx.beginPath(); ctx.moveTo(px(r.x0), pz(r.z0)); ctx.lineTo(px(r.x1), pz(r.z1)); ctx.stroke();
+      ctx.strokeStyle = '#f2f5f7'; ctx.lineWidth = lw;
       ctx.beginPath(); ctx.moveTo(px(r.x0), pz(r.z0)); ctx.lineTo(px(r.x1), pz(r.z1)); ctx.stroke();
     });
+    // Sunset Blvd centre line in yellow so the main avenue stands out.
+    ctx.strokeStyle = '#ffd23e'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px(-20), pz(b.z0)); ctx.lineTo(px(-20), pz(b.z1)); ctx.stroke();
     // pier
     ctx.fillStyle = '#8a6b45'; ctx.fillRect(px(-84), pz(36), px(-28) - px(-84), pz(44) - pz(36));
-    // objective marker
+    // objective marker: big yellow diamond + pulsing ring.
     if (data.objective) {
       var ox = px(data.objective.x), oy = pz(data.objective.z);
       var pulse = 5 + 3 * Math.sin((data.time || 0) * 4);
-      ctx.strokeStyle = '#ffd23e'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(ox, oy, 10 + pulse, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = '#ffd23e'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(ox, oy, 12 + pulse, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = '#ffd23e';
+      ctx.strokeStyle = '#20100a'; ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(ox, oy - 9); ctx.lineTo(ox + 8, oy); ctx.lineTo(ox, oy + 9); ctx.lineTo(ox - 8, oy);
-      ctx.closePath(); ctx.fill();
+      ctx.moveTo(ox, oy - 11); ctx.lineTo(ox + 10, oy); ctx.lineTo(ox, oy + 11); ctx.lineTo(ox - 10, oy);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
     }
-    // police dots (flash when wanted)
+    // police dots (flash when wanted): big, with a white ring.
     var flash = (data.wanted > 0) && (Math.floor((data.time || 0) * 3) % 2 === 0);
     (data.police || []).forEach(function (p) {
       ctx.fillStyle = flash ? '#ff4d4d' : '#4aa8ff';
-      ctx.beginPath(); ctx.arc(px(p.x), pz(p.z), 6, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(px(p.x), pz(p.z), 6, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(px(p.x), pz(p.z), 7, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(px(p.x), pz(p.z), 7, 0, Math.PI * 2); ctx.stroke();
     });
-    // player arrow
+    // player arrow: big orange arrow with a white outline.
     if (data.player) {
       var cx = px(data.player.x), cy = pz(data.player.z);
       ctx.save();
       ctx.translate(cx, cy);
       ctx.rotate(-data.player.heading + Math.PI);
       ctx.fillStyle = '#ff7a1a';
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(0, -12); ctx.lineTo(9, 10); ctx.lineTo(0, 5); ctx.lineTo(-9, 10);
+      ctx.moveTo(0, -14); ctx.lineTo(10, 11); ctx.lineTo(0, 6); ctx.lineTo(-10, 11);
       ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.restore();
     }

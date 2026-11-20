@@ -199,7 +199,7 @@
     });
 
     // ---------- buildings with real 3D windows / doors / shopfronts ----------
-    var winGlassMats = [], winFrameMats = [];
+    var winGlassMats = [], winFrameMats = [], winLitMats = [];
     var facadeColors = [0xd8c9b8, 0xc4b49a, 0xb8c4cc, 0xd8a08a, 0xa8b89a, 0xe0d4c0, 0x9ab0c0, 0xc9a0a0, 0x8fa8b8, 0xd0b890];
     var signIdx = 0;
     var dummy = new THREE.Object3D();
@@ -215,33 +215,65 @@
         box(1.2, 1.6, 1.2, M.frame, cx + w / 4, h + 1.6, cz - d / 5);
       }
       var floors = Math.max(1, Math.floor(h / 4.2));
-      var cols = Math.max(2, Math.floor(w / 3.4));
-      var front = (facing === 'W') ? cz : cx; // not used directly; windows on all faces
-      // Windows on the street-facing facade (and the back one for depth).
-      for (var fl = 0; fl < floors; fl++) {
+      // Windows run along the facade itself: for a W/E facade the
+      // along-axis is z (the building's depth), for N/S it is x (the
+      // width). (v6.8 measured the along-axis off the wrong dimension, so
+      // the Sunset Blvd frontage windows floated off the wall and the
+      // facades read as blank slabs.)
+      var span = (facing === 'W' || facing === 'E') ? d : w;
+      var cols = Math.max(2, Math.floor(span / 3.4));
+      // One window unit: dark frame + glass, or warm lit glass for a
+      // random share of rooms, pushed proud of the wall.
+      function addWindow(gx, gz, ry, wy) {
+        dummy.position.set(gx, wy, gz); dummy.rotation.set(0, ry, 0); dummy.updateMatrix();
+        winFrameMats.push(dummy.matrix.clone());
+        dummy.translateZ(0.07); dummy.updateMatrix();
+        if (PH.chance(0.22)) winLitMats.push(dummy.matrix.clone());
+        else winGlassMats.push(dummy.matrix.clone());
+      }
+      // Windows on the street-facing facade AND the back one, so every
+      // block reads from both sides. Ground floor stays the shopfront /
+      // door — no windows there.
+      for (var fl = 1; fl < floors; fl++) {
         for (var c = 0; c < cols; c++) {
           var wy = 3.2 + fl * 4.2;
-          var wx = cx - w / 2 + 2 + c * ((w - 4) / Math.max(1, cols - 1));
-          // front face (toward -x when facing W, toward -z/+z for cross streets)
-          var gx, gz, ry;
-          if (facing === 'W') { gx = cx - w / 2 - 0.08; gz = wx; ry = -Math.PI / 2; }
-          else if (facing === 'N') { gx = wx; gz = cz - d / 2 - 0.08; ry = 0; }
-          else if (facing === 'S') { gx = wx; gz = cz + d / 2 + 0.08; ry = Math.PI; }
-          else { gx = cx + w / 2 + 0.08; gz = wx; ry = Math.PI / 2; }
-          dummy.position.set(gx, wy, gz); dummy.rotation.set(0, ry, 0); dummy.updateMatrix();
-          winFrameMats.push(dummy.matrix.clone());
-          dummy.position.set(gx, wy, gz); dummy.rotation.set(0, ry, 0);
-          dummy.translateZ(0.07); dummy.updateMatrix();
-          winGlassMats.push(dummy.matrix.clone());
-          if (fl === 0) continue; // ground floor is the shopfront / door
+          var along = -span / 2 + 2 + c * ((span - 4) / Math.max(1, cols - 1));
+          if (facing === 'W') {
+            addWindow(cx - w / 2 - 0.08, cz + along, -Math.PI / 2, wy);
+            addWindow(cx + w / 2 + 0.08, cz + along, Math.PI / 2, wy);
+          } else if (facing === 'E') {
+            addWindow(cx + w / 2 + 0.08, cz + along, Math.PI / 2, wy);
+            addWindow(cx - w / 2 - 0.08, cz + along, -Math.PI / 2, wy);
+          } else if (facing === 'N') {
+            addWindow(cx + along, cz - d / 2 - 0.08, 0, wy);
+            addWindow(cx + along, cz + d / 2 + 0.08, Math.PI, wy);
+          } else {
+            addWindow(cx + along, cz + d / 2 + 0.08, Math.PI, wy);
+            addWindow(cx + along, cz - d / 2 - 0.08, 0, wy);
+          }
         }
       }
-      // Ground floor: door + shopfront glass + sign, or a plain door.
+      // Ground floor: real entrance — stone steps, framed door leaf with
+      // a chrome handle — plus, for shops, a glass door and slim mullions
+      // splitting the big shopfront pane.
       var doorX, doorZ, doorRy;
       if (facing === 'W') { doorX = cx - w / 2 - 0.1; doorZ = cz; doorRy = -Math.PI / 2; }
       else if (facing === 'N') { doorX = cx; doorZ = cz - d / 2 - 0.1; doorRy = 0; }
       else if (facing === 'S') { doorX = cx; doorZ = cz + d / 2 + 0.1; doorRy = Math.PI; }
       else { doorX = cx + w / 2 + 0.1; doorZ = cz; doorRy = Math.PI / 2; }
+      var ox = (facing === 'W') ? -1 : (facing === 'E') ? 1 : 0;
+      var oz = (facing === 'N') ? -1 : (facing === 'S') ? 1 : 0;
+      var ax = (facing === 'W' || facing === 'E') ? 0 : 1;
+      var az = (facing === 'W' || facing === 'E') ? 1 : 0;
+      var chromeMat = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.25, metalness: 0.9 });
+      // Two stone treads up to the entrance.
+      var stepGeo = (facing === 'W' || facing === 'E')
+        ? new THREE.BoxGeometry(0.7, 0.16, 2.2) : new THREE.BoxGeometry(2.2, 0.16, 0.7);
+      var stepMat = new THREE.MeshStandardMaterial({ color: 0xb8b0a4, roughness: 0.95 });
+      var st1 = new THREE.Mesh(stepGeo, stepMat);
+      st1.position.set(doorX + ox * 0.5, 0.08, doorZ + oz * 0.5); st1.receiveShadow = true; scene.add(st1);
+      var st2 = new THREE.Mesh(stepGeo, stepMat);
+      st2.position.set(doorX + ox * 0.85, 0.04, doorZ + oz * 0.85); st2.receiveShadow = true; scene.add(st2);
       if (isShop) {
         var name = PH.SHOP_NAMES[signIdx % PH.SHOP_NAMES.length];
         var pair = SIGN_COLORS[signIdx % SIGN_COLORS.length];
@@ -263,6 +295,22 @@
         glass.position.x += (facing === 'W') ? -0.12 : (facing === 'E') ? 0.12 : 0;
         glass.position.z += (facing === 'N') ? -0.12 : (facing === 'S') ? 0.12 : 0;
         scene.add(glass);
+        // Glass door in the middle of the shopfront, with a chrome pull
+        // handle, and slim mullions splitting the big pane.
+        var shopDoor = new THREE.Mesh(new THREE.BoxGeometry(1.3, 2.7, 0.1), M.glassShop);
+        shopDoor.position.set(doorX + ox * 0.06, 1.35, doorZ + oz * 0.06);
+        shopDoor.rotation.y = glass.rotation.y;
+        scene.add(shopDoor);
+        var pull = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.7, 0.06), chromeMat);
+        pull.position.set(doorX + ox * 0.18 + ax * 0.35, 1.3, doorZ + oz * 0.18 + az * 0.35);
+        scene.add(pull);
+        var mullN = Math.max(2, Math.floor((w - 3) / 3));
+        for (var mi = 1; mi <= mullN; mi++) {
+          var moff = -((w - 3) / 2) + mi * ((w - 3) / (mullN + 1));
+          var mull = new THREE.Mesh(new THREE.BoxGeometry(0.09, 3.1, 0.09), M.frame);
+          mull.position.set(doorX + ox * 0.14 + ax * moff, 1.75, doorZ + oz * 0.14 + az * moff);
+          scene.add(mull);
+        }
         // Awning stripes over the shopfront.
         var awn = PH.makeCanvasTexture(128, 32, function (g, w2, h2) {
           for (var i = 0; i < 8; i++) { g.fillStyle = (i % 2) ? '#ffffff' : pair[0]; g.fillRect(i * 16, 0, 16, h2); }
@@ -275,8 +323,14 @@
         awning.position.z += (facing === 'N') ? -0.5 : (facing === 'S') ? 0.5 : 0;
         scene.add(awning);
       } else {
-        var door = box(1.4, 2.6, 0.18, new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.8 }), doorX, 1.3, doorZ);
+        // Framed door leaf with a chrome knob.
+        var dframe = box(1.8, 2.9, 0.14, M.frame, doorX, 1.45, doorZ);
+        dframe.rotation.y = doorRy;
+        var door = box(1.4, 2.6, 0.18, new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.8 }), doorX + ox * 0.06, 1.3, doorZ + oz * 0.06);
         door.rotation.y = doorRy;
+        var knob = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), chromeMat);
+        knob.position.set(doorX + ox * 0.2 + ax * 0.45, 1.05, doorZ + oz * 0.2 + az * 0.45);
+        scene.add(knob);
       }
     }
 
@@ -309,6 +363,9 @@
     }
     instanced(winFrameMats, new THREE.BoxGeometry(1.7, 2.1, 0.1), M.frame);
     instanced(winGlassMats, new THREE.BoxGeometry(1.4, 1.8, 0.14), M.glassDark);
+    // Warm lit rooms: a share of the windows glow amber.
+    instanced(winLitMats, new THREE.BoxGeometry(1.4, 1.8, 0.14),
+      new THREE.MeshStandardMaterial({ color: 0xffc46b, emissive: 0xff9a2e, emissiveIntensity: 0.85, roughness: 0.4 }));
 
     // ---------- street props: lamps, hydrants, benches, traffic lights ----------
     function lamp(x, z) {
@@ -357,17 +414,28 @@
     // (which looks north from the east side) never has a pole in its face.
     trafficLight(-26.5, -41); trafficLight(-26.5, -1); trafficLight(-26.5, 39); trafficLight(-26.5, 79);
 
-    // ---------- palms (kept off the chase sight-line) ----------
+    // ---------- palms: tall and broad, about two storeys, lining the
+    // beachfront avenue and the sidewalks ----------
     function palm(x, z, s) {
       var g = new THREE.Group();
-      var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.28, 6.5, 8), M.trunk);
-      trunk.position.y = 3.2; trunk.rotation.z = 0.08; trunk.castShadow = true; g.add(trunk);
-      for (var i = 0; i < 7; i++) {
-        var frond = new THREE.Mesh(new THREE.ConeGeometry(0.5, 3.2, 4), M.leaf);
-        var a = (i / 7) * Math.PI * 2;
-        frond.position.set(Math.cos(a) * 1.3, 6.6, Math.sin(a) * 1.3);
-        frond.rotation.set(Math.sin(a) * 1.1, 0, -Math.cos(a) * 1.1);
-        frond.scale.set(1, 1, 0.18);
+      var trunkH = 9.0;
+      var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.42, trunkH, 8), M.trunk);
+      trunk.position.y = trunkH / 2; trunk.rotation.z = 0.06; trunk.castShadow = true; g.add(trunk);
+      // Coconut clusters under the crown.
+      for (var ci2 = 0; ci2 < 3; ci2++) {
+        var nut = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6),
+          new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 1 }));
+        var na = (ci2 / 3) * Math.PI * 2;
+        nut.position.set(Math.cos(na) * 0.5, trunkH - 0.3, Math.sin(na) * 0.5);
+        g.add(nut);
+      }
+      // Nine long fronds drooping out from the crown.
+      for (var i = 0; i < 9; i++) {
+        var frond = new THREE.Mesh(new THREE.ConeGeometry(0.85, 5.2, 4), M.leaf);
+        var a = (i / 9) * Math.PI * 2;
+        frond.position.set(Math.cos(a) * 2.1, trunkH + 0.4, Math.sin(a) * 2.1);
+        frond.rotation.set(Math.sin(a) * 1.25, 0, -Math.cos(a) * 1.25);
+        frond.scale.set(1, 1, 0.16);
         g.add(frond);
       }
       g.position.set(x, 0, z); g.scale.setScalar(s || 1);
@@ -543,5 +611,144 @@
     };
 
     return world;
+  };
+
+  // ---------- near-camera foreground sets (one per staged shot) ----------
+  // Each set fills the empty foreground in front of that shot's camera
+  // with close props and people, so no frame opens on bare pavement:
+  // an overturned fruit cart with scattered fruit, crates, a beach
+  // towel + surfboard, a trash can, a hydrant, a bench, and pedestrians
+  // close to the lens. Positions are tuned to each staged camera, at the
+  // frame edges, so the hero and the action stay clear.
+  PH.buildForegroundProps = function (scene, shot) {
+    var group = new THREE.Group();
+    scene.add(group);
+    var wood = new THREE.MeshStandardMaterial({ color: 0x8a6b45, roughness: 0.9 });
+    var woodDark = new THREE.MeshStandardMaterial({ color: 0x6b4f33, roughness: 0.9 });
+    var metal = new THREE.MeshStandardMaterial({ color: 0x3a4a3a, roughness: 0.6, metalness: 0.4 });
+    var chrome = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.25, metalness: 0.9 });
+    var dark = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 });
+    function bx(w, h, d, mat, x, y, z, ry) {
+      var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.position.set(x, y, z); if (ry) m.rotation.y = ry; m.castShadow = true; group.add(m); return m;
+    }
+    function cyl(rt, rb, h, mat, x, y, z, seg) {
+      var m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg || 10), mat);
+      m.position.set(x, y, z); m.castShadow = true; group.add(m); return m;
+    }
+    function crate(x, y, z, ry, s) {
+      s = s || 1;
+      bx(1.1 * s, 1.1 * s, 1.1 * s, wood, x, y + 0.55 * s, z, ry);
+      bx(1.14 * s, 0.1, 1.14 * s, woodDark, x, y + 1.06 * s, z, ry);
+    }
+    function trashCan(x, y, z) {
+      cyl(0.42, 0.36, 1.0, metal, x, y + 0.5, z, 12);
+      cyl(0.44, 0.44, 0.08, woodDark, x, y + 1.02, z, 12);
+    }
+    function hydrantFg(x, y, z) {
+      var red = new THREE.MeshStandardMaterial({ color: 0xc22a2a, roughness: 0.6 });
+      cyl(0.28, 0.32, 0.7, red, x, y + 0.35, z);
+      var cap = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), red);
+      cap.position.set(x, y + 0.78, z); group.add(cap);
+    }
+    function benchFg(x, y, z, ry) {
+      var g2 = new THREE.Group();
+      g2.position.set(x, y, z); g2.rotation.y = ry || 0; group.add(g2);
+      function part(w, h, d, mat, px, py, pz) {
+        var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+        m.position.set(px, py, pz); m.castShadow = true; g2.add(m);
+      }
+      part(2.2, 0.12, 0.6, woodDark, 0, 0.5, 0);
+      part(2.2, 0.5, 0.1, woodDark, 0, 0.85, -0.28);
+      part(0.1, 0.5, 0.5, metal, -1, 0.25, 0);
+      part(0.1, 0.5, 0.5, metal, 1, 0.25, 0);
+    }
+    function fruitCart(x, y, z, ry) {
+      var g2 = new THREE.Group();
+      g2.position.set(x, y, z); g2.rotation.y = ry || 0; group.add(g2);
+      // Overturned: the tray tips on its side, wheels in the air.
+      var tray = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 1.0), wood);
+      tray.position.set(0, 0.35, 0); tray.rotation.z = 1.15; tray.castShadow = true; g2.add(tray);
+      [-0.6, 0.6].forEach(function (dx) {
+        var w = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.12, 12), dark);
+        w.rotation.x = Math.PI / 2; w.position.set(dx, 0.75, 0.55); w.castShadow = true; g2.add(w);
+      });
+      var handle = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.4, 6), woodDark);
+      handle.rotation.z = 1.45; handle.position.set(-1.0, 0.12, 0); g2.add(handle);
+      // Spilled fruit rolling away from the cart.
+      var fruitCols = [0xff7a1a, 0xe63946, 0xffd23e, 0x38b000, 0xff5d8f];
+      for (var i = 0; i < 14; i++) {
+        var f = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6),
+          new THREE.MeshStandardMaterial({ color: fruitCols[i % fruitCols.length], roughness: 0.5 }));
+        var a = PH.rand(0, Math.PI * 2), r = PH.rand(0.8, 2.6);
+        f.position.set(Math.cos(a) * r, 0.14, Math.sin(a) * r * 0.8);
+        f.castShadow = true; g2.add(f);
+      }
+    }
+    function towelSurf(x, y, z, ry, color) {
+      var towel = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 2.0),
+        new THREE.MeshStandardMaterial({ color: color || 0xff5d8f, roughness: 0.9 }));
+      towel.rotation.x = -Math.PI / 2; towel.rotation.z = 0.3;
+      towel.position.set(x, y + 0.04, z); towel.castShadow = true; group.add(towel);
+      var board = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8),
+        new THREE.MeshStandardMaterial({ color: 0x2ec4b6, roughness: 0.4 }));
+      board.scale.set(0.32, 0.05, 1.15);
+      board.position.set(x + 1.3, y + 0.45, z + 0.4);
+      board.rotation.set(0.5, ry || 0.4, 0); board.castShadow = true; group.add(board);
+    }
+    function walker(x, y, z, ry, state) {
+      var p = PH.makePerson({ state: state || 'walk' });
+      p.group.position.set(x, y, z);
+      p.group.rotation.y = ry || 0;
+      p.phase = PH.rand(0, 6.28);
+      PH.posePerson(p, 0);
+      group.add(p.group);
+      return p;
+    }
+    if (shot === 1) {
+      // Chase: the road right in front of the lens.
+      fruitCart(-15, 0, 13, 0.5);
+      crate(-22, 0, 11.5, 0.4); crate(-21.2, 0, 12.6, -0.3); crate(-21.6, 1.1, 12, 0.2);
+      trashCan(-11, 0, 10.5);
+      hydrantFg(-12.5, 0, 8);
+      benchFg(-19, 0, 13.8, 0.3);
+      walker(-21.5, 0, 13.0, Math.PI, 'walk');
+      walker(-13.5, 0, 15.5, 0, 'walk');
+      walker(-18.5, 0, 15, Math.PI * 0.9, 'run');
+    } else if (shot === 2) {
+      // On foot: the sidewalk right in front of the lens.
+      fruitCart(-7.9, 0, -2.2, -0.6);
+      crate(-12.2, 0, -2.0, 0.3, 0.8); crate(-11.3, 0, -4.9, -0.2, 0.8);
+      trashCan(-8.2, 0, -3.2);
+      benchFg(-12.4, 0, -3.4, Math.PI / 2);
+      hydrantFg(-12.5, 0, -4.5);
+      walker(-8.4, 0, -2.2, Math.PI, 'walk');
+      walker(-11.9, 0, -2.8, 0, 'walk');
+      walker(-7.9, 0, -4.5, Math.PI, 'walk');
+    } else if (shot === 3) {
+      // Mission: the pier deck in front of the lens (deck top y=1.35).
+      // Props sit 4-6 units out, at the frame edges — anything closer
+      // fills the whole frame (in the first v6.9 render a crate 1 unit
+      // from the lens hid Mateo, Kira and the whole pier). The crates
+      // are small (tops at eye level) so Mateo and Kira show above them.
+      crate(-51.6, 1.35, 41.2, 0.5, 0.7);
+      crate(-49.6, 1.35, 40.2, -0.4, 0.7);
+      towelSurf(-53.5, 1.35, 42.6, 0.4, 0xffd23e);
+      trashCan(-53.9, 1.35, 41.6);
+      cyl(0.22, 0.16, 0.3,
+        new THREE.MeshStandardMaterial({ color: 0xff5d5d, roughness: 0.7 }), -50.6, 1.5, 42.6, 10);
+      walker(-49.6, 1.35, 39.2, Math.PI * 0.75, 'walk');
+      walker(-53.6, 1.35, 43.2, Math.PI * 0.2, 'walk');
+    } else if (shot === 4) {
+      // Combat: the pale road right in front of the lens.
+      fruitCart(-18, 0, 24, 0.4);
+      crate(-20.5, 0, 23.5, 0.3); crate(-20.6, 0, 23.6, -0.3);
+      trashCan(-13.5, 0, 23);
+      hydrantFg(-12.5, 0, 26);
+      walker(-15.5, 0, 22, Math.PI, 'run');
+      walker(-20, 0, 25.5, Math.PI * 0.85, 'run');
+      walker(-14, 0, 26.5, Math.PI * 1.1, 'walk');
+    }
+    return group;
   };
 })();

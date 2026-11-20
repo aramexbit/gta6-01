@@ -45,7 +45,7 @@
     signs: 0, buildings: 0, lamps: 0, palms: 0, props: 0,
     peds: 0, traffic: 0, parked: 0, police: 0, stalls: 0,
     detailedCars: 0, umbrellas: 0, hydrants: 0, bins: 0,
-    facadeWindows: 0, realDoors: 0, shopfronts: 0, surfboards: 0
+    facadeWindows: 0, realDoors: 0, shopfronts: 0, surfboards: 0, containers: 0
   };
 
   function addSign(parent, tex, w, h, x, y, z, ry) {
@@ -637,6 +637,7 @@
   // ------------------------------------------------------------ beach & pier
   function buildBeach(scene, rng) {
     // sand
+    world.beachPeds = [];
     var sand = core.mesh(core.planeGeo(42, 180), core.mat(0xe8c98a), 119, 0.05, 0);
     sand.rotation.x = -Math.PI / 2;
     scene.add(sand);
@@ -686,6 +687,7 @@
       fped.position.set(fx + 1, 0, fz - 2.5);
       fped.rotation.y = rng() * Math.PI * 2;
       scene.add(fped);
+      world.beachPeds.push(fped);
       counts.peds++;
       counts.props += 3;
     }
@@ -777,6 +779,7 @@
       bpfig.position.set(bpx, 0, bpz);
       if (bp % 3 === 0) { bpfig.rotation.x = -Math.PI / 2 + 0.15; bpfig.position.y = 0.25; }
       scene.add(bpfig);
+      world.beachPeds.push(bpfig);
       counts.peds++;
     }
   }
@@ -866,12 +869,14 @@
       counts.stalls++; counts.props += 6;
     }
     // market crowd: shoppers milling between stalls
+    world.marketPeds = [];
     for (var m = 0; m < 26; m++) {
       var mx = -58 + rng() * 26, mz = 34 + rng() * 22;
       var mp = world.buildPed(rng, false);
       mp.position.set(mx, 0, mz);
       mp.rotation.y = rng() * Math.PI * 2;
       scene.add(mp);
+      world.marketPeds.push(mp);
       counts.peds++;
     }
     // foreground props at the plaza's north edge: crates, barrels and a
@@ -1358,6 +1363,173 @@
     return g;
   };
 
+  // v6.7 — the Sunset Bay Bridge: a causeway deck over the open sea,
+  // east of the beach (x 96..248, deck top y = 6). Railings, lamps,
+  // pillars down to the water, and an overhead gantry sign.
+  function buildBridge(scene, rng) {
+    var deckX0 = 140, deckX1 = 248, deckY = 6;
+    var cx = (deckX0 + deckX1) / 2, len = deckX1 - deckX0;
+    scene.add(core.box(len, 0.8, 12, 0x3a3f4a, cx, deckY - 0.4, 0));
+    // centre dashes + edge lines on the deck
+    for (var d = 0; d < 24; d++) {
+      scene.add(core.box(2.2, 0.04, 0.28, 0xf7c948, deckX0 + 4 + d * 6.2, deckY + 0.02, 0));
+    }
+    scene.add(core.box(len, 0.04, 0.3, 0xf2f2f2, cx, deckY + 0.02, -5.4));
+    scene.add(core.box(len, 0.04, 0.3, 0xf2f2f2, cx, deckY + 0.02, 5.4));
+    counts.props += 26;
+    // railings: posts + top rail on both sides
+    for (var rx = deckX0 + 2; rx <= deckX1; rx += 8) {
+      scene.add(core.box(0.15, 1.1, 0.15, 0x9fc3e8, rx, deckY + 0.55, -5.8));
+      scene.add(core.box(0.15, 1.1, 0.15, 0x9fc3e8, rx, deckY + 0.55, 5.8));
+      counts.props += 2;
+    }
+    scene.add(core.box(len, 0.12, 0.12, 0x9fc3e8, cx, deckY + 1.15, -5.8));
+    scene.add(core.box(len, 0.12, 0.12, 0x9fc3e8, cx, deckY + 1.15, 5.8));
+    // lamps, alternating sides
+    for (var li = 0; li < 10; li++) {
+      var lx = deckX0 + 10 + li * 15, lz = li % 2 ? -5.2 : 5.2;
+      scene.add(core.mesh(core.cylGeo(0.08, 0.1, 4.6, 8), core.mat(0x2c2c38), lx, deckY + 2.3, lz));
+      scene.add(core.mesh(core.sphGeo(0.22, 8, 6), core.mat(0xffe9a8, { emissive: true }), lx, deckY + 4.7, lz));
+      var lglow = core.glowSprite(0xffd98a, 1.4, 0.6);
+      lglow.position.set(lx, deckY + 4.7, lz);
+      scene.add(lglow);
+      counts.lamps++; counts.props += 2;
+    }
+    // pillars down to the water (the deck starts at the waterline now,
+    // so the bridge no longer looms over the beach in the title frame)
+    var pillarX = [140, 170, 200, 230];
+    for (var pi = 0; pi < pillarX.length; pi++) {
+      var px2 = pillarX[pi];
+      scene.add(core.box(1.6, 6, 1.6, 0x8a8a92, px2, 3, -3.5));
+      scene.add(core.box(1.6, 6, 1.6, 0x8a8a92, px2, 3, 3.5));
+      scene.add(core.box(1.8, 1.0, 9.4, 0x8a8a92, px2, 5.4, 0));
+      counts.props += 3;
+    }
+    // overhead gantry sign, facing SOUTH toward the bridge-shot camera
+    // (a west-facing sign is crossed by the deck lamps from that angle)
+    var gantry = new THREE.Group();
+    gantry.add(core.box(0.3, 4.6, 0.3, 0x3a3a48, 0, 2.3, -5.5));
+    gantry.add(core.box(0.3, 4.6, 0.3, 0x3a3a48, 0, 2.3, 5.5));
+    gantry.add(core.box(0.4, 0.5, 12, 0x3a3a48, 0, 4.6, 0));
+    var gTex = core.textTexture('SUNSET BAY BRIDGE', {
+      bg: '#0e2a4a', fg: '#ffe9b0', glow: '#00e5ff', size: 60,
+      border: '#00e5ff', borderW: 4, w: 768, h: 128
+    });
+    var gSign = core.mesh(core.planeGeo(9, 1.5),
+      new THREE.MeshBasicMaterial({ map: gTex }), 0, 3.6, 5.65);
+    gantry.add(gSign);
+    gantry.position.set(192, deckY, 0);
+    scene.add(gantry);
+    counts.signs++; counts.props += 3;
+  }
+
+  // v6.7 — Sunset Harbor: a container quay on the south end of the
+  // beach (x 100..138, z 48..74), a gantry crane, a moored freighter
+  // in the water, a forklift and hi-vis dock workers.
+  function buildHarbor(scene, rng) {
+    var quayY = 0.12;
+    scene.add(core.box(38, 0.12, 26, 0x8a8a92, 119, 0.06, 61));
+    counts.props++;
+    // container rows: two walls forming the chase lane (z 55..67)
+    var contCols = [0xd23a2e, 0x2a6ad2, 0xf7c948, 0x2ad2c2, 0x7a4ad2, 0xff7a1a];
+    var rowA = [[104, 1], [110, 2], [116, 2], [122, 1], [128, 3], [134, 2]];
+    var rowB = [[102, 2], [108, 1], [114, 2], [120, 3], [126, 1], [132, 2]];
+    function stack(row, z, ci) {
+      for (var i = 0; i < row.length; i++) {
+        var cxx = row[i][0], levels = row[i][1];
+        for (var lv = 0; lv < levels; lv++) {
+          var col = contCols[(ci + i + lv) % contCols.length];
+          scene.add(core.box(5.6, 2.5, 2.5, col, cxx, quayY + 1.25 + lv * 2.55, z));
+          scene.add(core.box(5.6, 0.18, 2.54, 0x2a2a2a, cxx, quayY + 2.45 + lv * 2.55, z));
+          counts.containers++; counts.props++;
+        }
+      }
+    }
+    stack(rowA, 53.5, 0);
+    stack(rowB, 68.5, 3);
+    // gantry crane over the lane
+    var crane = new THREE.Group();
+    [[-4, -6], [4, -6], [-4, 6], [4, 6]].forEach(function (o) {
+      crane.add(core.box(0.8, 16, 0.8, 0xf7c948, o[0], 8, o[1]));
+    });
+    crane.add(core.box(10, 1.2, 14, 0xf7c948, 0, 16, 0));
+    crane.add(core.box(1.6, 1.0, 1.6, 0x2a2a2a, 0, 15.2, 0));
+    // a container on the hook: a thick cable and a full-size load, so the
+    // crane reads as working cargo gear, not a floating black box (v6.7)
+    crane.add(core.box(0.25, 7, 0.25, 0x2a2a2a, 0, 11.5, 0));
+    crane.add(core.box(5.6, 2.5, 2.5, 0xf7c948, 0, 6.8, 0));
+    crane.add(core.box(5.6, 0.18, 2.54, 0x2a2a2a, 0, 8.0, 0));
+    counts.containers++; counts.props += 2;
+    var cTex = core.textTexture('PORT SUNSET', {
+      bg: '#191024', fg: '#ffd23e', glow: '#ff7a1a', size: 64,
+      border: '#ffd23e', borderW: 4, w: 512, h: 128
+    });
+    crane.add(core.mesh(core.planeGeo(7, 1.4),
+      new THREE.MeshBasicMaterial({ map: cTex }), 0, 16, 7.15));
+    crane.position.set(118, 0, 61);
+    scene.add(crane);
+    counts.signs++; counts.props += 8;
+    // moored freighter in the water east of the quay
+    var ship = new THREE.Group();
+    ship.add(core.box(34, 5, 12, 0x1a2a4a, 0, 2.5, 0));
+    ship.add(core.box(6, 3.4, 10, 0x1a2a4a, 18, 3.4, 0)); // bow taper
+    ship.add(core.box(6, 8, 8, 0xf2f2f2, -13, 8.5, 0)); // bridge tower
+    ship.add(core.box(2.5, 3, 2.5, 0xd23a2e, -8, 7, 0)); // funnel
+    var shipCols = [0xd23a2e, 0x2ad2c2, 0xf7c948, 0x2a6ad2];
+    for (var si = 0; si < 6; si++) {
+      ship.add(core.box(5, 2.4, 5, shipCols[si % shipCols.length],
+        -6 + (si % 3) * 6, 6.2, si < 3 ? -3 : 3));
+      counts.containers++;
+    }
+    ship.position.set(172, 0, 62);
+    scene.add(ship);
+    counts.props += 10;
+    // forklift at the lane edge
+    var fork = new THREE.Group();
+    fork.add(core.box(1.8, 0.9, 1.2, 0xf7c948, 0, 0.65, 0));
+    fork.add(core.box(1.0, 0.9, 1.1, 0x2a2a2a, -0.3, 1.5, 0));
+    fork.add(core.box(0.12, 2.2, 0.12, 0x3a3a48, 0.95, 1.3, -0.5));
+    fork.add(core.box(0.12, 2.2, 0.12, 0x3a3a48, 0.95, 1.3, 0.5));
+    fork.add(core.box(1.1, 0.08, 0.9, 0x8a8a92, 1.4, 0.12, 0));
+    fork.add(core.box(0.35, 0.35, 0.2, 0x1a1a1a, 0.6, 0.35, -0.65));
+    fork.add(core.box(0.35, 0.35, 0.2, 0x1a1a1a, 0.6, 0.35, 0.65));
+    fork.add(core.box(0.35, 0.35, 0.2, 0x1a1a1a, -0.6, 0.35, -0.65));
+    fork.add(core.box(0.35, 0.35, 0.2, 0x1a1a1a, -0.6, 0.35, 0.65));
+    fork.position.set(109, 0, 55.6);
+    fork.rotation.y = -0.4;
+    scene.add(fork);
+    counts.props += 9;
+    // dock workers in hi-vis, standing clear of the lane
+    var wSpots = [[106, 66.5], [118, 66.8], [124, 55.8], [130, 66.5], [104, 55.5]];
+    for (var wi = 0; wi < wSpots.length; wi++) {
+      var w = world.buildPed(rng, false);
+      w.children[2].material = core.mat(0xffd23e, { toon: true });
+      w.position.set(wSpots[wi][0], 0, wSpots[wi][1]);
+      w.rotation.y = rng() * Math.PI * 2;
+      scene.add(w);
+      counts.peds++;
+    }
+    // crates + barrels at the quay corners
+    for (var bi = 0; bi < 6; bi++) {
+      var bx = 102 + bi * 6.5, bz = bi % 2 ? 50 : 72;
+      scene.add(core.box(0.9, 0.9, 0.9, 0x8a6a3a, bx, 0.57, bz));
+      scene.add(core.mesh(core.cylGeo(0.4, 0.4, 0.9, 10), core.mat(0x3a5a8a), bx + 1.4, 0.57, bz));
+      counts.props += 2;
+    }
+    // foreground clutter near the quay's south-west corner, so the
+    // harbor frame's lower edge is not bare concrete (v6.7 pass 2)
+    var fgProps = [[104, 65.5, 0], [106, 64, 1], [102.5, 66, 0], [105, 66.5, 1]];
+    for (var fgi = 0; fgi < fgProps.length; fgi++) {
+      var fpx = fgProps[fgi][0], fpz = fgProps[fgi][1];
+      if (fgProps[fgi][2]) {
+        scene.add(core.mesh(core.cylGeo(0.4, 0.4, 0.9, 10), core.mat(0x3a5a8a), fpx, 0.57, fpz));
+      } else {
+        scene.add(core.box(0.9, 0.9, 0.9, 0x8a6a3a, fpx, 0.57, fpz));
+      }
+      counts.props++;
+    }
+  }
+
   // ---------------------------------------------------------------- build
   world.build = function (scene) {
     var rng = core.mulberry32(20261120);
@@ -1366,6 +1538,8 @@
     buildStreetProps(scene, rng);
     buildBeach(scene, rng);
     buildMarket(scene, rng);
+    buildBridge(scene, rng);
+    buildHarbor(scene, rng);
     // every flat ground plane (roads, sidewalks, sand, plaza, park)
     // receives shadows, so buildings and cars ground themselves in daylight
     scene.traverse(function (o) {

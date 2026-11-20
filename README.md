@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/gta6-01/aramexbit/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/aramexbit/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-[![version](https://img.shields.io/badge/version-6.5-orange)](https://github.com/aramexbit/gta6-01)
+[![version](https://img.shields.io/badge/version-6.7-orange)](https://github.com/aramexbit/gta6-01)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![three.js](https://img.shields.io/badge/three.js-r152-blue)](https://threejs.org/)
 
@@ -68,8 +68,8 @@ node serve.ts            # serves game/ at http://localhost:8080/
 ```
 
 Open `http://localhost:8080/` in desktop Chrome. Screenshot framings are
-staged with `?shot=1` (chase), `?shot=2` (street), `?shot=3` (night-market
-firefight), `?shot=4` (title screen).
+staged with `?shot=1` (bridge chase), `?shot=2` (market walk),
+`?shot=3` (harbor chase at sunset), `?shot=4` (beach title screen).
 
 ## Layout
 
@@ -91,16 +91,20 @@ MIT — see `LICENSE`.
 The four screenshots in `screenshots/` are rendered from the running game
 in headless Chromium (1280×720, JPEG, each under 256 KiB):
 
-1. **chase** — Mateo in the Scarlet Arrow on Ocean Drive, police on the
-   bumper, roadblock ahead, the police helicopter overhead, the sun low
-   over the sea.
-2. **street** — the chase turns north into the grid, police flanking left
-   and right, glass towers and shop signs on both sides.
-3. **mission** — Mateo firing his pistol in the Little Havana night market:
-   six striped stalls, lanterns, tracers, a downed enemy and a downed
-   officer, the beacon marking the drop.
-4. **start** — the title screen over the city at sunset, Slot 1 carrying
-   the real progress: M2 PIER RUN, $15,300, Respect 140.
+1. **chase** — Mateo in the Scarlet Arrow on the Sunset Bay Bridge,
+   sea on both sides of the railings, police on the bumper, roadblock
+   under the gantry sign ahead, the police helicopter low over the water.
+2. **street** — Mateo on foot in the Little Havana day market: orange
+   jacket and face close to camera, shoppers and vendors pressing in,
+   striped stalls and lit signs all around.
+3. **mission** — the chase at sunset on the Sunset Harbor container quay:
+   container walls on both sides, gantry crane with a container on its
+   hook overhead, the sun setting over the water behind the roadblock,
+   forklift and dock workers at the lane edges.
+4. **start** — the title screen from the beach at sunset: Mateo beside
+   the Scarlet Arrow on the sand, waves, umbrellas and beachgoers in
+   the foreground, the city skyline behind, Slot 1 carrying the real
+   progress: M2 PIER RUN, $15,300, Respect 140.
 
 ## Development
 

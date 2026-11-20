@@ -1,7 +1,8 @@
-// PIER HEAT — Sunset Bay (v6.6)
+// PIER HEAT — Sunset Bay (v6.7)
 // main.js — boot, camera, input, HUD, procedural WebAudio, and the debug
 // staging API the screenshot harness uses (?shot=1..4, PH.debug.*).
-// v6.6: the loop drives core.tick so the ocean, clouds and cloud shadows move.
+// v6.7: four new staged framings — bridge chase, market walk, harbor
+// chase, beach title — replacing the v6.6 shots.
 (function () {
   var PH = window.PH = window.PH || {};
   var core = PH.core, world = PH.world, sim = PH.sim;
@@ -217,15 +218,15 @@
   drawKira();
   // Kira's lines rotate with the mission stage.
   var KIRA_LINES = {
-    chase: 'Kira: "Sunset\'s on your tail, Mateo. Two units on your bumper — thread the roadblock at the pier end, don\'t stop."',
-    street: 'Kira: "They\'re boxing you in — left and right. Punch through the gap before the roadblock closes."',
-    mission: 'Kira: "Market\'s hot. Three gates left, Mateo. The beacon marks the drop — clear the stalls and move."',
-    title: 'Kira: "Mateo, you\'re live. Sunset Bay is yours — just don\'t let the Bay City PD write the ending."'
+    bridge: 'Kira: "Bridge run, Mateo — sea on both sides, no way off. Two units on your bumper, roadblock under the gantry. Don\'t stop."',
+    marketday: 'Kira: "Blend in, Mateo. The market\'s packed — buy the drop, smile at the vendors, and walk out like a local."',
+    harbor: 'Kira: "Harbor\'s hot — containers left and right, crane overhead, freighter at your back. Thread the lane and go."',
+    beachtitle: 'Kira: "Mateo, you\'re live. Sunset Bay is yours — just don\'t let the Bay City PD write the ending."'
   };
   function setKira(stage) {
     if (el['kira-text']) el['kira-text'].textContent = KIRA_LINES[stage] || KIRA_LINES.title;
   }
-  setKira('title');
+  setKira('beachtitle');
 
   // ------------------------------------------------------------ minimap
   var mmCtx = el['minimap'] ? el['minimap'].getContext('2d') : null;
@@ -282,20 +283,20 @@
   if (btn) btn.addEventListener('click', startGame);
 
   // ------------------------------------------------------------ staging
-  var STAGES = { '1': 'chase', '2': 'street', '3': 'mission', '4': 'title' };
+  var STAGES = { '1': 'bridge', '2': 'marketday', '3': 'harbor', '4': 'beachtitle' };
   function applyStage(name) {
     var framing = sim.stage(name);
     setStageCam(framing);
     setKira(name);
-    if (el['title-screen']) el['title-screen'].style.display = name === 'title' ? 'flex' : 'none';
-    if (el['hud']) el['hud'].style.display = name === 'title' ? 'none' : 'block';
+    if (el['title-screen']) el['title-screen'].style.display = name === 'beachtitle' ? 'flex' : 'none';
+    if (el['hud']) el['hud'].style.display = name === 'beachtitle' ? 'none' : 'block';
     updateHUD();
   }
   PH.debug = {
-    stageChase: function () { applyStage('chase'); return sim.counts(); },
-    stageStreet: function () { applyStage('street'); return sim.counts(); },
-    stageMission: function () { applyStage('mission'); return sim.counts(); },
-    stageTitle: function () { applyStage('title'); return sim.counts(); },
+    stageBridge: function () { applyStage('bridge'); return sim.counts(); },
+    stageMarket: function () { applyStage('marketday'); return sim.counts(); },
+    stageHarbor: function () { applyStage('harbor'); return sim.counts(); },
+    stageBeach: function () { applyStage('beachtitle'); return sim.counts(); },
     counts: function () { return sim.counts(); },
     hud: function () { return sim.getHUD(); },
     stage: function (n) { applyStage(n); return sim.counts(); }

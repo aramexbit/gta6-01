@@ -24,7 +24,7 @@
   var heroCar, heroPos, heroHeading, heroSpeed;
   var mateo, mateoAim, mateoGLB = null;
   var traffic = [], parked = [], peds = [], policeCars = [], officers = [];
-  var heli, roadblocks = [], tracers = [], gates = [];
+  var heli, roadblocks = [], tracers = [], gates = [], stageExtras = [];
   var downedEnemy, downedOfficer;
   var quietTimer = 0; // seconds without police in range, for wanted decay
   var flashTimer = 0;
@@ -230,10 +230,14 @@
     // reset everything visible that staging touches
     tracers.forEach(function (t) { scene.remove(t); });
     tracers = [];
+    stageExtras.forEach(function (e) { scene.remove(e); });
+    stageExtras = [];
     downedEnemy.visible = false;
     downedOfficer.visible = false;
     mateo.visible = false;
     mateoAim.visible = false;
+    if (mateoGLB) mateoGLB.visible = false;
+    if (world.marketBeacon) world.marketBeacon.visible = true;
     gates.forEach(function (g) { g.visible = false; });
     roadblocks.forEach(function (r) { scene.remove(r); });
     roadblocks = [];
@@ -244,130 +248,158 @@
     // no unplaced unit sits at the origin and no dispatch row lies
     policeCars.forEach(function (p) { p.car.visible = false; });
 
-    if (name === 'chase') {
-      // bright cloudy DAY: saturated blue sky, high sun, sharp shadows.
-      // Camera low and close behind the hero's quarter, so the orange
-      // wedge fills a third of the frame; no palm trunk in the way.
-      core.setTimeOfDay('day');
-      sim.state.wanted = 3;
-      // hero past the towers, on the open beach road: the sea and the
-      // clouded blue sky are finally in frame ahead of him
-      heroPos.set(88, 0, 0); heroHeading = 0; heroSpeed = 12;
-      placeHeroCar();
-      clearRoad('x', 0, 76, 98);
-      // both police on the far (north) side of the road, so the camera's
-      // south side stays clear and the hero's flank is unobstructed
-      placePolice(0, 84, -4.5, 0);
-      placePolice(1, 90, -3.5, 0);
-      var rb = world.buildRoadblock();
-      rb.position.set(94, 0, 0); rb.rotation.y = Math.PI / 2;
-      scene.add(rb); roadblocks.push(rb);
-      // helicopter over the road ahead, upper-left of frame clear of the
-      // mission panel — far enough that the whole rotor fits in frame
-      // (v6.6 first pass had it clipped across the top edge)
-      heli.scale.setScalar(0.9);
-      heli.position.set(97, 6.5, -10);
-      heli.rotation.set(0, -0.5, 0.06);
-      heli.visible = true;
-      sim.state.mission = { id: 'M2', name: 'THREE GATES', stage: 1, stages: 3, timer: 187 };
-      clearPedsNear({ x: 81.5, z: 7.6 }, 8);
-      return { cam: new THREE.Vector3(81.5, 1.7, 7.6), look: new THREE.Vector3(93.5, 1.7, -0.5) };
-    }
-
-    if (name === 'street') {
-      // bright cloudy DAY, like the chase: blue sky, cloud shadows on
-      // the avenue, the hero's orange wedge against real facades
+    if (name === 'bridge') {
+      // v6.7 shot 1 — BRIDGE CHASE: bright cloudy DAY on the Sunset Bay
+      // Bridge, a causeway over the open sea. The Scarlet Arrow runs the
+      // deck with two PD units on its bumper, a roadblock under the
+      // gantry sign ahead, the helicopter low over the water, and the
+      // sea on both sides of the railings.
       core.setTimeOfDay('day');
       sim.state.wanted = 4;
-      heroPos.set(30, 0, 22); heroHeading = Math.PI / 2; heroSpeed = 12;
+      heroPos.set(168, 6, 0); heroHeading = 0; heroSpeed = 12;
       placeHeroCar();
-      clearRoad('z', 30, -6, 28);
-      // police flanking left and right AHEAD of the hero, so they frame
-      // him instead of sitting between the camera and him
-      placePolice(0, 27.2, 16, Math.PI / 2);
-      placePolice(1, 32.8, 16, Math.PI / 2);
-      placePolice(2, 30, 29.5, Math.PI / 2);
-      var rb2 = world.buildRoadblock();
-      rb2.position.set(30, 0, 4); rb2.rotation.y = 0;
-      scene.add(rb2); roadblocks.push(rb2);
-      // helicopter low over the avenue, upper-left of frame, clear of the
-      // mission panel
+      // police flanking AHEAD of the hero, so the orange wedge stays
+      // the subject instead of hiding behind a patrol car (v6.7 pass 1)
+      placePolice(0, 172, -3.6, 0);
+      placePolice(1, 174, 3.6, 0);
+      policeCars[0].car.position.y = 6;
+      policeCars[1].car.position.y = 6;
+      var rb = world.buildRoadblock();
+      rb.position.set(196, 6, 0); rb.rotation.y = Math.PI / 2;
+      scene.add(rb); roadblocks.push(rb);
       heli.scale.setScalar(1);
-      heli.position.set(27, 10, -2);
-      heli.rotation.set(0, 0.4, -0.05);
+      heli.position.set(186, 15, -9);
+      heli.rotation.set(0, -0.6, 0.05);
       heli.visible = true;
-      sim.state.mission = { id: 'M2', name: 'THREE GATES', stage: 2, stages: 3, timer: 142 };
-      clearPedsNear({ x: 35.8, z: 26.8 }, 8);
-      return { cam: new THREE.Vector3(35.8, 2.3, 26.8), look: new THREE.Vector3(29.5, 1.4, 12) };
+      sim.state.mission = { id: 'M2', name: 'THREE GATES', stage: 3, stages: 3, timer: 96 };
+      return { cam: new THREE.Vector3(155.5, 8.1, 7.9), look: new THREE.Vector3(181, 6.7, -1.2) };
     }
 
-    if (name === 'mission') {
-      core.setTimeOfDay('night');
-      sim.state.wanted = 5;
+    if (name === 'marketday') {
+      // v6.7 shot 2 — MARKET WALK: bright cloudy DAY in the Little Havana
+      // market. Mateo on foot in the aisle between the two stall rows,
+      // orange jacket and face to camera, vendors and shoppers pressing
+      // in around him, striped awnings and lit signs overhead.
+      core.setTimeOfDay('day');
+      sim.state.wanted = 2;
       sim.state.onFoot = true;
       heroCar.visible = false;
-      heroPos.set(-44.5, 0, 33.8); // dispatch distances measure from Mateo
+      heroPos.set(-46.8, 0, 44.5); // dispatch distances measure from Mateo
       heroSpeed = 0;
-      // Mateo in front of the stall row, clear of the counters, his orange
-      // jacket lit warm so he reads at night instead of a black silhouette.
-      // His front (+Z local: tee, zipper, stubble) faces the stalls, so
-      // rotation.y is 0 — PI would turn his back and his pistol to camera.
-      // v6.6: a step closer to camera, slightly angled, under a stronger
-      // warm light — in the first v6.6 pass he was lost in the dark.
-      mateoAim.position.set(-44.5, 0, 33.8);
-      mateoAim.rotation.y = 0.15;
-      mateoAim.visible = true;
-      if (mateoAim.userData.flash) mateoAim.userData.flash.visible = true;
-      addStageLight(-44.5, 3.2, 36, 0xffb36b, 2.6, 20);
-      addStageLight(-48, 4.5, 48, 0xffd98a, 1.4, 26);
-      addStageLight(-44, 2.0, 34.5, 0xffc98a, 1.2, 10);
-      // downed enemy (red) + downed officer, 1.35x, mid-frame IN FRONT
-      // of the stall row — behind the counters they are invisible
-      downedEnemy.position.set(-47, 0.1, 37);
-      downedEnemy.rotation.y = 0.7;
-      downedEnemy.visible = true;
-      downedOfficer.position.set(-43, 0.1, 37.5);
-      downedOfficer.rotation.y = -0.9;
-      downedOfficer.visible = true;
-      // three thick yellow tracers from Mateo's pistol into the stalls
-      addTracer(new THREE.Vector3(-44.4, 1.35, 34.6), new THREE.Vector3(-52, 1.2, 50));
-      addTracer(new THREE.Vector3(-44.4, 1.35, 34.6), new THREE.Vector3(-43, 1.4, 53));
-      addTracer(new THREE.Vector3(-44.4, 1.35, 34.6), new THREE.Vector3(-38, 1.1, 48));
-      // roadblock + police car at the plaza's north edge
-      var rb3 = world.buildRoadblock();
-      rb3.position.set(-60, 0, 30); rb3.rotation.y = Math.PI / 2;
-      scene.add(rb3); roadblocks.push(rb3);
-      placePolice(0, -33, 32, Math.PI);
-      // helicopter BIG, LOW and CENTRED over the market, its flank to the
-      // camera: rotor disc, POLICE lettering and searchlight cone all in
-      // frame, buzzing right over Mateo — never just a floating label
-      heli.scale.setScalar(1.45);
-      heli.position.set(-46.5, 4.6, 41.5);
+      // procedural Mateo here, not the GLB: his front (+Z: white tee,
+      // zipper, stubble) is documented. The camera sits NORTH of him
+      // (z 41 < 44.5), so rotation 2.62 turns that +Z front north
+      // toward the camera — 0.25 showed his back in pass 1.
+      mateo.position.set(-46.8, 0, 44.5);
+      mateo.rotation.y = 2.62;
+      mateo.visible = true;
+      addStageLight(-46, 3.5, 42, 0xffd98a, 1.0, 16);
+      // the mission beacon's tall pillar reads as a white slab in this
+      // daylight frame, so it stays hidden for the market walk
+      if (world.marketBeacon) world.marketBeacon.visible = false;
+      // extra shoppers crowding the aisle BEHIND Mateo (removed with
+      // the stage, like tracers) — none between camera and hero
+      var mRng = core.mulberry32(20261120);
+      var ringSpots = [[-49.5, 47], [-45, 47.5], [-50.5, 46], [-44.2, 47], [-47.5, 48.5], [-43.8, 46.5]];
+      for (var mi = 0; mi < ringSpots.length; mi++) {
+        var mp2 = world.buildPed(mRng, false);
+        mp2.position.set(ringSpots[mi][0], 0, ringSpots[mi][1]);
+        mp2.rotation.y = mRng() * Math.PI * 2;
+        scene.add(mp2);
+        stageExtras.push(mp2);
+      }
+      // two vendors behind the south-row counters, facing the aisle
+      var v1 = world.buildPed(mRng, false);
+      v1.position.set(-48, 0, 53.4); v1.rotation.y = Math.PI;
+      scene.add(v1); stageExtras.push(v1);
+      var v2 = world.buildPed(mRng, false);
+      v2.position.set(-40, 0, 53.4); v2.rotation.y = Math.PI;
+      scene.add(v2); stageExtras.push(v2);
+      // shove any random market shopper off the camera→Mateo sightline,
+      // so no giant head photobombs the hero (v6.7 pass 1: one did)
+      if (world.marketPeds) {
+        var camX = -44.8, camZ = 41.0, tgtX = -46.8, tgtZ = 44.5;
+        var dx = tgtX - camX, dz = tgtZ - camZ, segLen = Math.sqrt(dx * dx + dz * dz);
+        var nx = -dz / segLen, nz = dx / segLen; // perpendicular
+        for (var mpi = 0; mpi < world.marketPeds.length; mpi++) {
+          var mpd = world.marketPeds[mpi];
+          var rx = mpd.position.x - camX, rz = mpd.position.z - camZ;
+          var along = rx * dx / segLen + rz * dz / segLen;
+          var perp = rx * nx + rz * nz;
+          if (along > 0.5 && along < segLen + 1 && Math.abs(perp) < 2.0) {
+            var push = (perp >= 0 ? 1 : -1) * (2.0 - Math.abs(perp) + 1.6);
+            mpd.position.x += nx * push;
+            mpd.position.z += nz * push;
+          }
+        }
+      }
+      // helicopter low over the market's far end, in frame above the stalls
+      heli.scale.setScalar(0.9);
+      heli.position.set(-52, 12, 58);
       heli.rotation.set(0, 0.6, 0.05);
       heli.visible = true;
-      // searchlight cone + ground pool, stronger at night
-      if (heli.userData.cone) heli.userData.cone.material.opacity = 0.12;
-      if (heli.userData.pool) heli.userData.pool.material.opacity = 0.4;
-      gates[1].visible = true;
-      sim.state.mission = { id: 'M2', name: 'PIER RUN', stage: 2, stages: 3, timer: 96 };
-      return { cam: new THREE.Vector3(-41, 2.6, 28.5), look: new THREE.Vector3(-45, 1.5, 44) };
+      sim.state.mission = { id: 'M3', name: 'MARKET DAY', stage: 1, stages: 3, timer: 301 };
+      clearPedsNear({ x: -44.8, z: 41 }, 6);
+      return { cam: new THREE.Vector3(-44.8, 1.9, 41.0), look: new THREE.Vector3(-47.2, 1.35, 45.5) };
     }
 
-    // title
+    if (name === 'harbor') {
+      // v6.7 shot 3 — HARBOR CHASE: sunset on the Sunset Harbor quay.
+      // The Scarlet Arrow threads the container lane with two PD units
+      // flanking ahead, a roadblock ahead, the gantry crane overhead and
+      // the moored freighter behind, dock workers in hi-vis at the edges.
+      core.setTimeOfDay('sunset');
+      sim.state.wanted = 4;
+      heroPos.set(108, 0, 61); heroHeading = 0; heroSpeed = 12;
+      placeHeroCar();
+      placePolice(0, 113, 57.8, 0);
+      placePolice(1, 113.5, 64.2, 0);
+      var rb3 = world.buildRoadblock();
+      rb3.position.set(127, 0, 61); rb3.rotation.y = Math.PI / 2;
+      scene.add(rb3); roadblocks.push(rb3);
+      heli.scale.setScalar(1);
+      heli.position.set(128, 10, 46);
+      heli.rotation.set(0, 0.5, 0.04);
+      heli.visible = true;
+      sim.state.mission = { id: 'M2', name: 'THREE GATES', stage: 3, stages: 3, timer: 88 };
+      return { cam: new THREE.Vector3(99.5, 2.1, 61.5), look: new THREE.Vector3(121, 1.5, 60.5) };
+    }
+
+    // beachtitle — v6.7 pass 3: hero + Mateo close to the camera, LEFT
+    // of the title overlay (pass 2 parked them behind the START button);
+    // camera low on the south sand looking north, sea at the right edge,
+    // palms and the city edge at the left, beachgoers cleared from the
+    // foreground so no giant figure blocks the lower frame.
     core.setTimeOfDay('sunset');
     sim.state.wanted = 2;
-    heroPos.set(20, 0, 0); heroHeading = 0; heroSpeed = 8;
+    heroPos.set(118, 0, 20); heroHeading = -0.5; heroSpeed = 0;
     placeHeroCar();
-    placePolice(0, 12, -2.5, 0);
-    placePolice(1, 8, 2.8, 0);
-    heli.scale.setScalar(1);
+    // procedural Mateo: front (+Z) documented, face toward the camera,
+    // standing at the Arrow's nose so the two read as one hero cluster
+    // (pass 3 had them 23 m away and sunset-muted; now 11–14 m)
+    mateo.position.set(120, 0, 22);
+    mateo.rotation.y = 0.785;
+    mateo.visible = true;
+    // shove any beachgoer standing near the camera SOUTH, behind the
+    // camera — pass 3 pushed them sideways into the hero's spot
+    if (world.beachPeds) {
+      for (var bpi = 0; bpi < world.beachPeds.length; bpi++) {
+        var bpd = world.beachPeds[bpi];
+        var bdx = bpd.position.x - 128, bdz = bpd.position.z - 30;
+        if (bdx * bdx + bdz * bdz < 81) {
+          bpd.position.z += 10;
+        }
+      }
+    }
+    placePolice(0, 124, -8, 0);
+    heli.scale.setScalar(0.9);
     if (heli.userData.cone) heli.userData.cone.material.opacity = 0.05;
     if (heli.userData.pool) heli.userData.pool.material.opacity = 0.28;
-    heli.position.set(48, 26, -30);
+    heli.position.set(135, 18, -14);
     heli.rotation.set(0, -0.9, 0);
     heli.visible = true;
     sim.state.mission = { id: 'M2', name: 'PIER RUN', stage: 1, stages: 3, timer: 240 };
-    return { cam: new THREE.Vector3(115, 12, 58), look: new THREE.Vector3(25, 6, -8) };
+    return { cam: new THREE.Vector3(128, 2.4, 30), look: new THREE.Vector3(112, 2, -10) };
   };
 
   function placeHeroCar() {
@@ -419,7 +451,7 @@
     if (!sim.state.staged) {
       driveHero(dt, input);
     } else {
-      heroSpeed = sim.state.onFoot ? 0 : (sim.state.stageName === 'title' ? 8 : 12);
+      heroSpeed = sim.state.onFoot ? 0 : (sim.state.stageName === 'beachtitle' ? 0 : 12);
       sim.state.speed = heroSpeed;
       if (!sim.state.onFoot) spinWheels(heroCar, heroSpeed, dt);
     }

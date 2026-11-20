@@ -10,3 +10,5 @@ out/
 # v6.5 — detailed cars (doors/windows), low helicopter, 3/4 chase camera
 # v6.5 — the four screenshots in screenshots/ are committed with the repo
 # v6.6 — bright cloudy day, real 3D facades, living beach, restored Mateo GLB
+# v6.7 — four new staged scenes: bridge chase, market walk, harbor chase, beach title
+# v6.7 screenshots: ~/workspace/makefun/gta6-01-shots-v67.mjs (Playwright, headless Chromium)

@@ -1,11 +1,16 @@
 # PIER HEAT — Sunset Bay
 
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/aramexbit/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/aramexbit/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+
 [![version](https://img.shields.io/badge/version-6.5-orange)](https://github.com/aramexbit/gta6-01)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![three.js](https://img.shields.io/badge/three.js-r152-blue)](https://threejs.org/)
 
 An original open-world crime game in the spirit of GTA 6, built with Three.js
-from static files — no build step, no network at runtime.
+from static files — no build step, no network at runtime. Entered in the
+[make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01).
 
 ## About
 

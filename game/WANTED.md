@@ -1,32 +1,55 @@
-# WANTED — how the heat works in Sunset Bay
+# WANTED — the Bay City PD response system
 
-Sunset Bay PD does not see everything. It only knows what a witness saw.
+Sunset Bay's wanted system runs on **witnesses**, not on a timer alone.
+A crime only matters if someone sees it.
 
-## The witness rule
+## Stars
 
-A crime raises your wanted level **only** when someone can see it happen:
+| Stars | Response |
+| --- | --- |
+| 1 | A patrol car is dispatched; officers on foot take notice. |
+| 2 | Two patrol cars; the dispatch board starts naming tactics. |
+| 3 | The police helicopter **AIR-1** joins, circling with its searchlight. |
+| 4 | Patrol cars flank and attempt PIT manoeuvres; roadblocks appear. |
+| 5 | Full response: flanking, PIT, roadblocks and the helicopter together. |
 
-- a police officer within **30 metres**, or
-- a pedestrian who is still **walking** (not already fleeing) within **30 metres**.
+## How stars rise
 
-Crimes: shooting, hitting a pedestrian with a car, ramming a police car, stealing a traffic car. If nobody is close enough to witness it, nothing happens — no stars, no dispatch call.
+- **Carjacking** (pressing E to take a car) in front of a pedestrian or an
+  officer: +1 star.
+- **Shooting** near witnesses: +1 star per incident.
+- **Hitting a pedestrian or a patrol car** while driving: +1 star.
+- The dispatch board lists each responding unit with its distance and its
+  tactic: **PIT** (ram the rear quarter), **FLANK** (pull alongside),
+  **BLOCK** (hold a roadblock), **SPOT** (the helicopter).
 
-Getting into an ordinary car or a mission car is never a crime. The Scarlet Arrow is a mission car: taking it in Mission 1 is free.
+## How stars fall
 
-## Cooling down
+If **no police unit is within 40 metres for 22 seconds**, the level drops
+by one star. Hiding in the Little Havana market alleys, the beach car park
+or the pier works — as long as AIR-1's searchlight is not on you.
 
-If no police unit is within **40 metres** for **22 seconds**, your wanted level drops by one star. Keep moving, break line of sight, and the city forgets.
+## The helicopter
 
-## What each level brings
+AIR-1 appears at 3 stars and above. It circles the player at about 16 m,
+its main rotor spinning, POLICE lettering on both flanks, and a searchlight
+cone that paints a bright pool on the street below. Outrunning it on the
+ground is not enough; breaking line of sight under the market roofs or the
+pier is what shakes it.
 
-- **0 stars — Clean.** Patrol cars cruise the grid. Nobody is looking for you.
-- **1 star — Foot pursuit.** Officers on foot chase Mateo and try to grab him. Lose them or get in a car.
-- **2 stars — Car pursuit.** Police cars chase, ram, and call roadblocks. The pier run (Mission 2) starts here once you are 60 m clear of the pickup or 12 seconds have passed.
-- **3 stars — Air unit.** A helicopter circles overhead, locks on for a few seconds, then opens fire.
-- **4–5 stars — Full response.** More cars, faster pressure, the helicopter stays. Survive by breaking contact, not by standing your ground.
+## Mission heat
 
-## Tools
+Missions raise the heat by design: M2 "Three Gates" starts at 3 stars and
+climbs to 5 in the market firefight. Finishing a stage while wanted pays
+extra Respect.
 
-- **EMP (Q):** drops the heat by two stars. One charge at a time — use it when the tail is thick.
-- **SMOKE:** breaks pursuit in a tight spot. EMP and SMOKE are replenished when a mission is completed.
-- Distance is your friend: police are summoned 28–42 m away, never on top of you.
+## LOSING AIR-1
+
+The helicopter cannot be shot down. Lose it by breaking line of sight in
+the night market or the parking structure — once it loses the visual, the
+heat decays at the normal rate again.
+
+## DISPATCH BOARD ACCURACY
+
+The board only lists units that are actually on the road: unplaced units
+never appear, so the distances it shows are always real.

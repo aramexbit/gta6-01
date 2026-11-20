@@ -2,162 +2,144 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>PIER HEAT — Sunset Bay</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="PIER HEAT — Sunset Bay: an original open-world crime game. Drive the Scarlet Arrow, lose the Bay City PD, run the Three Gates.">
 <link rel="icon" href="data:,">
+<title>PIER HEAT — Sunset Bay</title>
 <style>
-  /* PIER HEAT v6.4 — Sunset Bay. Dense neon HUD over a Three.js open world. */
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
-    background: #06121f; font-family: Arial, Helvetica, sans-serif; }
-  #c { display: block; width: 100%; height: 100%; }
-  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,.8); z-index: 5; }
-  .panel { background: rgba(6, 18, 32, .72); border: 1px solid rgba(0, 229, 255, .45);
-    border-radius: 8px; padding: 8px 10px; }
-  #topleft { position: absolute; top: 12px; left: 12px; }
-  #wanted-stars { font-size: 26px; letter-spacing: 4px; color: #ffd400; }
-  #wanted-stars .off { color: rgba(255,255,255,.25); }
-  #money { font-size: 26px; font-weight: 900; color: #7dff5e; margin-top: 2px; }
-  #rank-line { font-size: 13px; font-weight: 700; color: #ffe14d; margin-top: 2px; }
-  #loc-area { font-size: 14px; font-weight: 700; color: #00e5ff; margin-top: 4px; }
-  #air-line { font-size: 12px; color: #ffb3c8; margin-top: 2px; }
-  #radio-line { font-size: 12px; color: #c9f7ff; margin-top: 2px; max-width: 300px; }
-  #mission-panel { position: absolute; top: 12px; right: 12px; width: 300px; }
-  #mission-name { font-size: 15px; font-weight: 900; color: #ff9de2; }
-  #mission-timer { font-size: 22px; font-weight: 900; color: #fff; }
-  #mission-stage { font-size: 13px; font-weight: 700; color: #00e5ff; }
-  #mission-next { font-size: 12px; color: #ffe14d; margin-top: 2px; }
-  #police-count { font-size: 12px; color: #ff8fa3; margin-top: 4px; font-weight: 700; }
-  #police-feed { position: absolute; top: 168px; right: 12px; width: 300px; }
-  #police-feed .feed-title { font-size: 12px; font-weight: 900; color: #ff8fa3;
-    letter-spacing: 1px; margin-bottom: 4px; }
-  .p-row { display: flex; justify-content: space-between; gap: 6px;
-    font-size: 13px; font-weight: 700; padding: 3px 0; border-top: 1px solid rgba(255,255,255,.14); }
-  .p-row .badge { background: #ff2e63; color: #fff; border-radius: 4px;
-    padding: 1px 6px; font-size: 11px; }
-  .p-row .badge.flank { background: #ff9f1c; }
-  .p-row .badge.block { background: #7b2fff; }
-  #minimap-wrap { position: absolute; left: 12px; bottom: 12px; }
-  #minimap { display: block; border: 1px solid rgba(0,229,255,.5); border-radius: 8px;
-    background: rgba(4, 12, 24, .8); }
-  #vitals { position: absolute; left: 204px; bottom: 12px; width: 220px; }
-  .vital { font-size: 11px; font-weight: 700; margin: 4px 0; }
-  .vital .bar { height: 8px; background: rgba(255,255,255,.18); border-radius: 4px;
-    margin-top: 2px; overflow: hidden; }
-  .vital .bar > div { height: 100%; border-radius: 4px; }
-  #health-fill { background: #37e05a; width: 100%; }
-  #armour-fill { background: #00bfff; width: 50%; }
-  #respect-fill { background: #ff2fb3; width: 40%; }
-  #speedo { font-size: 13px; font-weight: 900; color: #ffe14d; margin-top: 6px; }
-  #weapons { position: absolute; right: 12px; bottom: 12px; text-align: right; }
-  #weapon-slots { display: flex; gap: 6px; justify-content: flex-end; }
-  .w-slot { min-width: 74px; background: rgba(6,18,32,.78); border: 1px solid rgba(0,229,255,.45);
-    border-radius: 6px; padding: 6px 8px; font-size: 12px; font-weight: 900; text-align: center; }
-  .w-slot.active { border-color: #ffd400; box-shadow: 0 0 10px rgba(255,212,0,.7); }
-  .w-slot .lock { color: #ff8fa3; font-size: 10px; display: block; }
-  #car-card { margin-top: 6px; }
-  #car-name { font-size: 15px; font-weight: 900; color: #ff9d00; }
-  #car-cond { font-size: 12px; color: #c9f7ff; }
-  #dialogue { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
-    width: 520px; display: none; align-items: center; gap: 10px; }
-  #dialogue-portrait { width: 64px; height: 64px; border-radius: 8px;
-    border: 2px solid #ff2fb3; background: #1a0b2e; flex: none; }
-  #dialogue-name { font-size: 13px; font-weight: 900; color: #ff9de2; }
-  #dialogue-text { font-size: 14px; line-height: 1.35; }
-  #crosshair { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px;
-    margin: -5px 0 0 -5px; border: 2px solid rgba(255,255,255,.9); border-radius: 50%;
-    display: none; }
-  #toast { position: absolute; left: 50%; top: 84px; transform: translateX(-50%);
-    background: rgba(6,18,32,.85); border: 1px solid #ffd400; color: #ffe14d;
-    font-weight: 900; font-size: 15px; padding: 8px 16px; border-radius: 8px; display: none; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #14101f;
+    font-family: Arial, Helvetica, sans-serif; color: #ffe9b0; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  .panel { background: rgba(16, 10, 28, 0.78); border: 1px solid rgba(255, 233, 176, 0.35);
+    border-radius: 8px; padding: 8px 12px; }
+  #top-left { position: absolute; top: 12px; left: 12px; }
+  #wanted-stars { font-size: 26px; letter-spacing: 3px; color: #ffd23e;
+    text-shadow: 0 0 12px rgba(255, 210, 62, 0.8); }
+  #money { font-size: 22px; font-weight: 900; color: #7CFC00; margin-top: 2px; }
+  #speed { font-size: 13px; color: #9fd8ff; margin-top: 2px; }
+  #mission { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    text-align: center; min-width: 320px; }
+  #mission-name { font-size: 17px; font-weight: 900; letter-spacing: 1px; color: #ffd23e; }
+  #mission-stage { font-size: 13px; color: #ff9a3c; margin-top: 2px; }
+  #mission-timer { font-size: 22px; font-weight: 900; color: #ffffff; margin-top: 2px; }
+  #dispatch { position: absolute; top: 12px; right: 12px; width: 230px; font-size: 12px; }
+  .dhead { font-weight: 900; color: #ff5a5a; letter-spacing: 1px; margin-bottom: 4px; }
+  .drow { display: flex; justify-content: space-between; padding: 2px 0;
+    border-top: 1px solid rgba(255, 233, 176, 0.15); }
+  .drow b { color: #00e5ff; }
+  #bars { position: absolute; left: 12px; bottom: 12px; width: 260px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 11px; font-weight: 900; }
+  .bar-row span { width: 62px; }
+  .bar-track { flex: 1; height: 12px; background: rgba(255, 255, 255, 0.15); border-radius: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; }
+  #health-bar { background: #2eff7a; width: 100%; }
+  #armour-bar { background: #4a8de8; width: 60%; }
+  #respect-bar { background: #ff2e88; width: 100%; }
+  #minimap-wrap { position: absolute; right: 12px; bottom: 12px; text-align: right; }
+  #minimap { border: 2px solid rgba(255, 233, 176, 0.5); border-radius: 8px;
+    background: #14101f; display: block; }
+  #weapon { position: absolute; right: 12px; bottom: 208px; text-align: right; }
+  #weapon-name { font-size: 16px; font-weight: 900; color: #ffe9b0; }
+  #weapon-ammo { font-size: 13px; color: #9fd8ff; }
+  #wheel-hint { font-size: 11px; color: rgba(255, 233, 176, 0.6); margin-top: 2px; }
+  #kira { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    display: flex; gap: 10px; align-items: center; max-width: 560px; }
+  #kira-portrait { width: 96px; height: 96px; border-radius: 8px;
+    border: 2px solid #00e5ff; flex: none; }
+  #kira-text { font-size: 14px; line-height: 1.35; color: #ffffff; }
+  #kira-name { font-size: 11px; font-weight: 900; color: #00e5ff; letter-spacing: 1px; }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+    transform: translate(-50%, -50%); display: none; }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #ffd23e; }
+  #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #crosshair::after { left: 0; top: 10px; width: 22px; height: 2px; }
+  #toast { position: absolute; top: 120px; left: 50%; transform: translateX(-50%);
+    font-size: 15px; font-weight: 900; color: #ffd23e; text-shadow: 0 2px 6px #000; }
+  /* ---- title screen ---- */
   #title-screen { position: fixed; inset: 0; z-index: 10; display: flex;
     flex-direction: column; align-items: center; justify-content: center;
-    background: linear-gradient(180deg, rgba(4,10,24,.25) 0%, rgba(4,10,24,.62) 78%);
-    color: #fff; text-align: center; }
-  #title-screen h1 { font-size: 84px; margin: 0; letter-spacing: 6px; font-weight: 900;
-    color: #ff2fb3; text-shadow: 0 0 18px #ff2fb3, 0 0 42px #ff2fb3, 0 4px 0 #7b0057; }
-  #title-screen h2 { font-size: 30px; margin: 2px 0 18px; letter-spacing: 12px;
-    color: #00e5ff; text-shadow: 0 0 14px #00e5ff; font-weight: 900; }
-  #title-screen .tag { font-size: 15px; color: #ffe14d; font-weight: 700; margin-bottom: 16px; }
-  #save-slots { display: flex; gap: 10px; margin-bottom: 18px; }
-  .slot { width: 250px; background: rgba(6,18,32,.85); border: 1px solid rgba(0,229,255,.5);
-    border-radius: 8px; padding: 10px; font-size: 13px; text-align: left; }
-  .slot b { color: #ffe14d; }
-  .slot .empty { color: rgba(255,255,255,.55); }
-  #start-btn { pointer-events: auto; cursor: pointer; font-size: 24px; font-weight: 900;
-    letter-spacing: 2px; color: #06121f; background: linear-gradient(180deg, #ffe14d, #ff9d00);
-    border: none; border-radius: 10px; padding: 14px 44px;
-    box-shadow: 0 0 24px rgba(255, 157, 0, .8); }
-  #start-btn:hover { filter: brightness(1.12); }
-  #controls { margin-top: 18px; font-size: 13px; color: #c9f7ff; line-height: 1.7; }
-  #controls b { color: #fff; }
-  #version { margin-top: 10px; font-size: 12px; letter-spacing: 2px; color: #ff9de2; font-weight: 700; }
+    background: linear-gradient(180deg, rgba(20, 8, 40, 0.25) 0%, rgba(20, 8, 40, 0.55) 70%, rgba(20, 8, 40, 0.8) 100%);
+    pointer-events: auto; text-align: center; }
+  #title-screen h1 { font-size: 84px; font-weight: 900; letter-spacing: 4px; line-height: 0.95;
+    color: #ffb347; text-shadow: 0 0 24px rgba(255, 122, 26, 0.9), 0 4px 0 #7a1a3a, 0 8px 18px #000; }
+  #title-screen h2 { font-size: 30px; font-weight: 900; letter-spacing: 10px; color: #00e5ff;
+    text-shadow: 0 0 18px rgba(0, 229, 255, 0.8), 0 3px 8px #000; margin-top: 6px; }
+  #title-sub { margin-top: 10px; font-size: 15px; color: #ffe9b0; text-shadow: 0 2px 6px #000; }
+  #btn-start { margin-top: 26px; pointer-events: auto; cursor: pointer;
+    font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #14101f;
+    background: linear-gradient(180deg, #ffd23e, #ff7a1a); border: none; border-radius: 10px;
+    padding: 14px 44px; box-shadow: 0 0 24px rgba(255, 122, 26, 0.7); }
+  #btn-start:hover { filter: brightness(1.1); }
+  #save-slot { margin-top: 20px; font-size: 14px; background: rgba(16, 10, 28, 0.85);
+    border: 1px solid rgba(255, 233, 176, 0.4); border-radius: 8px; padding: 10px 18px; line-height: 1.5; }
+  #save-slot b { color: #7CFC00; }
+  #controls { margin-top: 16px; font-size: 12px; color: rgba(255, 233, 176, 0.85);
+    line-height: 1.7; text-shadow: 0 2px 4px #000; }
+  #controls b { color: #ffffff; }
+  #title-foot { position: absolute; bottom: 12px; font-size: 11px; color: rgba(255, 233, 176, 0.6); }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+<canvas id="game" width="1280" height="720"></canvas>
+
 <div id="hud">
-  <div id="topleft" class="panel">
-    <div id="wanted-stars">☆☆☆☆☆</div>
-    <div id="money">$12,800</div>
-    <div id="rank-line">RANK: DOCK HAND · RESPECT 100</div>
-    <div id="loc-area">Ocean Drive</div>
-    <div id="air-line">AIR: CLEAR</div>
-    <div id="radio-line">RADIO SUNSET 98.4 — good evening, Bay City.</div>
+  <div id="top-left" class="panel">
+    <div id="wanted-stars">★★★☆☆</div>
+    <div id="money">$15,300</div>
+    <div id="speed">0 km/h</div>
   </div>
-  <div id="mission-panel" class="panel">
-    <div id="mission-name">M1 · PIER RUN</div>
-    <div id="mission-timer">⏱ 05:00</div>
-    <div id="mission-stage">STAGE 1/1</div>
-    <div id="mission-next">NEXT: TAKE THE SCARLET ARROW</div>
-    <div id="police-count">POLICE: 0 UNITS</div>
+  <div id="mission" class="panel">
+    <div id="mission-name">M2 — THREE GATES</div>
+    <div id="mission-stage">STAGE 1/3</div>
+    <div id="mission-timer">3:07</div>
   </div>
-  <div id="police-feed" class="panel">
-    <div class="feed-title">◆ SBPD DISPATCH</div>
-    <div id="police-rows"></div>
+  <div id="dispatch" class="panel">
+    <div class="dhead">BAY CITY PD — DISPATCH</div>
+    <div id="dispatch-board"></div>
   </div>
-  <div id="minimap-wrap"><canvas id="minimap" width="180" height="180"></canvas></div>
-  <div id="vitals" class="panel">
-    <div class="vital">HEALTH <span id="health-num">100</span><div class="bar"><div id="health-fill"></div></div></div>
-    <div class="vital">ARMOUR <span id="armour-num">50</span><div class="bar"><div id="armour-fill"></div></div></div>
-    <div class="vital">RESPECT <span id="respect-num">100</span><div class="bar"><div id="respect-fill"></div></div></div>
-    <div id="speedo">0 km/h · ON FOOT</div>
+  <div id="bars" class="panel">
+    <div class="bar-row"><span>HEALTH</span><div class="bar-track"><div id="health-bar" class="bar-fill"></div></div></div>
+    <div class="bar-row"><span>ARMOUR</span><div class="bar-track"><div id="armour-bar" class="bar-fill"></div></div></div>
+    <div class="bar-row"><span>RESPECT</span><div class="bar-track"><div id="respect-bar" class="bar-fill"></div></div></div>
   </div>
-  <div id="weapons">
-    <div id="weapon-slots">
-      <div class="w-slot active">👊<br>FISTS</div>
-      <div class="w-slot">🔫<br>PISTOL 48</div>
-      <div class="w-slot">SMG<span class="lock">LOCKED</span></div>
-      <div class="w-slot">RIFLE<span class="lock">LOCKED</span></div>
+  <div id="minimap-wrap">
+    <canvas id="minimap" width="180" height="180"></canvas>
+  </div>
+  <div id="weapon" class="panel">
+    <div id="weapon-name">Pistol</div>
+    <div id="weapon-ammo">24</div>
+    <div id="wheel-hint">1 Fists · 2 Pistol · 3 SMG · 4 Rifle</div>
+  </div>
+  <div id="kira" class="panel">
+    <canvas id="kira-portrait" width="96" height="96"></canvas>
+    <div>
+      <div id="kira-name">KIRA — NIGHTWAVE 98.3</div>
+      <div id="kira-text">Kira: "Mateo, you're live. Sunset Bay is yours."</div>
     </div>
-    <div id="car-card" class="panel">
-      <div id="car-name">ON FOOT</div>
-      <div id="car-cond">CONDITION — · FUEL —</div>
-    </div>
-  </div>
-  <div id="dialogue" class="panel">
-    <canvas id="dialogue-portrait" width="128" height="128"></canvas>
-    <div><div id="dialogue-name">KIRA</div><div id="dialogue-text"></div></div>
   </div>
   <div id="crosshair"></div>
   <div id="toast"></div>
 </div>
+
 <div id="title-screen">
   <h1>PIER HEAT</h1>
   <h2>SUNSET BAY</h2>
-  <div class="tag">An original open-world crime story — steal it, drive it, outrun the Bay.</div>
-  <div id="save-slots">
-    <div class="slot" id="slot-1"><b>SLOT 1</b><br><span class="empty">EMPTY — NEW GAME</span></div>
-    <div class="slot" id="slot-2"><b>SLOT 2</b><br><span class="empty">EMPTY</span></div>
-    <div class="slot" id="slot-3"><b>SLOT 3</b><br><span class="empty">EMPTY</span></div>
+  <div id="title-sub">A getaway driver. A city that never cools down. One long sunset.</div>
+  <button id="btn-start">▶ &nbsp;START ENGINE</button>
+  <div id="save-slot">
+    <b>SLOT 1 — CONTINUE</b><br>
+    M2 PIER RUN &nbsp;·&nbsp; $15,300 &nbsp;·&nbsp; Respect 140<br>
+    M1 complete — "First Light" · 3 stars wanted
   </div>
-  <button id="start-btn">▶ START ENGINE</button>
   <div id="controls">
-    <b>W A S D</b> drive / walk &nbsp;·&nbsp; <b>SHIFT</b> run &nbsp;·&nbsp; <b>E</b> enter / exit car<br>
-    <b>F</b> or <b>CLICK</b> shoot &nbsp;·&nbsp; <b>SPACE</b> handbrake &nbsp;·&nbsp; <b>MOUSE</b> look around
+    <b>WASD</b> drive / walk &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp; <b>E</b> enter / exit car<br>
+    <b>Click</b> shoot &nbsp;·&nbsp; <b>F</b> fire &nbsp;·&nbsp; <b>1–4</b> weapons &nbsp;·&nbsp; <b>Space</b> handbrake
   </div>
-  <div id="version">v6.4 — NEON ROWS · DENSE CROWDS · TRUE NIGHT MARKET · HERO CAM</div>
+  <div id="title-foot">PIER HEAT — an original game. Sunset Bay, Mateo Vega and Kira are original characters. No Rockstar assets.</div>
 </div>
+
 <script src="vendor/three.min.js"></script>
 <script src="core.js"></script>
 <script src="world.js"></script>

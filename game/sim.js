@@ -285,7 +285,7 @@
     scene.add(sim.mateo);
 
     // The Scarlet Arrow — the player's car, parked on Ocean Drive.
-    var arrow = W.makeCar(0xe85a17, { sport: true, length: 4.6, twoTone: false });
+    var arrow = W.makeCar(0xcf2a12, { sport: true, length: 4.6, twoTone: false });
     arrow.position.set(128, 0, 40);
     arrow.rotation.y = Math.PI / 2;
     scene.add(arrow);
@@ -524,13 +524,19 @@
     }
     if (st.inCar && sim.playerCarData) {
       var car = sim.playerCarData;
-      var back = 11, up = 5;
-      var tx = car.x - Math.sin(car.heading) * back;
-      var tz = car.z - Math.cos(car.heading) * back;
+      // Three-quarter rear chase: the lens sits behind the car AND off to
+      // its right flank, a touch higher, so the wedge silhouette reads as
+      // a sports car instead of a flat rear end. Right of the heading is
+      // (-cos h, sin h) in x/z.
+      var back = 10, up = 5.6, side = 5.2;
+      var fx = Math.sin(car.heading), fz = Math.cos(car.heading);
+      var rx = -Math.cos(car.heading), rz = Math.sin(car.heading);
+      var tx = car.x - fx * back + rx * side;
+      var tz = car.z - fz * back + rz * side;
       camera.position.x = PH.lerp(camera.position.x, tx, 1 - Math.pow(0.001, dt));
       camera.position.y = PH.lerp(camera.position.y, up, 1 - Math.pow(0.001, dt));
       camera.position.z = PH.lerp(camera.position.z, tz, 1 - Math.pow(0.001, dt));
-      camera.lookAt(car.x + Math.sin(car.heading) * 6, 2.2, car.z + Math.cos(car.heading) * 6);
+      camera.lookAt(car.x + fx * 7, 2.0, car.z + fz * 7);
     } else {
       var yaw = st.aiming ? p.heading : p.camYaw;
       // shotCamDist / shotCamSide are debug-only overrides (set by shot

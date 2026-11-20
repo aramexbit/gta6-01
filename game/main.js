@@ -16,7 +16,7 @@
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.35;
+  renderer.toneMappingExposure = 1.5;
 
   var scene = new THREE.Scene();
   var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2000);
@@ -615,11 +615,12 @@
       sim.spawnTrafficCar(148, 44, Math.PI / 2, 0x2e7fd8);
       sim.spawnTrafficCar(132, 36, Math.PI / 2, 0x37b268);
       sim.spawnTrafficCar(168, 40, Math.PI / 2, 0xe8e8e8);
-      // Peds on the Ocean Drive sidewalks, close to the camera — on the
-      // north sidewalk (z = 47) and east of the deco block (x >= 122) so
-      // none stands inside a building footprint.
-      sim.spawnPed(112, 47); sim.spawnPed(120, 47); sim.spawnPed(130, 47);
-      sim.spawnPed(126, 33); sim.spawnPed(138, 33); sim.spawnPed(146, 47);
+      // Peds on the Ocean Drive sidewalks, ahead of the camera at the
+      // shutter — the north-sidewalk peds sit east of x = 148 so the chase
+      // camera (which now runs 5 m south of them) does not drive right
+      // past one and fill the frame edge with the back of its head.
+      sim.spawnPed(112, 47); sim.spawnPed(150, 47); sim.spawnPed(158, 47);
+      sim.spawnPed(126, 33); sim.spawnPed(140, 33); sim.spawnPed(166, 47);
       PH.sayKira('Heat is on, Mateo — two stars. Get to the pier and do not stop.', 8);
       sim.keys['w'] = true; // rolling: speed holds for the shot
       return { money: PH.state.money, wanted: PH.state.wanted, police: sim.police.length };
@@ -670,91 +671,96 @@
       return { money: PH.state.money, wanted: PH.state.wanted, police: sim.police.length };
     },
     stageMission: function () {
-      // Mission 3 cross-town drop, staged on Ocean Drive with the panel
-      // text FIXED to match the beacon: the mission's own objective says
-      // "Little Havana", but this shot's beacon stands on Ocean Drive, so
-      // the panel is overridden to "Ocean Drive beacon" (see shotObjective
-      // below) instead of moving the beacon to a district the camera
-      // cannot see. Mateo stands on the north sidewalk of the z = 40 road
-      // at (126, 44), aiming EAST into the low sun — no building stands
-      // ahead of him on this sightline (the deco blocks end at x = 117,
-      // the boardwalk and sand open up past x = 150), so the frame is
-      // road, police, beacon and sea instead of flat orange slabs. The
-      // camera is PINNED south-west of him at (118, 2.6, 58), looking
-      // north-east: a front three-quarter aim shot, so his face, his
-      // aiming arms and the bright pistol read in profile instead of
-      // vanishing behind his back (the v6.0 shot hid the pistol — the
-      // camera sat dead behind him). Two pursuit cars close in from
-      // ~19 m, the roadblock auto-spawns at (140, 40) — the spawn clamps
-      // x to 140, so it sits 14 m ahead, parked across the road — the heli
-      // holds station above the beacon, and the beacon column stands on
-      // the Ocean Drive sidewalk at (146, 44) with the sea behind it.
-      // Headless dt is clamped at 0.1 s and the frame rate varies run to
-      // run, so the cops close anywhere from ~1 m (slow run) to ~9 m
-      // (fast run) before the shutter: spawned at ~19 m they end up
-      // 10–19 m out, tight but never on top of him.
+      // Mission 3 cross-town drop, staged as a night-market firefight on
+      // the x = 0 street in Little Havana: six lit stalls with striped
+      // canopies line both sidewalks, bulb strings sag across the street,
+      // a crowd browses between them, and Mateo cuts through the middle
+      // aiming south toward the beacon at the far end while SBPD pushes in
+      // from ahead. The market IS Little Havana, so the mission's own
+      // objective text stands as-is. Mateo at (0, 76) aiming south; the
+      // camera is pinned north-west of him, low, looking south-east down
+      // the market: Mateo at the left third in three-quarter aim, stalls
+      // and crowd receding behind him, police, tracers and the beacon all
+      // in the same frame. The heli holds station above the market.
       PH.startMission(2);
+      if (W.buildNightMarket) W.buildNightMarket(sim.scene, 0, 92);
       PH.state.money = 19500; // start + M1 + M2 rewards
       PH.state.respect = 180;
       PH.state.missionTimer = 94; // 01:34 on the job clock
-      sim.player.x = 126; sim.player.z = 44; sim.player.heading = Math.PI / 2 - 0.15;
-      sim.player.camYaw = Math.PI / 2; // looking east: road, palms, sand, sea
-      sim.player.camPitch = 0.25; // lift the view: the heli must read in frame
-      // Fixed camera: south-west of Mateo, closer in than v6.0 (9 m, not
-      // 16 m) and LOW (1.4 m), looking slightly UP at the street — Mateo
-      // at the left third in three-quarter aim, big enough that the bright
-      // pistol reads in profile; police, roadblock, beacon and heli all
-      // beyond him in the same frame; the low angle drops the heli clear
-      // of the money panel (it used to sit on top of it) and the sea and
-      // low sun fill the right.
-      sim.shotCam = { pos: [122, 1.4, 52], look: [136, 4.5, 40] };
-      // The beacon is on Ocean Drive in this shot, not Little Havana:
-      // override the panel objective so text and beacon agree.
-      sim.shotObjective = 'Deliver the package to the Ocean Drive beacon';
-      sim.mateo.position.set(126, 0, 44); sim.mateo.rotation.y = Math.PI / 2 - 0.15;
+      sim.player.x = 0; sim.player.z = 76; sim.player.heading = 0.35;
+      sim.player.camYaw = 0.35; // looking south-east down the market street
+      sim.player.camPitch = 0.18; // lift the view: the heli must read in frame
+      // Pinned camera: north-west of Mateo, HIGH (4.2 m) so the lens looks
+      // down over the stalls and the crowd: Mateo left-third in
+      // three-quarter aim with his pistol arm reading against the street,
+      // the tracers and the fallen enemy visible on the road ahead, police
+      // and beacon beyond.
+      sim.shotCam = { pos: [-7, 4.2, 67], look: [1.5, 1.0, 90] };
+      sim.shotObjective = 'Deliver the package through the night market';
+      sim.mateo.position.set(0, 0, 76); sim.mateo.rotation.y = 0.35;
       PH.state.aiming = true;
       PH.debug.clearPoliceFar();
       PH.setWanted(3);
-      // Two pursuit cars on the road ahead, facing Mateo (headlights and
-      // light bars toward the camera). Spawned at ~19 m: they close 1–9 m
-      // before the shutter depending on the headless frame rate, so they
-      // end up 10–19 m out — tight, but not on top of him. p2 sits on the
-      // north sidewalk so it does not hide the beacon column.
-      var p1 = sim.spawnPoliceCar(144, 37); p1.heading = -Math.PI / 2;
-      var p2 = sim.spawnPoliceCar(142, 47); p2.heading = -Math.PI / 2;
-      // The drop beacon on the Ocean Drive sidewalk at the beach end: the
-      // yellow column stands against the sea, 6 m past the roadblock so
-      // the parked car does not hide its base.
-      sim.setBeacon(146, 44);
+      // Two pursuit cars on the market street ahead, facing Mateo
+      // (headlights and light bars toward the camera). Spawned 24–32 m out:
+      // they close 1–9 m before the shutter depending on the headless frame
+      // rate, so they end up 15–31 m out — tight, but not on top of him.
+      // A third car sits sideways across the street past the beacon as a
+      // roadblock, and two foot officers push in between the stalls.
+      var p1 = sim.spawnPoliceCar(0, 100); p1.heading = Math.PI;
+      var p2 = sim.spawnPoliceCar(0, 108); p2.heading = Math.PI;
+      var rb = sim.spawnPoliceCar(0, 122); rb.heading = Math.PI / 2; rb.g.rotation.y = Math.PI / 2; rb.roadblock = true; rb.tactic = 'ROADBLOCK';
+      sim.spawnPoliceFoot(-5.5, 92); sim.spawnPoliceFoot(5.5, 100);
+      // The drop beacon at the far end of the market, on the street.
+      sim.setBeacon(0, 112);
       // No palm trunk down the middle of this frame: shift every palm in
-      // the camera wedge (x 115–170, z 30–62) north onto the sand strip.
-      sim.clearPalmCorridor(115, 170, 30, 62, 24);
-      // Peds on the sidewalks flanking the road — none closer than 12 m
-      // to the camera (the first pass parked one 6 m from the lens and it
-      // filled the frame edge), none of them on the road or on Mateo, and
-      // none of them in his line of fire: the fourth pass parked a ped
-      // 6 m ahead of him and it stood exactly where his aiming arm and
-      // pistol point, hiding both.
-      sim.spawnPed(136, 46); sim.spawnPed(150, 46); sim.spawnPed(156, 46);
-      sim.spawnPed(132, 34); sim.spawnPed(140, 34); sim.spawnPed(150, 34);
+      // the market street (x -14..14, z 60..122) just north of the market,
+      // behind the camera.
+      sim.clearPalmCorridor(-14, 14, 60, 122, 54);
+      // Market crowd browsing between the stalls — none in Mateo's line of
+      // fire down the street centre (x near 0, z 76..95), none closer than
+      // 10 m to the camera.
+      sim.spawnPed(-4, 84); sim.spawnPed(4.5, 88); sim.spawnPed(-3, 96); sim.spawnPed(4, 104);
+      sim.spawnPed(-4.5, 110); sim.spawnPed(3, 114); sim.spawnPed(-2, 80); sim.spawnPed(5, 98);
+      sim.spawnPed(-5, 106); sim.spawnPed(2.5, 82); sim.spawnPed(-3.5, 112); sim.spawnPed(4.8, 90);
+      sim.spawnPed(-4.8, 100); sim.spawnPed(4.2, 86); sim.spawnPed(-2.2, 108); sim.spawnPed(3.8, 118);
+      sim.spawnPed(-5, 90); sim.spawnPed(5, 112);
+      // The firefight read: one enemy already down in the street ahead of
+      // Mateo, one officer down beside a stall, a tracer from Mateo's
+      // pistol to the fallen enemy, a return tracer toward Mateo, and a
+      // muzzle flash at his gun. Dead peds/cops are skipped by the
+      // per-frame updates, so they stay lying where they are staged.
+      var down = sim.spawnPed(4.5, 89); down.dead = true; down.g.rotation.x = -Math.PI / 2; down.g.position.y = 0.25;
+      var downCop = sim.spawnPoliceFoot(-2.8, 94); downCop.dead = true; downCop.g.rotation.x = -Math.PI / 2; downCop.g.position.y = 0.25;
+      if (W.addTracer) {
+        // Bright orange tracers: Mateo's fire to the fallen enemy (two
+        // parallel bars so the line reads at a glance), plus return fire
+        // from the foot officer by the east stalls back toward Mateo.
+        W.addTracer(sim.scene, 0.5, 1.35, 77, 4.5, 0.7, 89);
+        W.addTracer(sim.scene, 0.55, 1.5, 77, 4.5, 0.85, 89);
+        W.addTracer(sim.scene, 5.5, 1.2, 100, 0.3, 1.3, 77.5);
+      }
+      if (W.muzzleFlash) W.muzzleFlash(sim.scene, 1.1, 1.4, 77.5);
       // Ambient traffic wanders the grid: clear any car that drifted into
       // the hero area (within 26 m of Mateo) to the far west end of this
       // road, so no random car parks on Mateo or the Arrow.
       sim.traffic.forEach(function (car) {
-        if (PH.dist2d(car.x, car.z, 126, 44) < 26) {
-          car.x = PH.rand(45, 75); car.z = 40; car.heading = Math.PI / 2;
+        if (PH.dist2d(car.x, car.z, 0, 92) < 26) {
+          car.x = PH.rand(-120, -90); car.z = 40; car.heading = Math.PI / 2;
           car.g.position.set(car.x, 0, car.z); car.g.rotation.y = car.heading;
         }
       });
-      PH.sayKira('Package in the trunk. The drop beacon is on Ocean Drive — but SBPD is already on you. Get to it, and no shooting unless you have to.', 8);
+      PH.sayKira('Package in the trunk. Cut through the night market — the beacon is at the far end, and SBPD is already pushing in. No shooting unless you have to.', 8);
       return { wanted: PH.state.wanted, police: sim.police.length };
     },
     stageTitle: function () {
       // Title screen: the city behind the overlay is busy — traffic on the
       // grid street in front of the camera, a patrol car, peds on the walk.
-      // Camera sits high north-west, looking south-east across the grid
-      // toward Ocean Drive, the beach and the low sun.
-      PH.debug.setCamera(0, 30, -70, 110, 2, 30);
+      // Camera sits south-east of downtown, high, looking north-west
+      // across the grid toward the signed towers: the downtown marquees
+      // face south, so their names read from this side, with the low sun
+      // at the right and the whole skyline in frame instead of one wall.
+      PH.debug.setCamera(55, 30, 95, -30, 10, -90);
       sim.spawnTrafficCar(8, 40, 0, 0xd83a2e);
       sim.spawnTrafficCar(32, 40, 0, 0x2e7fd8);
       sim.spawnTrafficCar(-8, 40, Math.PI, 0xf2c230);
@@ -792,7 +798,7 @@
     var S = PH.sim;
     if (!S || !S.scene) return;
     try {
-      // 1) hide the lamp post near (127.5, 40) that crosses the frame.
+      // 1) hide the lamp post near (0, 76) that crosses the frame.
       var prot = new Set();
       var protect = function (o) { if (o && o.traverse) o.traverse(function (c) { prot.add(c); }); };
       protect(S.playerCar); protect(S.mateo);
@@ -806,7 +812,7 @@
           var prm = o.geometry.parameters;
           if (prm && prm.height > 4 && prm.radiusTop < 0.2) {
             var wp = new THREE.Vector3(); o.getWorldPosition(wp);
-            if (Math.hypot(wp.x - 127.5, wp.z - 40) < 4) poles.push(wp);
+            if (Math.hypot(wp.x - 0, wp.z - 76) < 5) poles.push(wp);
           }
         }
       });
@@ -819,26 +825,22 @@
       });
     } catch (e) { /* lamp hide is cosmetic */ }
     try {
-      // 2) park the Scarlet Arrow in frame (front-right 3/4 to the camera)
-      // and stand Mateo beside it, not in front of it.
-      if (S.arrowCar) { S.arrowCar.x = 134; S.arrowCar.z = 41.5; }
-      setIf(S.playerCarData, 'x', 134); setIf(S.playerCarData, 'z', 41.5);
-      setIf(S.playerCarData, 'heading', 0.35);
+      // 2) park the Scarlet Arrow in frame at the market's south end — the
+      // getaway car waiting past the stalls — and leave Mateo where the
+      // market staging put him, aiming down the street.
+      if (S.arrowCar) { S.arrowCar.x = 5.8; S.arrowCar.z = 106; }
+      setIf(S.playerCarData, 'x', 5.8); setIf(S.playerCarData, 'z', 106);
+      setIf(S.playerCarData, 'heading', 0.15);
       if (S.playerCar) {
-        S.playerCar.position.set(134, 0, 41.5);
-        S.playerCar.rotation.y = 0.35;
-      }
-      if (S.player) { S.player.x = 128.5; S.player.z = 38.5; S.player.heading = -0.45; }
-      if (S.mateo) {
-        S.mateo.position.set(128.5, 0, 38.5);
-        S.mateo.rotation.y = -0.45;
+        S.playerCar.position.set(5.8, 0, 106);
+        S.playerCar.rotation.y = 0.15;
       }
     } catch (e) { /* staging moves are cosmetic */ }
     try {
       // 3) keep the sightline clear: peds wander in front of the camera at
       // random, and ramming police converge on the Arrow. Move them aside.
-      var cam = (S.shotCam && S.shotCam.pos) ? S.shotCam.pos : [122, 1.4, 52];
-      var ax = 134, az = 41.5;
+      var cam = (S.shotCam && S.shotCam.pos) ? S.shotCam.pos : [-7, 4.2, 67];
+      var ax = 5.8, az = 106;
       var moveRec = function (rec, nx, nz) {
         if (!rec || typeof rec.x !== 'number') return;
         rec.x = nx; rec.z = nz;
@@ -853,7 +855,7 @@
       (S.police || []).forEach(function (p) {
         if (typeof p.x !== 'number') return;
         var dx = p.x - ax, dz = p.z - az, d = Math.hypot(dx, dz);
-        if (d < 9 && d > 0.01) moveRec(p, ax + dx / d * 14, az + dz / d * 14);
+        if (d < 6 && d > 0.01) moveRec(p, ax + dx / d * 14, az + dz / d * 14);
       });
       (S.traffic || []).forEach(function (t) {
         if (typeof t.x !== 'number') return;

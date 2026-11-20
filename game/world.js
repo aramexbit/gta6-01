@@ -11,7 +11,7 @@
 
   // ------------------------------------------------------------ palette
   W.PALETTE = {
-    skyTop: 0x2b1e63, skyMid: 0xb83a6e, skyLow: 0xff9a4d,
+    skyTop: 0x6fa8dc, skyMid: 0xffab7a, skyLow: 0xffc46b,
     sunCore: 0xffd27a, sunGlow: 0xff7a3c,
     asphalt: 0x2e2e38, sidewalk: 0x9a8f80, sand: 0xe8c98f, sea: 0x1d6f8e,
     deco: [0xffb3c1, 0x7fd4c1, 0xffe08a, 0xb5a7f5, 0xff9d7a, 0x8fd0ff],
@@ -131,7 +131,8 @@
 
   // ------------------------------------------------------------ sky, sun, sea
   W.buildSky = function (scene) {
-    // Big gradient dome: indigo top, magenta middle, warm orange low.
+    // Big gradient dome: bright blue top, warm peach middle, golden low —
+    // a bright warm late afternoon, sun still low, horizon still orange.
     var geo = new THREE.SphereGeometry(900, 24, 16);
     var colors = [];
     var top = new THREE.Color(W.PALETTE.skyTop), mid = new THREE.Color(W.PALETTE.skyMid), low = new THREE.Color(W.PALETTE.skyLow);
@@ -149,7 +150,7 @@
     var sunMat = new THREE.SpriteMaterial({ map: W.sunTexture(), transparent: true, fog: false, depthWrite: false });
     var sun = new THREE.Sprite(sunMat);
     sun.position.set(620, 95, -40);
-    sun.scale.set(190, 190, 1);
+    sun.scale.set(150, 150, 1);
     scene.add(sun);
     W.sun = sun;
 
@@ -157,14 +158,14 @@
     W.clouds = [];
     for (var k = 0; k < 14; k++) {
       var cl = new THREE.Mesh(new THREE.BoxGeometry(PH.rand(60, 150), PH.rand(4, 9), PH.rand(14, 26)),
-        new THREE.MeshBasicMaterial({ color: k % 3 === 0 ? 0xffb08a : 0xd97a9e, transparent: true, opacity: 0.55, fog: false }));
+        new THREE.MeshBasicMaterial({ color: k % 3 === 0 ? 0xffe0b8 : 0xffc9a0, transparent: true, opacity: 0.7, fog: false }));
       cl.position.set(PH.rand(-700, 700), PH.rand(120, 260), PH.rand(-700, 300));
       scene.add(cl); W.clouds.push(cl);
     }
 
-    var hemi = new THREE.HemisphereLight(0xffd9b0, 0x5a3a6a, 1.25);
+    var hemi = new THREE.HemisphereLight(0xfff2d8, 0x8a6a55, 1.5);
     scene.add(hemi);
-    var sunLight = new THREE.DirectionalLight(0xffc070, 2.2);
+    var sunLight = new THREE.DirectionalLight(0xffd9a0, 2.7);
     sunLight.position.set(300, 140, -60);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.set(2048, 2048);
@@ -172,8 +173,8 @@
     sunLight.shadow.camera.top = 220; sunLight.shadow.camera.bottom = -220;
     sunLight.shadow.camera.far = 900;
     scene.add(sunLight);
-    scene.add(new THREE.AmbientLight(0x9a6a8a, 0.9));
-    scene.fog = new THREE.Fog(0xd98a7a, 320, 900);
+    scene.add(new THREE.AmbientLight(0xffe0c0, 1.15));
+    scene.fog = new THREE.Fog(0xf0c39a, 420, 1400);
   };
 
   W.buildGroundAndSea = function (scene) {
@@ -289,19 +290,19 @@
           color = PH.pick(W.PALETTE.glass);
           tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         } else if (district === 'downtown') {
-          h = PH.rand(20, 46); w = PH.rand(16, 24); d = PH.rand(16, 24);
+          h = PH.rand(18, 58); w = PH.rand(16, 24); d = PH.rand(16, 24);
           color = PH.pick(W.PALETTE.glass);
           tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         } else if (district === 'ocean') {
-          h = PH.rand(7, 14); w = PH.rand(12, 18); d = PH.rand(12, 18);
+          h = PH.rand(6, 18); w = PH.rand(12, 18); d = PH.rand(12, 18);
           color = PH.pick(W.PALETTE.deco);
           tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         } else if (district === 'havana') {
-          h = PH.rand(6, 11); w = PH.rand(12, 18); d = PH.rand(12, 16);
+          h = PH.rand(5, 14); w = PH.rand(12, 18); d = PH.rand(12, 16);
           color = PH.pick(W.PALETTE.havana);
           tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         } else {
-          h = PH.rand(8, 18); w = PH.rand(12, 18); d = PH.rand(12, 18);
+          h = PH.rand(7, 22); w = PH.rand(12, 18); d = PH.rand(12, 18);
           color = PH.pick(W.PALETTE.deco.concat(W.PALETTE.havana));
           tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         }
@@ -310,18 +311,35 @@
         var material = tex
           ? new THREE.MeshLambertMaterial({ map: tex, emissive: 0xffb060, emissiveMap: tex, emissiveIntensity: 0.35 })
           : mat(color);
-        var b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-        b.position.set(bx + ox, h / 2, bz + oz);
+        // Tiered massing: the base rises to 62% of the height, then two
+        // setback storeys step in (76%, then 52% of the footprint), so the
+        // silhouette tapers instead of rising as one flat slab.
+        var b = new THREE.Mesh(new THREE.BoxGeometry(w, h * 0.62, d), material);
+        b.position.set(bx + ox, h * 0.31, bz + oz);
         b.castShadow = true; b.receiveShadow = true;
         scene.add(b);
+        b.userData.fullH = h; b.userData.fullW = w; b.userData.fullD = d;
         W.buildings.push(b);
-        // Roof box / parapet in a pastel accent (not flat grey) and a glowing
-        // sign for deco blocks, so rooftops vary from the street too.
-        var roof = box(w * 0.7, 0.8, d * 0.7, PH.pick([0x444455, 0x7a5a8a, 0x4a7a8a, 0x8a6a5a, 0xc96f3f, 0x3a6a5a]), bx + ox, h + 0.4, bz + oz);
-        scene.add(roof);
-        // Setback crown on tall towers: a smaller second storey so the
-        // skyline is not a row of flat slabs.
-        if (district === 'downtown' && Math.random() < 0.5) {
+        var midH = h * 0.24, topH = h * 0.14;
+        var mid = new THREE.Mesh(new THREE.BoxGeometry(w * 0.76, midH, d * 0.76), mat(color));
+        mid.position.set(bx + ox, h * 0.62 + midH / 2, bz + oz);
+        mid.castShadow = true; scene.add(mid);
+        var top = new THREE.Mesh(new THREE.BoxGeometry(w * 0.52, topH, d * 0.52), mat(color));
+        top.position.set(bx + ox, h * 0.86 + topH / 2, bz + oz);
+        top.castShadow = true; scene.add(top);
+        // Roof variety by deterministic hash: parapet, pyramid, dome, crown.
+        var roofKind = (idx * 7 + k * 3) % 4;
+        if (roofKind === 0) {
+          var roof = box(w * 0.42, 0.8, d * 0.42, PH.pick([0x444455, 0x7a5a8a, 0x4a7a8a, 0x8a6a5a, 0xc96f3f, 0x3a6a5a]), bx + ox, h + 0.4, bz + oz);
+          scene.add(roof);
+        } else if (roofKind === 1) {
+          var pyr = cyl(0.01, w * 0.34, PH.rand(2.5, 4.5), PH.pick([0xc96f3f, 0x3a6a5a, 0x7a5a8a]), bx + ox, h + 1.6, bz + oz, 4);
+          pyr.rotation.y = Math.PI / 4; scene.add(pyr);
+        } else if (roofKind === 2) {
+          // Small muted dome: terracotta or grey, never a giant pink ball.
+          var dome = new THREE.Mesh(new THREE.SphereGeometry(Math.min(w * 0.16, 3), 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(PH.pick([0xc96f3f, 0x8a6a5a, 0x5a5a6a])));
+          dome.position.set(bx + ox, h, bz + oz); scene.add(dome);
+        } else {
           var crown = box(w * 0.45, PH.rand(3, 7), d * 0.45, PH.pick(W.PALETTE.glass), bx + ox, h + 2.8, bz + oz);
           scene.add(crown);
         }
@@ -871,21 +889,21 @@ function v62TowerWindows(seed) {
   return t;
 }
 function v62SignTexture(text) {
-  var c = document.createElement('canvas'); c.width = 512; c.height = 128;
+  var c = document.createElement('canvas'); c.width = 1024; c.height = 192;
   var x = c.getContext('2d');
-  x.fillStyle = '#101018'; x.fillRect(0, 0, 512, 128);
-  x.strokeStyle = '#ff9a3c'; x.lineWidth = 6; x.strokeRect(6, 6, 500, 116);
-  x.fillStyle = '#ffd9a0'; x.font = 'bold 52px Arial, sans-serif';
+  x.fillStyle = '#101018'; x.fillRect(0, 0, 1024, 192);
+  x.strokeStyle = '#ff9a3c'; x.lineWidth = 10; x.strokeRect(10, 10, 1004, 172);
+  x.fillStyle = '#ffd9a0'; x.font = 'bold 96px Arial, sans-serif';
   x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.fillText(text, 256, 68);
+  x.fillText(text, 512, 100);
   return new THREE.CanvasTexture(c);
 }
 function v62RoofSign(scene, x, y, z, w, text) {
   var tex = v62SignTexture(text);
   var face = new THREE.MeshBasicMaterial({ map: tex });
   var dark = new THREE.MeshLambertMaterial({ color: 0x14141c });
-  var sign = new THREE.Mesh(new THREE.BoxGeometry(w, 2.2, 0.7), [dark, dark, dark, dark, face, face]);
-  sign.position.set(x, y + 1.2, z);
+  var sign = new THREE.Mesh(new THREE.BoxGeometry(w, 3.4, 0.9), [dark, dark, dark, dark, face, face]);
+  sign.position.set(x, y + 1.8, z);
   sign.rotation.y = Math.atan2(-x, -z);
   scene.add(sign);
   var legMat = new THREE.MeshLambertMaterial({ color: 0x22222c });
@@ -926,8 +944,8 @@ function v62RoofSign(scene, x, y, z, w, text) {
       for (var j = 0; j < list.length; j++) {
         var t = list[j];
         if (!t || !t.geometry || !t.geometry.parameters) continue;
-        if (t.geometry.parameters.height >= 30 && ni < names.length) {
-          v62RoofSign(scene, t.position.x, t.geometry.parameters.height, t.position.z, 12, names[ni++]);
+        if ((t.userData.fullH || t.geometry.parameters.height) >= 30 && ni < names.length) {
+          v62RoofSign(scene, t.position.x, (t.userData.fullH || t.geometry.parameters.height), t.position.z, 17, names[ni++]);
         }
       }
       // denser skyline: extra towers around the outer edges, each signed
@@ -945,7 +963,12 @@ function v62RoofSign(scene, x, y, z, w, text) {
         var mesh = new THREE.Mesh(new THREE.BoxGeometry(tw[2], tw[3], tw[4]), mat);
         mesh.position.set(tw[0], tw[3] / 2, tw[1]);
         scene.add(mesh);
-        v62RoofSign(scene, tw[0], tw[3], tw[1], 11, tw[5]);
+        // Setback cap on every skyline tower, so the outer ring tapers too.
+        var cap = new THREE.Mesh(new THREE.BoxGeometry(tw[2] * 0.6, 4, tw[4] * 0.6),
+          new THREE.MeshLambertMaterial({ color: 0x3a3348 }));
+        cap.position.set(tw[0], tw[3] + 2, tw[1]);
+        scene.add(cap);
+        v62RoofSign(scene, tw[0], tw[3], tw[1], 15, tw[5]);
       }
     } catch (e) { /* skyline extras are cosmetic; never break the build */ }
   };
@@ -1055,7 +1078,7 @@ function v62RoofSign(scene, x, y, z, w, text) {
     var tex = v62SignTexture(text);
     var face = new THREE.MeshBasicMaterial({ map: tex });
     var dark = new THREE.MeshLambertMaterial({ color: 0x14141c });
-    var sign = new THREE.Mesh(new THREE.BoxGeometry(w, 2.4, 0.5), [dark, dark, dark, dark, face, face]);
+    var sign = new THREE.Mesh(new THREE.BoxGeometry(w, 3.6, 0.6), [dark, dark, dark, dark, face, face]);
     sign.position.set(x, y, z);
     scene.add(sign);
   }
@@ -1069,14 +1092,126 @@ function v62RoofSign(scene, x, y, z, w, text) {
         var t = list[j];
         if (!t || !t.geometry || !t.geometry.parameters) continue;
         var p = t.geometry.parameters;
-        if (p.height >= 30 && ni < names.length) {
-          marquee(scene, t.position.x, p.height * 0.62, t.position.z + p.depth / 2 + 0.35, 11, names[ni++]);
+        var fullH = t.userData.fullH || p.height;
+        var fullD = t.userData.fullD || p.depth;
+        if (fullH >= 30 && ni < names.length) {
+          marquee(scene, t.position.x, fullH * 0.62, t.position.z + fullD / 2 + 0.35, 20, names[ni++]);
         }
       }
       var north = [[-90, -140, 34, 'MARINA BAY HOTEL'], [-30, -140, 44, 'CASA DEL SOL'], [30, -140, 30, 'THE MERIDIAN'], [90, -140, 40, 'PALM COURT']];
       for (var k = 0; k < north.length; k++) {
-        marquee(scene, north[k][0], north[k][2] * 0.62, north[k][1] + 10.35, 11, north[k][3]);
+        marquee(scene, north[k][0], north[k][2] * 0.62, north[k][1] + 10.35, 16, north[k][3]);
       }
     } catch (e) { /* marquee signs are cosmetic */ }
+  };
+})();
+
+// ---- PIER HEAT v6.3: night-market street + gunfight dressing ----
+// A dense market row built on demand for the mission shot: striped stalls
+// with lit name boards on both sidewalks of the x = 0 street, strings of
+// warm bulbs sagging across the street, paper lanterns, crates and barrels.
+// Plus two small helpers the staging uses for the firefight read: a glowing
+// tracer bar between two points and a muzzle flash with a warm point light.
+(function () {
+  var W = window.PH && window.PH.world;
+  if (!W) return;
+  function lam(c, e) {
+    var m = new THREE.MeshLambertMaterial({ color: c });
+    if (e !== undefined && e !== null) m.emissive = new THREE.Color(e);
+    return m;
+  }
+  function bx(scene, material, w, h, d, x, y, z, ry) {
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    m.position.set(x, y, z);
+    if (ry) m.rotation.y = ry;
+    scene.add(m);
+    return m;
+  }
+  W.buildNightMarket = function (scene, cx, cz) {
+    if (!scene) return;
+    if (scene.userData.marketBuilt) return;
+    scene.userData.marketBuilt = true;
+    var canopyPairs = [[0xff5a3c, 0xfff2d8], [0xffc93c, 0x2e5a8a], [0x2ec8ff, 0xfff2d8], [0xff5a8a, 0xffc93c], [0x37e0a0, 0xfff2d8], [0xff8a3c, 0x2e5a8a]];
+    var names = ['SATE BAY', 'TACO LUNA', 'MIE PANAS', 'JUS SEGAR', 'JAGUNG BAKAR', 'KOPI SENJA'];
+    var bulbMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
+    var stallZ = [78, 82, 89, 93, 100, 104, 111, 115];
+    for (var s = 0; s < 8; s++) {
+      var side = s % 2 === 0 ? -1 : 1;
+      var z = stallZ[s];
+      var x = cx + side * 5.6;
+      var pair = canopyPairs[s % canopyPairs.length];
+      var pole = lam(0x3a3a44);
+      [[-1.7, -1.4], [1.7, -1.4], [-1.7, 1.4], [1.7, 1.4]].forEach(function (c) {
+        var p = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.8, 6), pole);
+        p.position.set(x + c[0], 1.4, z + c[1]);
+        scene.add(p);
+      });
+      // Striped canopy: five slats alternating the pair's two colours.
+      for (var sl = 0; sl < 5; sl++) {
+        bx(scene, lam(pair[sl % 2]), 0.72, 0.1, 3.0, x - 1.44 + sl * 0.72, 2.75, z, 0);
+      }
+      bx(scene, lam(0x6a4a2e), 3.0, 0.9, 1.2, x, 0.45, z, 0);
+      bx(scene, lam(0xf2f2f2), 3.1, 0.08, 1.3, x, 0.95, z, 0);
+      var crate = lam(0x9a7a3c);
+      bx(scene, crate, 0.6, 0.6, 0.6, x - side * 2.1, 0.3, z + 0.8, 0.3);
+      bx(scene, crate, 0.6, 0.6, 0.6, x + side * 2.1, 0.3, z - 0.8, 0);
+      var barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.9, 10), lam(0x5a7a8a));
+      barrel.position.set(x + side * 2.1, 0.45, z + 0.9);
+      scene.add(barrel);
+      // Warm bulbs along the stall's front edge + a lit name board.
+      [-1.3, 0, 1.3].forEach(function (off) {
+        var b = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 5), bulbMat);
+        b.position.set(x + off, 2.6, z - side * 1.45);
+        scene.add(b);
+      });
+      try {
+        var tex = v62SignTexture(names[s % names.length]);
+        var board = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.75, 0.12),
+          [lam(0x14141c), lam(0x14141c), lam(0x14141c), lam(0x14141c),
+           new THREE.MeshBasicMaterial({ map: tex }), new THREE.MeshBasicMaterial({ map: tex })]);
+        board.position.set(x, 3.3, z - side * 1.5);
+        scene.add(board);
+      } catch (e) { /* name board is cosmetic */ }
+      // Paper lanterns hanging at the stall corners.
+      [[-1.7, -1.45], [1.7, -1.45]].forEach(function (c, li) {
+        var lan = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6),
+          new THREE.MeshBasicMaterial({ color: li === 0 ? 0xff7a3c : 0xff3c5a }));
+        lan.position.set(x + c[0], 2.2, z + c[1]);
+        scene.add(lan);
+      });
+    }
+    // Strings of warm bulbs sagging across the street between the rows.
+    [cz - 12, cz - 2, cz + 8, cz + 16].forEach(function (z) {
+      for (var b = 0; b <= 8; b++) {
+        var t = b / 8;
+        var bx0 = cx - 5.6 + t * 11.2;
+        var sag = 3.1 - Math.sin(t * Math.PI) * 0.5;
+        var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.13, 6, 5), bulbMat);
+        bulb.position.set(bx0, sag, z);
+        scene.add(bulb);
+      }
+    });
+  };
+  // Glowing tracer bar from (x0,y0,z0) to (x1,y1,z1).
+  W.addTracer = function (scene, x0, y0, z0, x1, y1, z1) {
+    var dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+    var m = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, len),
+      new THREE.MeshBasicMaterial({ color: 0xff4a00 }));
+    m.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    m.lookAt(x1, y1, z1);
+    scene.add(m);
+    return m;
+  };
+  // Muzzle flash: a bright core sphere plus a warm point light.
+  W.muzzleFlash = function (scene, x, y, z) {
+    var f = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffb020 }));
+    f.position.set(x, y, z);
+    scene.add(f);
+    var l = new THREE.PointLight(0xffc070, 22, 10);
+    l.position.set(x, y, z);
+    scene.add(l);
+    return f;
   };
 })();

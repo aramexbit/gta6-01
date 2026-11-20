@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay (v6.5)
+// PIER HEAT — Sunset Bay (v6.6)
 // main.ts — the entry program: copies game/ and screenshots/ into the
 // output directory and writes dossier.json with the kit's buildDossier.
 // The caps below are the bounty's gate caps (see the kit's RULES.txt):
@@ -32,4 +32,4 @@ try {
   process.exit(1);
 }
 writeFileSync(`${outDir}/dossier.json`, dossier);
-console.log(`PIER HEAT v6.5 dossier written to ${outDir}/dossier.json (${dossier.length} bytes)`);
+console.log(`PIER HEAT v6.6 dossier written to ${outDir}/dossier.json (${dossier.length} bytes)`);

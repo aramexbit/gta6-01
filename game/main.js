@@ -1,6 +1,7 @@
-// PIER HEAT — Sunset Bay (v6.5)
+// PIER HEAT — Sunset Bay (v6.6)
 // main.js — boot, camera, input, HUD, procedural WebAudio, and the debug
 // staging API the screenshot harness uses (?shot=1..4, PH.debug.*).
+// v6.6: the loop drives core.tick so the ocean, clouds and cloud shadows move.
 (function () {
   var PH = window.PH = window.PH || {};
   var core = PH.core, world = PH.world, sim = PH.sim;
@@ -129,10 +130,14 @@
     }
     // free play: 3/4 chase cam, low and close, so the car's doors and
     // windows stay readable while driving.
-    var hero = sim.state.onFoot ? sim.mateo().position : null;
+    // v6.6 fix: follow the figure actually in use — mateoFigure() is the
+    // vendored GLB when it loaded. mateo() is the procedural stand-in,
+    // which stays at the origin when the GLB is active, so the old code
+    // pointed the camera at an empty intersection 60 m from Mateo.
+    var hero = sim.state.onFoot ? sim.mateoFigure().position : null;
     var hx, hz, heading;
     if (sim.state.onFoot) {
-      hx = hero.x; hz = hero.z; heading = sim.mateo().rotation.y;
+      hx = hero.x; hz = hero.z; heading = sim.mateoFigure().rotation.y;
       var bx = hx - Math.sin(heading) * 5.5, bz = hz - Math.cos(heading) * 5.5;
       cam.position.set(bx, 2.4 + pitch * 2, bz);
       cam.lookAt(hx, 1.5, hz);
@@ -322,6 +327,7 @@
   function loop() {
     requestAnimationFrame(loop);
     var dt = Math.min(clock.getDelta(), 0.05);
+    core.tick(dt);
     sim.update(dt, input);
     updateCamera(dt);
     audio.engine(sim.state.onFoot ? 0 : sim.state.speed || 0);

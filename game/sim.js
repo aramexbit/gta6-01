@@ -1,8 +1,10 @@
-// PIER HEAT — Sunset Bay (v6.5)
+// PIER HEAT — Sunset Bay (v6.6)
 // sim.js — game state: driving and walking, traffic and pedestrian AI,
 // police response and the wanted system, missions, combat, and the four
 // staged screenshot framings. No Rockstar assets, names or map: the city,
 // the people and the story are original.
+// v6.6: hero back to a burnt-orange wedge sports car; chase + street in
+// bright cloudy DAY; the mission helicopter big, low and centred in frame.
 (function () {
   var PH = window.PH = window.PH || {};
   var core = PH.core, world = PH.world;
@@ -58,12 +60,23 @@
     }
   }
 
+  // Shove any pedestrian standing within r metres of the stage camera
+  // along their walk, so no giant head photobombs the staged shot.
+  function clearPedsNear(cam, r) {
+    for (var i = 0; i < peds.length; i++) {
+      var p = peds[i];
+      var dx = p.g.position.x - cam.x, dz = p.g.position.z - cam.z;
+      if (dx * dx + dz * dz < r * r) p.t += 25;
+    }
+  }
+
   // ------------------------------------------------------------ init
   sim.init = function (sc) {
     scene = sc;
     rng = core.mulberry32(777);
-    // hero: wedge sports car, orange, plate SUN-8821
-    heroCar = world.buildCar({ type: 'sport', color: 0xe83a12, plate: 'SUN-8821' });
+    // hero: wedge sports car, vivid orange (never the red wagon of v6.5),
+    // plate SUN-8821
+    heroCar = world.buildCar({ type: 'sport', color: 0xff7a1a, plate: 'SUN-8821' });
     scene.add(heroCar);
     heroPos = new THREE.Vector3(58, 0, 0);
     heroHeading = 0; // facing +X (east, toward the sun and the sea)
@@ -232,10 +245,13 @@
     policeCars.forEach(function (p) { p.car.visible = false; });
 
     if (name === 'chase') {
-      core.setTimeOfDay('sunset');
+      // bright cloudy DAY: saturated blue sky, high sun, sharp shadows.
+      // Camera low and close behind the hero's quarter, so the orange
+      // wedge fills a third of the frame; no palm trunk in the way.
+      core.setTimeOfDay('day');
       sim.state.wanted = 3;
-      // hero past the towers, on the open beach road: the low sun and the
-      // sea are finally in frame ahead of him
+      // hero past the towers, on the open beach road: the sea and the
+      // clouded blue sky are finally in frame ahead of him
       heroPos.set(88, 0, 0); heroHeading = 0; heroSpeed = 12;
       placeHeroCar();
       clearRoad('x', 0, 76, 98);
@@ -246,17 +262,22 @@
       var rb = world.buildRoadblock();
       rb.position.set(94, 0, 0); rb.rotation.y = Math.PI / 2;
       scene.add(rb); roadblocks.push(rb);
-      // helicopter LOW over the road ahead, upper-left of frame clear of
-      // the mission panel, searchlight pooling on the asphalt
-      heli.position.set(92, 8, -6);
+      // helicopter over the road ahead, upper-left of frame clear of the
+      // mission panel — far enough that the whole rotor fits in frame
+      // (v6.6 first pass had it clipped across the top edge)
+      heli.scale.setScalar(0.9);
+      heli.position.set(97, 6.5, -10);
       heli.rotation.set(0, -0.5, 0.06);
       heli.visible = true;
       sim.state.mission = { id: 'M2', name: 'THREE GATES', stage: 1, stages: 3, timer: 187 };
-      return { cam: new THREE.Vector3(80, 2.2, 9.0), look: new THREE.Vector3(92, 2.0, 0.5) };
+      clearPedsNear({ x: 81.5, z: 7.6 }, 8);
+      return { cam: new THREE.Vector3(81.5, 1.7, 7.6), look: new THREE.Vector3(93.5, 1.7, -0.5) };
     }
 
     if (name === 'street') {
-      core.setTimeOfDay('sunset');
+      // bright cloudy DAY, like the chase: blue sky, cloud shadows on
+      // the avenue, the hero's orange wedge against real facades
+      core.setTimeOfDay('day');
       sim.state.wanted = 4;
       heroPos.set(30, 0, 22); heroHeading = Math.PI / 2; heroSpeed = 12;
       placeHeroCar();
@@ -271,11 +292,13 @@
       scene.add(rb2); roadblocks.push(rb2);
       // helicopter low over the avenue, upper-left of frame, clear of the
       // mission panel
+      heli.scale.setScalar(1);
       heli.position.set(27, 10, -2);
       heli.rotation.set(0, 0.4, -0.05);
       heli.visible = true;
       sim.state.mission = { id: 'M2', name: 'THREE GATES', stage: 2, stages: 3, timer: 142 };
-      return { cam: new THREE.Vector3(36.5, 2.6, 27.5), look: new THREE.Vector3(29.5, 1.5, 12) };
+      clearPedsNear({ x: 35.8, z: 26.8 }, 8);
+      return { cam: new THREE.Vector3(35.8, 2.3, 26.8), look: new THREE.Vector3(29.5, 1.4, 12) };
     }
 
     if (name === 'mission') {
@@ -283,18 +306,21 @@
       sim.state.wanted = 5;
       sim.state.onFoot = true;
       heroCar.visible = false;
-      heroPos.set(-45, 0, 35); // dispatch distances measure from Mateo
+      heroPos.set(-44.5, 0, 33.8); // dispatch distances measure from Mateo
       heroSpeed = 0;
       // Mateo in front of the stall row, clear of the counters, his orange
       // jacket lit warm so he reads at night instead of a black silhouette.
       // His front (+Z local: tee, zipper, stubble) faces the stalls, so
       // rotation.y is 0 — PI would turn his back and his pistol to camera.
-      mateoAim.position.set(-45, 0, 35);
-      mateoAim.rotation.y = 0;
+      // v6.6: a step closer to camera, slightly angled, under a stronger
+      // warm light — in the first v6.6 pass he was lost in the dark.
+      mateoAim.position.set(-44.5, 0, 33.8);
+      mateoAim.rotation.y = 0.15;
       mateoAim.visible = true;
       if (mateoAim.userData.flash) mateoAim.userData.flash.visible = true;
-      addStageLight(-45, 3.2, 37, 0xffb36b, 1.8, 20);
+      addStageLight(-44.5, 3.2, 36, 0xffb36b, 2.6, 20);
       addStageLight(-48, 4.5, 48, 0xffd98a, 1.4, 26);
+      addStageLight(-44, 2.0, 34.5, 0xffc98a, 1.2, 10);
       // downed enemy (red) + downed officer, 1.35x, mid-frame IN FRONT
       // of the stall row — behind the counters they are invisible
       downedEnemy.position.set(-47, 0.1, 37);
@@ -304,22 +330,27 @@
       downedOfficer.rotation.y = -0.9;
       downedOfficer.visible = true;
       // three thick yellow tracers from Mateo's pistol into the stalls
-      addTracer(new THREE.Vector3(-44.9, 1.35, 36), new THREE.Vector3(-52, 1.2, 50));
-      addTracer(new THREE.Vector3(-44.9, 1.35, 36), new THREE.Vector3(-43, 1.4, 53));
-      addTracer(new THREE.Vector3(-44.9, 1.35, 36), new THREE.Vector3(-38, 1.1, 48));
+      addTracer(new THREE.Vector3(-44.4, 1.35, 34.6), new THREE.Vector3(-52, 1.2, 50));
+      addTracer(new THREE.Vector3(-44.4, 1.35, 34.6), new THREE.Vector3(-43, 1.4, 53));
+      addTracer(new THREE.Vector3(-44.4, 1.35, 34.6), new THREE.Vector3(-38, 1.1, 48));
       // roadblock + police car at the plaza's north edge
       var rb3 = world.buildRoadblock();
       rb3.position.set(-60, 0, 30); rb3.rotation.y = Math.PI / 2;
       scene.add(rb3); roadblocks.push(rb3);
       placePolice(0, -33, 32, Math.PI);
-      // helicopter LOW over the market's north edge, upper-right of frame,
-      // buzzing right over Mateo — clear of the mission panel
-      heli.position.set(-48, 6.5, 40);
-      heli.rotation.set(0, 2.6, 0.05);
+      // helicopter BIG, LOW and CENTRED over the market, its flank to the
+      // camera: rotor disc, POLICE lettering and searchlight cone all in
+      // frame, buzzing right over Mateo — never just a floating label
+      heli.scale.setScalar(1.45);
+      heli.position.set(-46.5, 4.6, 41.5);
+      heli.rotation.set(0, 0.6, 0.05);
       heli.visible = true;
+      // searchlight cone + ground pool, stronger at night
+      if (heli.userData.cone) heli.userData.cone.material.opacity = 0.12;
+      if (heli.userData.pool) heli.userData.pool.material.opacity = 0.4;
       gates[1].visible = true;
       sim.state.mission = { id: 'M2', name: 'PIER RUN', stage: 2, stages: 3, timer: 96 };
-      return { cam: new THREE.Vector3(-40.5, 2.4, 29), look: new THREE.Vector3(-45.5, 1.4, 46) };
+      return { cam: new THREE.Vector3(-41, 2.6, 28.5), look: new THREE.Vector3(-45, 1.5, 44) };
     }
 
     // title
@@ -329,6 +360,9 @@
     placeHeroCar();
     placePolice(0, 12, -2.5, 0);
     placePolice(1, 8, 2.8, 0);
+    heli.scale.setScalar(1);
+    if (heli.userData.cone) heli.userData.cone.material.opacity = 0.05;
+    if (heli.userData.pool) heli.userData.pool.material.opacity = 0.28;
     heli.position.set(48, 26, -30);
     heli.rotation.set(0, -0.9, 0);
     heli.visible = true;

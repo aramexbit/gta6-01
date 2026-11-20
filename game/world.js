@@ -1,8 +1,12 @@
-// PIER HEAT — Sunset Bay (v6.5)
+// PIER HEAT — Sunset Bay (v6.6)
 // world.js — the city itself: road grid, pastel buildings with readable
 // shop signs, street props, beach, pier and the Little Havana night market.
 // Plus the detailed vehicles: every car carries doors, windows, mirrors,
 // lights, plates and wheels — no more plain boxes.
+// v6.6: real 3D facades — recessed windows with frames, sills and
+// sky-reflecting glass, real doors, glass shopfronts and contact AO —
+// a livelier beach (surfboards, volleyball, more umbrellas and people),
+// and no palm trunk blocking the chase camera.
 (function () {
   var PH = window.PH = window.PH || {};
   var core = PH.core;
@@ -40,7 +44,8 @@
   var counts = {
     signs: 0, buildings: 0, lamps: 0, palms: 0, props: 0,
     peds: 0, traffic: 0, parked: 0, police: 0, stalls: 0,
-    detailedCars: 0, umbrellas: 0, hydrants: 0, bins: 0
+    detailedCars: 0, umbrellas: 0, hydrants: 0, bins: 0,
+    facadeWindows: 0, realDoors: 0, shopfronts: 0, surfboards: 0
   };
 
   function addSign(parent, tex, w, h, x, y, z, ry) {
@@ -157,6 +162,79 @@
   }
 
   // -------------------------------------------------------------- buildings
+  // A real facade, not a picture of one: windows are geometric openings —
+  // a dark reveal frame set into the wall, a glass pane behind it that
+  // reflects the sky, a sill casting a lip of shadow — plus a glass
+  // shopfront, a recessed door with a step, and a contact-AO pool where
+  // the building meets the pavement, so it sits on the street instead of
+  // floating over it. Only the street-facing side carries the 3D work;
+  // the other faces keep the painted window grid.
+  var LIT_GLASS = [0xffd98a, 0xfff2c9, 0xff9a5a, 0x9fd8ff];
+  function addFacadeDetail(scene, bx, bz, w, h, d, facing, floors, rng) {
+    var s = facing === 0 ? 1 : -1; // outward normal of the front face
+    var fz = bz + s * d / 2;
+    var frameMat = core.mat(0x20242e);
+    var glass = core.glassMat();
+    var rows = Math.min(3, floors - 1);
+    var cols = 5;
+    for (var r = 0; r < rows; r++) {
+      var y = 4.8 + r * 3.1;
+      if (y > h - 1.6) break;
+      for (var c = 0; c < cols; c++) {
+        var x = bx + (c - (cols - 1) / 2) * (w / (cols + 0.6));
+        // reveal frame sunk into the wall, glass behind it, sill below
+        var frame = core.mesh(core.boxGeo(1.3, 1.7, 0.1), frameMat, x, y, fz + s * 0.02);
+        scene.add(frame);
+        var lit = rng() < 0.3;
+        var paneMat = lit
+          ? new THREE.MeshBasicMaterial({ color: LIT_GLASS[Math.floor(rng() * LIT_GLASS.length)] })
+          : glass;
+        var pane = core.mesh(core.boxGeo(1.1, 1.5, 0.06), paneMat, x, y, fz + s * 0.07);
+        scene.add(pane);
+        var sill = core.mesh(core.boxGeo(1.5, 0.09, 0.22), core.mat(0xd8d0c0), x, y - 0.9, fz + s * 0.1);
+        scene.add(sill);
+        counts.facadeWindows++;
+      }
+    }
+    // ground-floor glass shopfront with mullions (dark reflective glass,
+    // so the wide window reads as glass, not a lit billboard)
+    var shop = core.mesh(core.planeGeo(w - 4.5, 2.6), core.shopGlassMat(), bx - w / 8, 1.6, fz + s * 0.06);
+    if (s < 0) shop.rotation.y = Math.PI;
+    scene.add(shop);
+    for (var m = 0; m < 3; m++) {
+      var mul = core.mesh(core.boxGeo(0.09, 2.6, 0.09), frameMat,
+        bx - w / 8 - (w - 4.5) / 4 + m * (w - 4.5) / 4, 1.6, fz + s * 0.08);
+      scene.add(mul);
+    }
+    counts.shopfronts++;
+    // recessed door: dark frame, reflective glass door, step, handle
+    var dx = bx + w / 4;
+    var dframe = core.mesh(core.boxGeo(1.5, 2.7, 0.12), frameMat, dx, 1.35, fz + s * 0.03);
+    scene.add(dframe);
+    var door = core.mesh(core.boxGeo(1.2, 2.4, 0.06), glass, dx, 1.3, fz + s * 0.08);
+    scene.add(door);
+    var handle = core.mesh(core.boxGeo(0.05, 0.3, 0.05), core.mat(0xe8e8e8, { phong: true, shininess: 100 }),
+      dx + 0.4, 1.25, fz + s * 0.13);
+    scene.add(handle);
+    var step = core.mesh(core.boxGeo(1.8, 0.18, 0.7), core.mat(0x8a8378), dx, 0.09, fz + s * 0.4);
+    scene.add(step);
+    counts.realDoors++;
+    // contact AO: dark pool on the pavement under the building + a fading
+    // strip up the base of the front wall
+    var pool = core.mesh(core.planeGeo(w + 3, d + 3),
+      new THREE.MeshBasicMaterial({
+        map: core.cloudShadowTexture(), transparent: true, opacity: 0.5, depthWrite: false
+      }), bx, 0.08, bz);
+    pool.rotation.x = -Math.PI / 2;
+    scene.add(pool);
+    var strip = core.mesh(core.planeGeo(w, 1.4),
+      new THREE.MeshBasicMaterial({
+        map: core.aoStripTexture(), transparent: true, opacity: 0.85, depthWrite: false
+      }), bx, 0.7, fz + s * 0.09);
+    if (s < 0) strip.rotation.y = Math.PI;
+    scene.add(strip);
+  }
+
   function buildBuildings(scene, rng) {
     var nameIdx = 0;
     var blockXs = [-45, -15, 15, 45, 75];
@@ -175,10 +253,22 @@
         var wall = core.pick(rng, PASTELS);
         var floors = Math.max(2, Math.round(h / 3.2));
         var facade = core.facadeTexture(wall, floors, 7, rng, 0.3);
-        var bmat = new THREE.MeshLambertMaterial({ map: facade });
-        var b = core.mesh(core.boxGeo(w, h, d), bmat, bx, h / 2, bz);
+        // The street-facing side gets a plain wall and real 3D windows
+        // instead of painted ones; the other faces keep the painted grid.
+        var facing = (bz <= 0) ? 0 : Math.PI;
+        var sideMat = new THREE.MeshLambertMaterial({ map: facade });
+        var frontMat = new THREE.MeshLambertMaterial({ map: core.plainWallTexture(wall) });
+        var topMat = core.mat(0x2a2438);
+        var mats = [sideMat, sideMat, topMat, topMat, sideMat, sideMat];
+        mats[facing === 0 ? 4 : 5] = frontMat;
+        var b = new THREE.Mesh(core.boxGeo(w, h, d), mats);
+        b.position.set(bx, h / 2, bz);
+        b.castShadow = true;
+        b.receiveShadow = true;
         scene.add(b);
         counts.buildings++;
+        // Real facade: recessed windows, glass shopfront, door, contact AO.
+        addFacadeDetail(scene, bx, bz, w, h, d, facing, floors, rng);
         // flat roof + parapet + AC units + antenna + water tank
         var roof = core.box(w + 0.4, 0.5, d + 0.4, 0x2a2438, bx, h + 0.25, bz);
         scene.add(roof);
@@ -264,10 +354,23 @@
       var tx = towerSpots[t][0], tz = towerSpots[t][1];
       var th = 26 + t * 6;
       var towerFacade = core.facadeTexture('#5a8fc9', 8, 6, rng, 0.5);
-      var glass = new THREE.MeshLambertMaterial({ map: towerFacade });
+      // Real glass tower: a shiny Phong skin so the facade catches the
+      // sky and the sun instead of reading as a flat blue slab.
+      var glass = new THREE.MeshPhongMaterial({
+        map: towerFacade, shininess: 120, specular: 0x99ccff
+      });
       var tower = core.mesh(core.boxGeo(10, th, 10), glass, tx, th / 2, tz);
+      tower.castShadow = true;
+      tower.receiveShadow = true;
       scene.add(tower);
       counts.buildings++;
+      // contact-AO pool under the tower
+      var tpool = core.mesh(core.planeGeo(14, 14),
+        new THREE.MeshBasicMaterial({
+          map: core.cloudShadowTexture(), transparent: true, opacity: 0.5, depthWrite: false
+        }), tx, 0.08, tz);
+      tpool.rotation.x = -Math.PI / 2;
+      scene.add(tpool);
       // horizontal glass banding
       for (var fl = 2; fl < th; fl += 3) {
         var band = core.box(10.2, 0.35, 10.2, 0x2a3a55, tx, fl, tz);
@@ -427,9 +530,15 @@
       var wgeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(12));
       scene.add(new THREE.Line(wgeo, wireMat));
     }
-    // palms along Ocean Drive and the beach road
+    // palms along Ocean Drive and the beach road — but never on the south
+    // side of the beach stretch (x 74..98): a trunk there stands exactly
+    // in the chase camera's line and blocks the hero (v6.5 regression).
+    // Same for the street-shot corridor (x 24..38, south side): the palm
+    // at (30, 8.6) stood dead-centre in shot 2.
     for (i = 0; i < 26; i++) {
       var plx = -72 + i * 6.8, plz = (i % 2 ? 8.6 : -8.6);
+      if (plz > 0 && plx > 74 && plx < 98) continue;
+      if (plz > 0 && plx > 24 && plx < 38) continue;
       buildPalm(scene, plx, plz, 4.5 + rng() * 1.5, rng);
     }
     // small park on the (75,-15) block: grass, trees, benches, path
@@ -537,7 +646,7 @@
     scene.add(walk);
     // umbrellas + beach chairs + towels
     var umCols = [0xff5a5a, 0xffd23e, 0x2ad2c2, 0xff7a1a, 0xc26bff, 0x5a8de8];
-    for (var i = 0; i < 8; i++) {
+    for (var i = 0; i < 12; i++) {
       var ux = 108 + rng() * 22, uz = -70 + i * 19 + rng() * 6;
       var um = new THREE.Group();
       um.add(core.mesh(core.cylGeo(0.05, 0.05, 2.4, 6), core.mat(0xdddddd), 0, 1.2, 0));
@@ -626,8 +735,43 @@
     pier.position.set(154, 0, 22);
     scene.add(pier);
     counts.signs++; counts.props += 12;
+    // surfboards stuck upright in the sand + a volleyball net, so the
+    // beach reads as a beach people actually use, not an empty sandbox
+    var sbCols = [0xff5a5a, 0x2ad2c2, 0xffd23e, 0x5a8de8, 0xff7a1a, 0xc26bff];
+    for (var sb = 0; sb < 6; sb++) {
+      var sbx = 104 + sb * 4.5, sbz = -58 + sb * 24;
+      var board = core.mesh(core.boxGeo(0.08, 2.4, 0.6),
+        core.mat(sbCols[sb % sbCols.length], { toon: true }), sbx, 1.1, sbz);
+      board.rotation.z = 0.18;
+      board.rotation.y = 0.4 + sb * 0.3;
+      scene.add(board);
+      var stripe = core.mesh(core.boxGeo(0.1, 0.5, 0.62),
+        core.mat(0xffffff), sbx, 1.5, sbz);
+      stripe.rotation.z = 0.18; stripe.rotation.y = 0.4 + sb * 0.3;
+      scene.add(stripe);
+      counts.surfboards++; counts.props += 2;
+    }
+    // volleyball: two poles, a sagging net, a ball on the sand
+    var vb = new THREE.Group();
+    vb.add(core.mesh(core.cylGeo(0.06, 0.06, 2.4, 6), core.mat(0xdddddd), -4, 1.2, 0));
+    vb.add(core.mesh(core.cylGeo(0.06, 0.06, 2.4, 6), core.mat(0xdddddd), 4, 1.2, 0));
+    var net = core.mesh(core.planeGeo(8, 1.0),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
+      0, 1.9, 0);
+    vb.add(net);
+    vb.add(core.box(8, 0.08, 0.08, 0xdddddd, 0, 2.4, 0));
+    vb.add(core.mesh(core.sphGeo(0.28, 10, 8), core.mat(0xffffff), 2.5, 0.28, 1.5));
+    vb.add(core.mesh(core.sphGeo(0.29, 10, 8), core.mat(0xff5a5a), 2.5, 0.28, 1.5));
+    vb.position.set(112, 0, -8);
+    vb.rotation.y = 0.35;
+    scene.add(vb);
+    counts.props += 6;
+    // three palms on the sand itself, leaning toward the water
+    buildPalm(scene, 104, -44, 5.5, rng);
+    buildPalm(scene, 108, 8, 6.0, rng);
+    buildPalm(scene, 106, 52, 5.0, rng);
     // beach people: sunbathers and walkers on the sand
-    for (var bp = 0; bp < 10; bp++) {
+    for (var bp = 0; bp < 16; bp++) {
       var bpx = 106 + rng() * 24, bpz = -75 + rng() * 150;
       var bpfig = world.buildPed(rng, true);
       bpfig.position.set(bpx, 0, bpz);
@@ -817,11 +961,13 @@
     g.add(body);
     g.add(core.box(4.3, 0.2, 1.94, 0x1a1a20, 0, 0.3, 0));
     if (type === 'sport') {
-      var hood = core.box(1.5, 0.3, 1.8, color, 1.55, 0.62, 0, { toon: true });
-      hood.rotation.z = -0.14;
+      // long low wedge nose + short deck: the nose dives toward the road
+      // instead of standing up like a wagon's bonnet
+      var hood = core.box(1.7, 0.26, 1.8, color, 1.5, 0.56, 0, { toon: true });
+      hood.rotation.z = -0.2;
       g.add(hood);
-      var deck = core.box(1.1, 0.28, 1.8, color, -1.6, 0.62, 0, { toon: true });
-      deck.rotation.z = 0.1;
+      var deck = core.box(1.0, 0.24, 1.8, color, -1.55, 0.56, 0, { toon: true });
+      deck.rotation.z = 0.12;
       g.add(deck);
       // rear spoiler on two struts
       g.add(core.box(0.08, 0.22, 0.08, 0x1a1a20, -2.0, 0.95, 0.6));
@@ -839,33 +985,35 @@
       g.add(core.box(0.08, 0.45, 1.8, color, -2.05, 0.95, 0, { toon: true }));
     }
 
-    // ---- cabin: glass box + body-colour roof + pillars, so the glass
-    // reads as windows framed by the body, not a bare box
+    // ---- cabin: SHORT and LOW, so the car reads as a wedge sports car,
+    // not a wagon — a long tall cabin was the v6.5 wagon look. Glass box
+    // + body-colour roof + pillars, so the glass reads as windows framed
+    // by the body, not a bare box.
     var glass = core.glassMat();
-    var cabin = core.mesh(core.boxGeo(2.3, 0.52, 1.7), glass, -0.15, 1.02, 0);
+    var cabin = core.mesh(core.boxGeo(1.85, 0.44, 1.7), glass, -0.25, 0.98, 0);
     g.add(cabin);
-    g.add(core.box(2.1, 0.09, 1.62, color, -0.15, 1.31, 0, { toon: true }));
-    var pillarCols = [[1.0, 0.85], [1.0, -0.85], [-1.3, 0.85], [-1.3, -0.85]];
+    g.add(core.box(1.7, 0.09, 1.62, color, -0.25, 1.22, 0, { toon: true }));
+    var pillarCols = [[0.68, 0.85], [0.68, -0.85], [-1.18, 0.85], [-1.18, -0.85]];
     for (var pi = 0; pi < 4; pi++) {
-      g.add(core.box(0.09, 0.52, 0.09, color, pillarCols[pi][0], 1.02, pillarCols[pi][1]));
+      g.add(core.box(0.09, 0.44, 0.09, color, pillarCols[pi][0], 0.98, pillarCols[pi][1]));
     }
-    // windshield (slanted, at the front of the cabin) + rear window.
+    // windshield (steeply raked) + rear window.
     // Euler order YXZ: the X tilt leans the top of the pane, then Y
     // turns it to face forward (+X) / backward (-X).
-    var shield = core.mesh(core.planeGeo(1.55, 0.5), glass, 1.02, 1.02, 0);
+    var shield = core.mesh(core.planeGeo(1.55, 0.42), glass, 0.72, 0.98, 0);
     shield.rotation.order = 'YXZ';
-    shield.rotation.y = Math.PI / 2; shield.rotation.x = -0.42;
+    shield.rotation.y = Math.PI / 2; shield.rotation.x = -0.55;
     g.add(shield);
-    var rearWin = core.mesh(core.planeGeo(1.55, 0.5), glass, -1.32, 1.02, 0);
+    var rearWin = core.mesh(core.planeGeo(1.55, 0.42), glass, -1.18, 0.98, 0);
     rearWin.rotation.order = 'YXZ';
-    rearWin.rotation.y = -Math.PI / 2; rearWin.rotation.x = -0.42;
+    rearWin.rotation.y = -Math.PI / 2; rearWin.rotation.x = -0.5;
     g.add(rearWin);
     // side windows: thin glass panes on both flanks
-    g.add(core.mesh(core.boxGeo(1.95, 0.5, 0.04), glass, -0.15, 1.06, 0.87));
-    g.add(core.mesh(core.boxGeo(1.95, 0.5, 0.04), glass, -0.15, 1.06, -0.87));
+    g.add(core.mesh(core.boxGeo(1.6, 0.42, 0.04), glass, -0.25, 1.0, 0.87));
+    g.add(core.mesh(core.boxGeo(1.6, 0.42, 0.04), glass, -0.25, 1.0, -0.87));
     // B-pillar split on the side glass
-    g.add(core.box(0.06, 0.5, 0.05, color, -0.15, 1.06, 0.88));
-    g.add(core.box(0.06, 0.5, 0.05, color, -0.15, 1.06, -0.88));
+    g.add(core.box(0.06, 0.42, 0.05, color, -0.25, 1.0, 0.88));
+    g.add(core.box(0.06, 0.42, 0.05, color, -0.25, 1.0, -0.88));
 
     // ---- doors: seams + handles on both sides. Seams are thick enough
     // to read at screenshot distance; handles are bright chrome.
@@ -906,12 +1054,12 @@
     }
     if (police) {
       // white roof + light bar + push bar
-      g.add(core.box(2.1, 0.07, 1.62, 0xf2f2f2, -0.15, 1.36, 0));
-      g.add(core.box(1.1, 0.12, 0.4, 0x1a1a20, -0.15, 1.44, 0));
-      g.add(core.box(0.45, 0.14, 0.42, 0xd21a1a, -0.42, 1.54, 0));
-      g.add(core.box(0.45, 0.14, 0.42, 0x1a4ad2, 0.12, 1.54, 0));
-      var glR = core.glowSprite(0xff2a2a, 1.4); glR.position.set(-0.42, 1.56, 0); g.add(glR);
-      var glB = core.glowSprite(0x2a6aff, 1.4); glB.position.set(0.12, 1.56, 0); g.add(glB);
+      g.add(core.box(1.7, 0.07, 1.62, 0xf2f2f2, -0.25, 1.3, 0));
+      g.add(core.box(1.1, 0.12, 0.4, 0x1a1a20, -0.25, 1.38, 0));
+      g.add(core.box(0.45, 0.14, 0.42, 0xd21a1a, -0.52, 1.48, 0));
+      g.add(core.box(0.45, 0.14, 0.42, 0x1a4ad2, 0.02, 1.48, 0));
+      var glR = core.glowSprite(0xff2a2a, 1.4); glR.position.set(-0.52, 1.5, 0); g.add(glR);
+      var glB = core.glowSprite(0x2a6aff, 1.4); glB.position.set(0.02, 1.5, 0); g.add(glB);
       g.add(core.box(0.1, 0.35, 1.5, 0x1a1a20, 2.24, 0.5, 0));
       g.add(core.box(0.08, 0.3, 0.08, 0x1a1a20, 2.28, 0.45, 0.6));
       g.add(core.box(0.08, 0.3, 0.08, 0x1a1a20, 2.28, 0.45, -0.6));
@@ -919,8 +1067,8 @@
     if (opts.taxi) {
       var taxiTex = core.textTexture('TAXI', { bg: '#f7c948', fg: '#14161c', size: 56, w: 192, h: 80 });
       var taxiSign = core.mesh(core.planeGeo(0.7, 0.3),
-        new THREE.MeshBasicMaterial({ map: taxiTex }), -0.15, 1.5, 0);
-      g.add(core.box(0.8, 0.22, 0.4, 0xf7c948, -0.15, 1.44, 0));
+        new THREE.MeshBasicMaterial({ map: taxiTex }), -0.25, 1.42, 0);
+      g.add(core.box(0.8, 0.22, 0.4, 0xf7c948, -0.25, 1.36, 0));
       g.add(taxiSign);
     }
 
@@ -971,6 +1119,8 @@
     }
     g.userData.wheels = wheels;
     g.userData.headlights = hlMat;
+    // every car casts a sharp shadow in daylight
+    g.traverse(function (o) { if (o.isMesh) o.castShadow = true; });
     counts.detailedCars++;
     return g;
   };
@@ -1011,6 +1161,9 @@
     rotor.add(core.box(0.4, 0.07, 7.6, 0x1a1a1a, 0, 0, 0));
     rotor.position.y = 1.25;
     g.add(rotor);
+    // v6.6 note: a translucent blur disc was tried here and read as a
+    // solid black blob at night, so the bare crossed blades stay — they
+    // read as a rotor from every angle without the disc.
     // skids
     g.add(core.box(2.6, 0.08, 0.08, 0x2c2c38, 0, -1.05, 0.6));
     g.add(core.box(2.6, 0.08, 0.08, 0x2c2c38, 0, -1.05, -0.6));
@@ -1213,6 +1366,13 @@
     buildStreetProps(scene, rng);
     buildBeach(scene, rng);
     buildMarket(scene, rng);
+    // every flat ground plane (roads, sidewalks, sand, plaza, park)
+    // receives shadows, so buildings and cars ground themselves in daylight
+    scene.traverse(function (o) {
+      if (o.isMesh && o.geometry && o.geometry.type === 'PlaneGeometry') {
+        o.receiveShadow = true;
+      }
+    });
     world.counts = counts;
     return world;
   };

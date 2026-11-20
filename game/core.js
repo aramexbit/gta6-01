@@ -1,7 +1,11 @@
-// PIER HEAT — Sunset Bay (v6.5)
+// PIER HEAT — Sunset Bay (v6.6)
 // core.js — renderer, sky and sun, lights, materials, texture helpers,
 // and a minimal glTF 2.0 loader (no external loader library is vendored).
 // Everything here is original code written for this game.
+// v6.6: bright cloudy DAY mode (saturated blue sky, procedural clouds,
+// drifting cloud shadows), golden-hour SUNSET without the dark magenta,
+// Gerstner-style animated ocean with sky reflection and shoreline foam,
+// and facade helpers (sky-reflecting glass, contact AO).
 (function () {
   var PH = window.PH = window.PH || {};
   var core = PH.core = {};
@@ -105,6 +109,14 @@
     });
   };
 
+  // Dark reflective shopfront glass: deep blue-green, high specular, so a
+  // wide shop window reads as glass, not a lit yellow billboard.
+  core.shopGlassMat = function () {
+    return new THREE.MeshPhongMaterial({
+      color: 0x2e4a66, shininess: 160, specular: 0xbbddff
+    });
+  };
+
   core.mesh = function (geo, material, x, y, z) {
     var m = new THREE.Mesh(geo, material);
     m.position.set(x || 0, y || 0, z || 0);
@@ -115,16 +127,30 @@
   };
 
   // ------------------------------------------------------------------ sky
-  var skyMat, sunMesh, sunGlow, starPts, hemi, sunLight;
+  var skyMat, sunMesh, sunGlow, starPts, hemi, sunLight, oceanMat, cloudGroup;
+  // SUNSET is golden hour: a blue top fading into warm orange, never the
+  // dark magenta of v6.5. DAY is bright noon: saturated blue, high sun,
+  // sharp shadows, layered procedural clouds.
+  var SUNSET = {
+    top: 0x1e3a7a, mid: 0xf08a3c, horizon: 0xffb347,
+    fog: 0x8a5f6a, hemiSky: 0x8a7fd0, hemiGround: 0x3a2a2a,
+    sun: 0xffb36b, sunIntensity: 1.15, hemiIntensity: 0.8,
+    exposure: 1.0, cloud: 0.28, oceanSky: 0xff9a5a, oceanDeep: 0x0f5a5e,
+    sunPos: [120, 26, 18], sunAt: [400, 34, 26], sunScale: 1
+  };
   var DAY = {
-    top: 0x241257, mid: 0xb8327f, horizon: 0xff9a3c,
-    fog: 0x3a1c52, hemiSky: 0x8a6fd0, hemiGround: 0x2a1a2a,
-    sun: 0xffb36b, sunIntensity: 1.15, hemiIntensity: 0.8
+    top: 0x1565d8, mid: 0x4aa3e8, horizon: 0xbfe3f7,
+    fog: 0x9fc8e8, hemiSky: 0xbfe0ff, hemiGround: 0x8a7a5a,
+    sun: 0xfff3c9, sunIntensity: 1.7, hemiIntensity: 1.05,
+    exposure: 1.15, cloud: 0.55, oceanSky: 0x7ec0e8, oceanDeep: 0x0a5a7a,
+    sunPos: [90, 180, 60], sunAt: [150, 210, 60], sunScale: 0.55
   };
   var NIGHT = {
     top: 0x04040f, mid: 0x0b0b2e, horizon: 0x241640,
     fog: 0x0a0a20, hemiSky: 0x2a2a55, hemiGround: 0x0c0a12,
-    sun: 0xffb36b, sunIntensity: 0.25, hemiIntensity: 0.55
+    sun: 0xffb36b, sunIntensity: 0.25, hemiIntensity: 0.55,
+    exposure: 0.9, cloud: 0.0, oceanSky: 0x0a1a3a, oceanDeep: 0x06121f,
+    sunPos: [120, 26, 18], sunAt: [400, 34, 26], sunScale: 1
   };
 
   core.init = function (canvas) {
@@ -132,39 +158,103 @@
     renderer.setPixelRatio(1);
     renderer.setSize(1280, 720, false);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Filmic tone mapping keeps the bright day sky from clipping to white
+    // while the sunset stays warm; exposure is set per time of day.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    // Sharp sun shadows in daylight: one 2048 shadow map over the city.
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     var scene = new THREE.Scene();
     // Fog colours the city, never the sky or the sun (their materials opt
     // out with fog:false — a v6.4 bug where fog washed the sunset out).
-    scene.fog = new THREE.Fog(DAY.fog, 70, 280);
+    scene.fog = new THREE.Fog(SUNSET.fog, 70, 280);
     var camera = new THREE.PerspectiveCamera(55, 1280 / 720, 0.1, 900);
     camera.position.set(0, 6, -14);
 
-    hemi = new THREE.HemisphereLight(DAY.hemiSky, DAY.hemiGround, DAY.hemiIntensity);
+    hemi = new THREE.HemisphereLight(SUNSET.hemiSky, SUNSET.hemiGround, SUNSET.hemiIntensity);
     scene.add(hemi);
-    sunLight = new THREE.DirectionalLight(DAY.sun, DAY.sunIntensity);
+    sunLight = new THREE.DirectionalLight(SUNSET.sun, SUNSET.sunIntensity);
     sunLight.position.set(120, 26, 18);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    sunLight.shadow.camera.left = -130; sunLight.shadow.camera.right = 130;
+    sunLight.shadow.camera.top = 130; sunLight.shadow.camera.bottom = -130;
+    sunLight.shadow.camera.near = 10; sunLight.shadow.camera.far = 520;
+    sunLight.shadow.bias = -0.0006;
     scene.add(sunLight);
+    scene.add(sunLight.target);
     var fill = new THREE.DirectionalLight(0x66ccff, 0.3);
     fill.position.set(-60, 40, -80);
     scene.add(fill);
 
-    // Sky dome: gradient shader, BackSide, fog:false so fog can never
-    // flatten the sunset colours.
+    // Sky dome: gradient shader with layered procedural clouds (value-noise
+    // fbm, two octaves, drifting with time). BackSide, fog:false so fog
+    // can never flatten the sunset colours. Cloud cover is a uniform:
+    // heavy at noon, light at golden hour, none at night.
     skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide, fog: false, depthWrite: false,
       uniforms: {
-        cTop: { value: new THREE.Color(DAY.top) },
-        cMid: { value: new THREE.Color(DAY.mid) },
-        cBot: { value: new THREE.Color(DAY.horizon) }
+        cTop: { value: new THREE.Color(SUNSET.top) },
+        cMid: { value: new THREE.Color(SUNSET.mid) },
+        cBot: { value: new THREE.Color(SUNSET.horizon) },
+        uCloud: { value: SUNSET.cloud },
+        uTime: { value: 0 },
+        uCloudTint: { value: new THREE.Color(0xffe8c9) }
       },
       vertexShader: 'varying vec3 vP; void main(){ vP = position; ' +
         'gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
       fragmentShader: 'varying vec3 vP; uniform vec3 cTop; uniform vec3 cMid; uniform vec3 cBot;' +
-        'void main(){ float h = normalize(vP).y; vec3 c = h > 0.12 ? mix(cMid, cTop, smoothstep(0.12, 0.65, h)) : mix(cBot, cMid, smoothstep(-0.08, 0.12, h));' +
+        'uniform float uCloud; uniform float uTime; uniform vec3 uCloudTint;' +
+        'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }' +
+        'float noise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);' +
+        ' return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y); }' +
+        'float fbm(vec2 p){ float v = 0.0; float a = 0.5; for (int i = 0; i < 3; i++) { v += a * noise(p); p *= 2.13; a *= 0.5; } return v; }' +
+        'void main(){ vec3 d = normalize(vP); float h = d.y;' +
+        ' vec3 c = h > 0.12 ? mix(cMid, cTop, smoothstep(0.12, 0.65, h)) : mix(cBot, cMid, smoothstep(-0.08, 0.12, h));' +
+        ' if (uCloud > 0.01 && h > 0.02) {' +
+        '  vec2 cuv = d.xz / (h + 0.18);' +
+        '  float n = fbm(cuv * 1.4 + vec2(uTime * 0.004, uTime * 0.0015));' +
+        '  float n2 = fbm(cuv * 3.1 - vec2(uTime * 0.006, 0.0));' +
+        '  float cl = smoothstep(1.0 - uCloud - 0.18, 1.0 - uCloud + 0.12, n * 0.75 + n2 * 0.35);' +
+        '  vec3 cloudCol = mix(uCloudTint * 0.92, vec3(1.0), clamp(n2 * 1.2, 0.0, 1.0));' +
+        '  c = mix(c, cloudCol, cl * smoothstep(0.02, 0.12, h)); }' +
         ' gl_FragColor = vec4(c, 1.0); }'
     });
     var sky = new THREE.Mesh(new THREE.SphereGeometry(430, 24, 16), skyMat);
     scene.add(sky);
+
+    // Puff clouds: flattened white sphere clusters drifting high above the
+    // city, so the sky has real volume, not just a painted dome.
+    cloudGroup = new THREE.Group();
+    var puffMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.94 });
+    var crng = core.mulberry32(4242);
+    for (var ci = 0; ci < 14; ci++) {
+      var puff = new THREE.Group();
+      var nP = 3 + Math.floor(crng() * 3);
+      for (var pi = 0; pi < nP; pi++) {
+        var s = core.mesh(core.sphGeo(1, 10, 8), puffMat,
+          (pi - 1) * 2.2 + (crng() - 0.5) * 1.5, (crng() - 0.5) * 0.8, (crng() - 0.5) * 2.5);
+        s.scale.set(2.2 + crng() * 1.6, 0.9 + crng() * 0.5, 1.8 + crng() * 1.2);
+        puff.add(s);
+      }
+      puff.position.set(-120 + crng() * 360, 55 + crng() * 35, -110 + crng() * 220);
+      cloudGroup.add(puff);
+    }
+    scene.add(cloudGroup);
+
+    // Cloud shadows: big soft dark ellipses drifting across the streets,
+    // so part of the city sits in a cloud's shade while the rest is lit.
+    core.cloudShadows = [];
+    var shTex = core.cloudShadowTexture();
+    for (var si = 0; si < 6; si++) {
+      var sh = core.mesh(core.planeGeo(26 + crng() * 18, 14 + crng() * 8),
+        new THREE.MeshBasicMaterial({ map: shTex, transparent: true, opacity: 0.16, depthWrite: false }),
+        -80 + crng() * 220, 0.12, -80 + crng() * 160);
+      sh.rotation.x = -Math.PI / 2;
+      scene.add(sh);
+      core.cloudShadows.push(sh);
+    }
 
     // Low sun over the ocean, east (+X). MeshBasicMaterial ignores light
     // and fog, so it stays a hot orange-gold disc.
@@ -192,16 +282,67 @@
     starPts.visible = false;
     scene.add(starPts);
 
-    // Ocean: teal-green plane east of the beach, plus foam strips.
-    var ocean = core.mesh(core.planeGeo(220, 340),
-      new THREE.MeshPhongMaterial({ color: 0x0f7a6e, shininess: 90, specular: 0x88ddcc }),
-      245, 0.0, 0);
+    // Ocean: animated waves, sky reflection and shoreline foam, all in
+    // one shader. Three travelling sine swells displace the surface and
+    // tilt its normals; the fragment mixes deep water into a fresnel sky
+    // reflection, adds a sun glint, and lays animated foam lace where the
+    // water meets the sand (world x near the 138 waterline).
+    oceanMat = new THREE.ShaderMaterial({
+      fog: false,
+      uniforms: {
+        uTime: { value: 0 },
+        uSunDir: { value: new THREE.Vector3(0.9, 0.2, 0.15).normalize() },
+        uSky: { value: new THREE.Color(SUNSET.oceanSky) },
+        uDeep: { value: new THREE.Color(SUNSET.oceanDeep) },
+        uSunCol: { value: new THREE.Color(0xffb347) },
+        uFogCol: { value: new THREE.Color(SUNSET.fog) }
+      },
+      vertexShader:
+        'uniform float uTime; varying vec3 vW; varying vec3 vN;' +
+        'float wave(vec2 p, vec2 dir, float amp, float len, float speed){' +
+        ' float k = 6.28318 / len; return amp * sin(k * (dot(dir, p) - speed * uTime)); }' +
+        'void main(){' +
+        ' vec2 p = position.xy;' +
+        ' float h = wave(p, vec2(1.0, 0.3), 0.35, 26.0, 1.1)' +
+        '         + wave(p, vec2(0.7, -0.7), 0.22, 13.0, 1.6)' +
+        '         + wave(p, vec2(-0.4, 0.9), 0.12, 7.0, 2.2);' +
+        ' float e = 0.6;' +
+        ' float hx = wave(p + vec2(e, 0.0), vec2(1.0, 0.3), 0.35, 26.0, 1.1)' +
+        '          + wave(p + vec2(e, 0.0), vec2(0.7, -0.7), 0.22, 13.0, 1.6)' +
+        '          + wave(p + vec2(e, 0.0), vec2(-0.4, 0.9), 0.12, 7.0, 2.2);' +
+        ' float hy = wave(p + vec2(0.0, e), vec2(1.0, 0.3), 0.35, 26.0, 1.1)' +
+        '          + wave(p + vec2(0.0, e), vec2(0.7, -0.7), 0.22, 13.0, 1.6)' +
+        '          + wave(p + vec2(0.0, e), vec2(-0.4, 0.9), 0.12, 7.0, 2.2);' +
+        ' vec3 pos = vec3(position.x, position.y, h);' +
+        ' vN = normalize(mat3(modelMatrix) * normalize(vec3(-(hx - h) / e, -(hy - h) / e, 1.0)));' +
+        ' vec4 wp = modelMatrix * vec4(pos, 1.0); vW = wp.xyz;' +
+        ' gl_Position = projectionMatrix * viewMatrix * wp; }',
+      fragmentShader:
+        'uniform float uTime; uniform vec3 uSunDir; uniform vec3 uSky; uniform vec3 uDeep;' +
+        'uniform vec3 uSunCol; uniform vec3 uFogCol; varying vec3 vW; varying vec3 vN;' +
+        'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }' +
+        'void main(){' +
+        ' vec3 V = normalize(cameraPosition - vW);' +
+        ' vec3 N = normalize(vN);' +
+        ' float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);' +
+        ' vec3 col = mix(uDeep, uSky, 0.25 + 0.75 * fres);' +
+        ' vec3 R = reflect(-V, N);' +
+        ' float glint = pow(max(dot(R, uSunDir), 0.0), 90.0) * 1.6;' +
+        ' col += uSunCol * glint;' +
+        ' float shore = 1.0 - smoothstep(136.0, 150.0, vW.x);' +
+        ' float stripes = 0.5 + 0.5 * sin(vW.x * 2.2 + uTime * 1.4 + sin(vW.z * 0.35) * 1.5);' +
+        ' float lace = hash(floor(vW.xz * vec2(2.0, 6.0)) + floor(uTime * 0.7));' +
+        ' float foam = shore * smoothstep(0.45, 0.9, stripes * 0.7 + lace * 0.35);' +
+        ' col = mix(col, vec3(0.95, 0.98, 0.96), foam * 0.85);' +
+        ' float fogF = smoothstep(70.0, 280.0, distance(cameraPosition, vW));' +
+        ' col = mix(col, uFogCol, fogF);' +
+        ' gl_FragColor = vec4(col, 1.0); }'
+    });
+    var ocean = new THREE.Mesh(new THREE.PlaneGeometry(220, 340, 44, 60), oceanMat);
     ocean.rotation.x = -Math.PI / 2;
+    ocean.position.set(245, 0.0, 0);
     scene.add(ocean);
-    for (var f = 0; f < 3; f++) {
-      var foam = core.box(1.6, 0.06, 300, 0xdff5ee, 137 + f * 3.5, 0.06, 0);
-      scene.add(foam);
-    }
+    core.oceanMat = oceanMat;
     // Dark ground base under the whole city.
     var ground = core.mesh(core.planeGeo(420, 420),
       new THREE.MeshLambertMaterial({ color: 0x23202e }), 30, -0.06, 0);
@@ -215,18 +356,67 @@
   };
 
   core.setTimeOfDay = function (mode) {
-    var P = mode === 'night' ? NIGHT : DAY;
+    var P = mode === 'night' ? NIGHT : (mode === 'day' ? DAY : SUNSET);
     core.mode = mode;
     skyMat.uniforms.cTop.value.setHex(P.top);
     skyMat.uniforms.cMid.value.setHex(P.mid);
     skyMat.uniforms.cBot.value.setHex(P.horizon);
+    skyMat.uniforms.uCloud.value = P.cloud;
+    skyMat.uniforms.uCloudTint.value.setHex(mode === 'day' ? 0xffffff : 0xffe8c9);
     core.scene.fog.color.setHex(P.fog);
     hemi.color.setHex(P.hemiSky); hemi.groundColor.setHex(P.hemiGround);
     hemi.intensity = P.hemiIntensity;
+    sunLight.color.setHex(P.sun);
     sunLight.intensity = P.sunIntensity;
+    sunLight.position.set(P.sunPos[0], P.sunPos[1], P.sunPos[2]);
+    core.renderer.toneMappingExposure = P.exposure;
     sunMesh.visible = mode !== 'night';
     sunGlow.visible = mode !== 'night';
+    sunMesh.position.set(P.sunAt[0], P.sunAt[1], P.sunAt[2]);
+    sunMesh.scale.setScalar(P.sunScale);
+    sunMesh.material.color.setHex(mode === 'day' ? 0xfff8d0 : 0xffb347);
+    sunMesh.lookAt(0, P.sunAt[1], P.sunAt[2]);
+    sunGlow.position.set(P.sunAt[0], P.sunAt[1], P.sunAt[2]);
+    sunGlow.scale.set(mode === 'day' ? 90 : 190, mode === 'day' ? 90 : 190, 1);
     starPts.visible = mode === 'night';
+    // Puff clouds only at noon: in golden hour they rendered as grey
+    // floating rocks in the title frame; the shader clouds carry sunset.
+    if (cloudGroup) cloudGroup.visible = mode === 'day';
+    if (core.cloudShadows) {
+      for (var i = 0; i < core.cloudShadows.length; i++) {
+        core.cloudShadows[i].visible = mode === 'day';
+      }
+    }
+    if (oceanMat) {
+      oceanMat.uniforms.uSky.value.setHex(P.oceanSky);
+      oceanMat.uniforms.uDeep.value.setHex(P.oceanDeep);
+      oceanMat.uniforms.uSunCol.value.setHex(mode === 'day' ? 0xfff3c9 : 0xffb347);
+      oceanMat.uniforms.uFogCol.value.setHex(P.fog);
+      oceanMat.uniforms.uSunDir.value.set(
+        P.sunPos[0], P.sunPos[1], P.sunPos[2]).normalize();
+    }
+  };
+
+  // Per-frame animation: ocean time, sky-cloud drift, puff clouds and
+  // their ground shadows drifting across the city.
+  core.tick = function (dt) {
+    if (skyMat) skyMat.uniforms.uTime.value += dt;
+    if (oceanMat) oceanMat.uniforms.uTime.value += dt;
+    if (cloudGroup && cloudGroup.visible) {
+      for (var i = 0; i < cloudGroup.children.length; i++) {
+        var p = cloudGroup.children[i];
+        p.position.x += dt * 0.6;
+        if (p.position.x > 260) p.position.x = -140;
+      }
+    }
+    if (core.cloudShadows) {
+      for (var j = 0; j < core.cloudShadows.length; j++) {
+        var s = core.cloudShadows[j];
+        if (!s.visible) continue;
+        s.position.x += dt * 0.8;
+        if (s.position.x > 150) s.position.x = -110;
+      }
+    }
   };
 
   // ------------------------------------------------------------ glow sprite
@@ -286,44 +476,134 @@
     return tex;
   };
 
-  // Building facade: pastel wall, a grid of windows (some lit warm, some
-  // curtained, some dark), a darker ground floor with a shopfront.
+  // Building facade: pastel wall, a grid of windows whose glass reflects
+  // the sky (a per-pane blue gradient with a diagonal sun streak, not a
+  // flat dark slab), frames with sills and centre mullions, lit windows in
+  // several different brightnesses, a real door, and a contact-AO gradient
+  // darkening the wall where it meets the street.
   core.facadeTexture = function (wallColor, floors, cols, rng, litRatio) {
     var w = 256, h = 256;
     var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
     var g = cv.getContext('2d');
     g.fillStyle = wallColor; g.fillRect(0, 0, w, h);
-    // faint vertical panel seams
+    // faint vertical panel seams + speckle so the wall is not flat colour
     g.fillStyle = 'rgba(0,0,0,0.10)';
     for (var px = 0; px < w; px += 32) g.fillRect(px, 0, 2, h);
+    for (var sp = 0; sp < 260; sp++) {
+      g.fillStyle = 'rgba(0,0,0,' + (rng() * 0.05) + ')';
+      g.fillRect(rng() * w, rng() * (h - 34), 2, 2);
+    }
     var cw = w / cols, ch = (h - 34) / floors;
     for (var f = 0; f < floors; f++) {
       for (var c = 0; c < cols; c++) {
         var x = c * cw + cw * 0.25, y = 6 + f * ch + ch * 0.18;
         var ww = cw * 0.5, hh = ch * 0.62;
         var r = rng();
-        if (r < litRatio) g.fillStyle = '#ffd98a';            // lit warm
-        else if (r < litRatio + 0.12) g.fillStyle = '#7fb8c9'; // curtained
-        else g.fillStyle = '#1d2436';                          // dark glass
+        if (r < litRatio * 0.5) g.fillStyle = '#fff2c9';       // bright lit
+        else if (r < litRatio) g.fillStyle = '#ffd98a';        // lit warm
+        else if (r < litRatio + 0.1) g.fillStyle = '#ff9a5a';  // lit amber
+        else if (r < litRatio + 0.22) g.fillStyle = '#7fb8c9'; // curtained
+        else {
+          // sky-reflecting glass: pale blue at the top, deep blue below,
+          // with a diagonal sun streak — the pane mirrors the sky.
+          var gr = g.createLinearGradient(x, y, x, y + hh);
+          gr.addColorStop(0, '#cfe8ff'); gr.addColorStop(0.45, '#5a8fc9');
+          gr.addColorStop(1, '#16283e');
+          g.fillStyle = gr;
+        }
         g.fillRect(x, y, ww, hh);
-        g.fillStyle = 'rgba(255,255,255,0.25)';
-        g.fillRect(x, y, ww, 3); // top glint
-        g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 2;
-        g.strokeRect(x, y, ww, hh);
-        if (r >= litRatio && r < litRatio + 0.12) {
+        if (r >= litRatio + 0.22) {
+          // diagonal sun streak + top glint on the reflective panes
+          g.fillStyle = 'rgba(255,255,255,0.4)';
+          g.beginPath();
+          g.moveTo(x + ww * 0.1, y + hh); g.lineTo(x + ww * 0.55, y);
+          g.lineTo(x + ww * 0.72, y); g.lineTo(x + ww * 0.27, y + hh);
+          g.closePath(); g.fill();
+          g.fillStyle = 'rgba(255,255,255,0.3)';
+          g.fillRect(x, y, ww, 3);
+          // centre mullion splits the pane in two
+          g.fillStyle = 'rgba(20,24,36,0.8)';
+          g.fillRect(x + ww / 2 - 1, y, 2, hh);
+        }
+        // frame + sill: the window sits in the wall, not on it
+        g.strokeStyle = '#20242e'; g.lineWidth = 3;
+        g.strokeRect(x - 1, y - 1, ww + 2, hh + 2);
+        g.fillStyle = 'rgba(255,255,255,0.35)';
+        g.fillRect(x - 3, y + hh + 2, ww + 6, 3);
+        g.fillStyle = 'rgba(0,0,0,0.25)';
+        g.fillRect(x - 3, y + hh + 5, ww + 6, 2);
+        if (r >= litRatio && r < litRatio + 0.1) {
           g.fillStyle = 'rgba(255,120,160,0.5)';
           g.fillRect(x + ww * 0.15, y + hh * 0.2, ww * 0.7, hh * 0.16);
         }
       }
     }
-    // ground floor shopfront: dark band + glass + door
+    // ground floor shopfront: dark band + glass + a real door
     g.fillStyle = '#241a2e'; g.fillRect(0, h - 34, w, 34);
     g.fillStyle = '#3a2f4d'; g.fillRect(6, h - 30, w - 12, 22);
     g.fillStyle = '#9fd8ff'; g.fillRect(10, h - 28, w * 0.55, 18);
     g.fillStyle = '#5a3a22'; g.fillRect(w * 0.68, h - 28, w * 0.2, 18);
+    g.strokeStyle = '#c9a86a'; g.lineWidth = 2;
+    g.strokeRect(w * 0.68, h - 28, w * 0.2, 18);
+    g.fillStyle = '#f2f2f2'; g.fillRect(w * 0.83, h - 20, 3, 4); // handle
+    // contact AO: the wall darkens where it meets the pavement
+    var ao = g.createLinearGradient(0, h - 16, 0, h);
+    ao.addColorStop(0, 'rgba(0,0,0,0)'); ao.addColorStop(1, 'rgba(0,0,0,0.5)');
+    g.fillStyle = ao; g.fillRect(0, h - 16, w, 16);
     var tex = new THREE.CanvasTexture(cv);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
+    return tex;
+  };
+
+  // Plain wall (panel seams + base AO, no painted windows) for facades
+  // that carry real 3D recessed windows instead.
+  core.plainWallTexture = function (wallColor) {
+    var w = 256, h = 256;
+    var cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    var g = cv.getContext('2d');
+    g.fillStyle = wallColor; g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgba(0,0,0,0.10)';
+    for (var px = 0; px < w; px += 32) g.fillRect(px, 0, 2, h);
+    for (var sp = 0; sp < 260; sp++) {
+      g.fillStyle = 'rgba(0,0,0,' + (Math.random() * 0.05) + ')';
+      g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+    }
+    var ao = g.createLinearGradient(0, h - 20, 0, h);
+    ao.addColorStop(0, 'rgba(0,0,0,0)'); ao.addColorStop(1, 'rgba(0,0,0,0.5)');
+    g.fillStyle = ao; g.fillRect(0, h - 20, w, 20);
+    var tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
+  };
+
+  // Soft radial shadow blob, used for cloud shadows on the streets and
+  // for the dark pool under each building (contact AO on the ground).
+  var cloudShadowTex = null;
+  core.cloudShadowTexture = function () {
+    if (cloudShadowTex) return cloudShadowTex;
+    var cv = document.createElement('canvas'); cv.width = 128; cv.height = 128;
+    var g = cv.getContext('2d');
+    var gr = g.createRadialGradient(64, 64, 4, 64, 64, 62);
+    gr.addColorStop(0, 'rgba(0,0,0,0.85)');
+    gr.addColorStop(0.6, 'rgba(0,0,0,0.4)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    cloudShadowTex = new THREE.CanvasTexture(cv);
+    return cloudShadowTex;
+  };
+
+  // Vertical AO strip for the base of a facade: dark at the pavement,
+  // fading out as it rises.
+  core.aoStripTexture = function () {
+    var cv = document.createElement('canvas'); cv.width = 16; cv.height = 64;
+    var g = cv.getContext('2d');
+    var gr = g.createLinearGradient(0, 64, 0, 0);
+    gr.addColorStop(0, 'rgba(0,0,0,0.55)');
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 16, 64);
+    var tex = new THREE.CanvasTexture(cv);
     return tex;
   };
 

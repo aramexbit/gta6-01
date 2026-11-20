@@ -1,912 +1,571 @@
-// PIER HEAT — Sunset Bay: boot, input, shooting, main loop, procedural sound.
-// Wires the HUD in index.html to the simulation in sim.js and the world in
-// world.js. No network, no assets: every sound is a WebAudio oscillator.
-
+// PIER HEAT v6.4 — main.js
+// Renderer, sun + sky lighting, chase / foot / title cameras, the dense HUD
+// (dispatch board, weapon wheel, vitals, minimap, dialogue), keyboard input,
+// the four deterministic screenshot stages, day/night switching and the
+// main loop. Written fresh for v6.4; nothing here is copied from an earlier
+// version.
 (function () {
   'use strict';
-  var PH = window.PH;
-  var sim = PH.sim;
-  var W = PH.world;
 
-  var canvas = document.getElementById('game-canvas');
-  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.5;
+  var state = window.PH.state;
+  var sim = window.PH.sim;
 
-  var scene = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2000);
-  camera.position.set(20, 4, 8);
+  var scene, camera, renderer, clock;
+  var worldRefs;
+  var sunLight, hemiLight;
+  var cameraMode = 'title';            // title | chase | foot
+  var camDist = 8.5, camHeight = 3.4;  // chase/foot framing (v6.4: closer)
+  var camSide = 0;                     // v6.4: lateral offset for a rear 3/4 hero view
+  var camPos = { x: 0, y: 0, z: 0 };
+  var night = false;
+  var stagedTracers = [];
+  var hudTimer = 0;
+  var radioIdx = 0;
+  var radioLines = [
+    'RADIO SUNSET 98.4 — good evening, Bay City.',
+    'RADIO SUNSET 98.4 — traffic heavy on Ocean Drive, drive safe.',
+    'SBPD DISPATCH — all units, be advised: orange sports car, Ocean Drive.',
+    'RADIO SUNSET 98.4 — tonight: the Neon Bowl all-nighter, Pier 9.',
+    'KIRA — Mateo, the gates are lit. Go, go, go!',
+  ];
 
-  sim.init(scene);
-  sim.updateCamera(0.01, camera);
+  function $(id) { return document.getElementById(id); }
 
-  // ------------------------------------------------------------ audio
-  var AudioSys = {
-    ctx: null, engineOsc: null, engineGain: null, musicOsc: [], musicGain: null, sirenOsc: null, sirenGain: null, started: false,
-    init: function () {
-      if (this.ctx) return;
-      try {
-        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-        // Engine hum: two detuned saws through a lowpass, gain follows speed.
-        this.engineGain = this.ctx.createGain(); this.engineGain.gain.value = 0;
-        var filt = this.ctx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 420;
-        this.engineOsc = this.ctx.createOscillator(); this.engineOsc.type = 'sawtooth'; this.engineOsc.frequency.value = 55;
-        var osc2 = this.ctx.createOscillator(); osc2.type = 'sawtooth'; osc2.frequency.value = 82;
-        this.engineOsc.connect(filt); osc2.connect(filt);
-        filt.connect(this.engineGain); this.engineGain.connect(this.ctx.destination);
-        this.engineOsc.start(); osc2.start(); this.engineOsc2 = osc2;
-        // Siren: two-tone square, quiet until wanted >= 1.
-        this.sirenGain = this.ctx.createGain(); this.sirenGain.gain.value = 0;
-        this.sirenOsc = this.ctx.createOscillator(); this.sirenOsc.type = 'square'; this.sirenOsc.frequency.value = 700;
-        this.sirenOsc.connect(this.sirenGain); this.sirenGain.connect(this.ctx.destination);
-        this.sirenOsc.start();
-        // Radio: original synth loop — a slow minor arpeggio.
-        this.musicGain = this.ctx.createGain(); this.musicGain.gain.value = 0.05;
-        this.musicGain.connect(this.ctx.destination);
-        this.musicStep = 0;
-        this.musicTimer = setInterval(this.musicTick.bind(this), 240);
-        this.started = true;
-      } catch (e) { /* audio unavailable: play silent */ }
-    },
-    musicTick: function () {
-      if (!this.ctx || !PH.state.radioOn) return;
-      var scale = PH.state.radio === 0 ? [110, 130.8, 164.8, 196, 220, 261.6] : PH.state.radio === 1 ? [98, 123.5, 146.8, 196, 246.9] : [82.4, 110, 164.8, 220];
-      var f = scale[this.musicStep % scale.length];
-      this.musicStep++;
-      var o = this.ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = f * 2;
-      var g = this.ctx.createGain();
-      g.gain.setValueAtTime(0.12, this.ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.5);
-      o.connect(g); g.connect(this.musicGain);
-      o.start(); o.stop(this.ctx.currentTime + 0.55);
-    },
-    gunshot: function () {
-      if (!this.ctx) return;
-      var dur = 0.14;
-      var buf = this.ctx.createBuffer(1, this.ctx.sampleRate * dur, this.ctx.sampleRate);
-      var data = buf.getChannelData(0);
-      for (var i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 2);
-      var src = this.ctx.createBufferSource(); src.buffer = buf;
-      var g = this.ctx.createGain(); g.gain.value = 0.5;
-      src.connect(g); g.connect(this.ctx.destination); src.start();
-    },
-    update: function () {
-      if (!this.ctx) return;
-      var st = PH.state;
-      var speed = st.inCar ? Math.abs(sim.playerCarData ? sim.playerCarData.speed : 0) : 0;
-      if (this.engineGain) this.engineGain.gain.value = st.inCar ? 0.03 + speed * 0.002 : 0;
-      if (this.engineOsc) this.engineOsc.frequency.value = 50 + speed * 4;
-      if (this.engineOsc2) this.engineOsc2.frequency.value = 75 + speed * 6;
-      if (this.sirenGain) {
-        this.sirenGain.gain.value = st.wanted >= 1 ? 0.02 : 0;
-        if (this.sirenOsc) this.sirenOsc.frequency.value = 620 + 180 * Math.sin(sim.elapsed * 4);
-      }
-    },
-  };
+  // ------------------------------------------------------------ toast
+  var toastTimer = null;
+  function toast(msg) {
+    var t = $('toast');
+    if (!t) return;
+    t.textContent = msg;
+    t.style.display = 'block';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.style.display = 'none'; }, 2600);
+  }
+  window.PH.toast = toast;
 
-  // ------------------------------------------------------------ HUD
-  var el = {};
-  ['mission-title', 'mission-timer', 'mission-stage', 'mission-objective', 'mission-progress', 'mission-next',
-   'money', 'stars', 'wanted-label', 'air-line', 'radio-name', 'radio-desc', 'radio-line',
-   'police-feed', 'police-count', 'loc-area', 'loc-sub',
-   'health-bar', 'car-bar', 'health-num', 'car-num',
-   'health-bar2', 'armour-bar', 'respect-bar', 'health-num2', 'armour-num', 'respect-num', 'rank-line',
-   'weapon-slots', 'car-name', 'car-cond', 'speed',
-   'dialogue', 'dialogue-name', 'dialogue-role', 'dialogue-text', 'dialogue-portrait', 'toast',
-   'start-screen', 'pause-screen', 'busted-screen', 'busted-text'].forEach(function (id) {
-    el[id] = document.getElementById(id);
-  });
-  var minimap = document.getElementById('minimap');
-  var mm = minimap.getContext('2d');
+  // ------------------------------------------------------------ init
+  function init() {
+    var canvas = $('c');
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    if ('outputColorSpace' in renderer && THREE.SRGBColorSpace !== undefined) {
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+    } else if ('outputEncoding' in renderer && THREE.sRGBEncoding !== undefined) {
+      renderer.outputEncoding = THREE.sRGBEncoding;
+    }
+    if (THREE.ACESFilmicToneMapping !== undefined) {
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.15;
+    }
 
-  function fmtClock(seconds) {
-    var s = Math.max(0, Math.floor(seconds));
-    var mm = Math.floor(s / 60), ss = s % 60;
-    return (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x9fd4ff, 220, 640);
+    camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(120, 30, 80);
+
+    // Saturated golden-hour sun + bright sky fill. No pale wash.
+    sunLight = new THREE.DirectionalLight(0xffd9a0, 1.25);
+    sunLight.position.set(320, 190, 90);
+    scene.add(sunLight);
+    hemiLight = new THREE.HemisphereLight(0x7fb8ff, 0x4a3428, 0.95);
+    scene.add(hemiLight);
+
+    worldRefs = window.PHWORLD.buildWorld(scene);
+    window.PH.initSim(scene, worldRefs);
+
+    bindInput();
+    refreshSlots();
+    drawPortrait('KIRA');
+
+    clock = new THREE.Clock();
+    var params = new URLSearchParams(window.location.search);
+    if (params.get('autostart') === '1') startGame();
+    else showTitle(); // title screen up, HUD hidden behind it
+
+    window.addEventListener('resize', function () {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    renderer.render(scene, camera);
+    window.__PIERHEAT_READY = true;
+    renderer.setAnimationLoop(loop);
   }
 
-  // Kira's portrait, drawn procedurally on a small canvas (no photo, no
-  // download): dark bob hair, warm skin, teal jacket, radio headset.
-  var portraitDrawnFor = '';
-  function drawPortrait() {
-    var c = el['dialogue-portrait'];
-    if (!c) return;
-    var key = PH.dialogue.name + '|' + PH.dialogue.text.slice(0, 12);
-    if (portraitDrawnFor === key) return;
-    portraitDrawnFor = key;
-    var g = c.getContext('2d');
-    var bg = g.createLinearGradient(0, 0, 0, 64);
-    bg.addColorStop(0, '#3a2a6e'); bg.addColorStop(1, '#b83a6e');
-    g.fillStyle = bg; g.fillRect(0, 0, 64, 64);
-    g.fillStyle = '#1d7a6e'; // shoulders / teal jacket
-    g.beginPath(); g.moveTo(6, 64); g.quadraticCurveTo(10, 46, 32, 46); g.quadraticCurveTo(54, 46, 58, 64); g.closePath(); g.fill();
-    g.fillStyle = '#f2f2f2'; g.fillRect(29, 46, 6, 18); // tee sliver
-    g.fillStyle = '#c98a5e'; g.fillRect(27, 38, 10, 10); // neck
-    g.fillStyle = '#e8b88a'; // face
-    g.beginPath(); g.ellipse(32, 27, 12, 14, 0, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#1a1a1a'; // bob hair: cap + side falls
-    g.beginPath(); g.ellipse(32, 15, 13, 8, 0, Math.PI, 0); g.fill();
-    g.fillRect(19, 14, 5, 18); g.fillRect(40, 14, 5, 18);
-    g.fillStyle = '#1a1a1a'; // eyes
-    g.fillRect(24, 25, 4, 2); g.fillRect(36, 25, 4, 2);
-    g.fillStyle = '#8a3a3a'; // smile
-    g.beginPath(); g.arc(32, 34, 3, 0.15 * Math.PI, 0.85 * Math.PI); g.fill();
-    g.strokeStyle = '#222'; g.lineWidth = 2; // headset band + mic boom
-    g.beginPath(); g.arc(32, 22, 14, Math.PI * 1.1, Math.PI * 1.9); g.stroke();
-    g.beginPath(); g.moveTo(45, 30); g.quadraticCurveTo(44, 36, 38, 36); g.stroke();
-    g.fillStyle = '#ffc93c'; g.beginPath(); g.arc(38, 36, 2, 0, Math.PI * 2); g.fill();
+  // ------------------------------------------------------------ input
+  function bindInput() {
+    window.addEventListener('keydown', function (e) {
+      sim.keys[e.code] = true;
+      if (e.code === 'KeyE' && !e.repeat && state.started) {
+        if (state.inCar) window.PH.sim && exitCarSafe();
+        else enterCarSafe();
+      }
+      if ((e.code === 'KeyF' || e.code === 'Space') && !e.repeat && state.started && !state.inCar) {
+        if (e.code === 'KeyF') window.PH.debug.shoot();
+      }
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].indexOf(e.code) >= 0) e.preventDefault();
+    });
+    window.addEventListener('keyup', function (e) { sim.keys[e.code] = false; });
+    window.addEventListener('mousedown', function () {
+      if (state.started && !state.inCar) window.PH.debug.shoot();
+    });
+    $('start-btn').addEventListener('click', function () { startGame(); });
+  }
+
+  function enterCarSafe() {
+    // sim.enterCar lives in the sim module scope; reach it via debug-free path.
+    window.PH.simEnterCar();
+    window.PH.setCameraMode('chase', 8.5, 3.4);
+  }
+  function exitCarSafe() {
+    window.PH.simExitCar();
+    window.PH.setCameraMode('foot', 5.5, 2.6);
+  }
+
+  function startGame() {
+    state.started = true;
+    var ts = $('title-screen');
+    if (ts) ts.style.display = 'none';
+    var hud = $('hud');
+    if (hud) hud.style.display = 'block';
+    cameraMode = state.inCar ? 'chase' : 'foot';
+    toast(window.PH.mission().briefing);
+  }
+
+  function showTitle() {
+    state.started = false;
+    var ts = $('title-screen');
+    if (ts) ts.style.display = 'flex';
+    var hud = $('hud');
+    if (hud) hud.style.display = 'none'; // title shot: no HUD panels showing through
+    refreshSlots();
+    cameraMode = 'title';
+  }
+
+  // ------------------------------------------------------------ save slots
+  function refreshSlots() {
+    var save = window.PH.loadSave();
+    var slot = $('slot-1');
+    if (!slot) return;
+    if (save) {
+      var m = window.PH.MISSIONS[save.missionIndex] || window.PH.MISSIONS[0];
+      slot.innerHTML = '<b>SLOT 1</b><br>' + m.id + ' ' + m.name + '<br>' +
+        window.PH.fmtMoney(save.money) + ' · Respect ' + save.respect;
+    } else {
+      slot.innerHTML = '<b>SLOT 1</b><br><span class="empty">EMPTY — NEW GAME</span>';
+    }
+  }
+
+  // ------------------------------------------------------------ portrait
+  function drawPortrait(who) {
+    var cv = $('dialogue-portrait');
+    if (!cv) return;
+    var g = cv.getContext('2d');
+    g.clearRect(0, 0, 128, 128);
+    var bg = g.createLinearGradient(0, 0, 0, 128);
+    bg.addColorStop(0, '#3a0a4d'); bg.addColorStop(1, '#12002b');
+    g.fillStyle = bg; g.fillRect(0, 0, 128, 128);
+    if (who === 'KIRA') {
+      g.fillStyle = '#1a1a2e';
+      g.beginPath(); g.ellipse(64, 62, 34, 42, 0, 0, Math.PI * 2); g.fill(); // hair
+      g.fillStyle = '#e8b98a';
+      g.beginPath(); g.ellipse(64, 66, 26, 32, 0, 0, Math.PI * 2); g.fill(); // face
+      g.fillStyle = '#1a1a2e';
+      g.beginPath(); g.ellipse(64, 40, 28, 16, 0, Math.PI, 0); g.fill();     // fringe
+      g.fillStyle = '#ffffff';
+      g.beginPath(); g.arc(54, 64, 4, 0, Math.PI * 2); g.arc(74, 64, 4, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#111111';
+      g.beginPath(); g.arc(54, 64, 2, 0, Math.PI * 2); g.arc(74, 64, 2, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = '#ff5d8f'; g.lineWidth = 3;
+      g.beginPath(); g.arc(64, 84, 8, 0.2, Math.PI - 0.2); g.stroke();
+      g.fillStyle = '#ff2fb3'; g.fillRect(30, 108, 68, 20);                    // jacket
+    } else {
+      g.fillStyle = '#e8b98a';
+      g.beginPath(); g.ellipse(64, 66, 26, 32, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#101826'; g.fillRect(38, 34, 52, 16);                    // cap
+      g.fillRect(38, 46, 66, 8);
+      g.fillStyle = '#111111';
+      g.beginPath(); g.arc(54, 64, 2, 0, Math.PI * 2); g.arc(74, 64, 2, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#ff7a00'; g.fillRect(30, 108, 68, 20);
+    }
+  }
+
+  function showDialogue(name, text) {
+    var d = $('dialogue');
+    if (!d) return;
+    $('dialogue-name').textContent = name;
+    $('dialogue-text').textContent = text;
+    drawPortrait(name);
+    d.style.display = 'flex';
+    $('crosshair').style.display = state.inCar ? 'none' : 'block';
+  }
+  function hideDialogue() {
+    var d = $('dialogue');
+    if (d) d.style.display = 'none';
+    $('crosshair').style.display = 'none';
+  }
+
+  // ------------------------------------------------------------ day / night
+  function setNight(on) {
+    night = !!on;
+    if (!worldRefs) return;
+    if (night) {
+      worldRefs.skyMat.map = worldRefs.skyNight;
+      worldRefs.skyMat.needsUpdate = true;
+      worldRefs.sun.visible = false;
+      worldRefs.sunGlow.visible = false;
+      worldRefs.moon.visible = true;
+      sunLight.intensity = 0.5;
+      sunLight.color.setHex(0x9db8ff);
+      hemiLight.intensity = 0.7; // true night, but the kiosks must still read
+      scene.fog.color.setHex(0x0a0f1e);
+      scene.fog.near = 90; scene.fog.far = 420;
+    } else {
+      worldRefs.skyMat.map = worldRefs.skySunset;
+      worldRefs.skyMat.needsUpdate = true;
+      worldRefs.sun.visible = true;
+      worldRefs.sunGlow.visible = true;
+      worldRefs.moon.visible = false;
+      sunLight.intensity = 1.25;
+      sunLight.color.setHex(0xffd9a0);
+      hemiLight.intensity = 0.95;
+      scene.fog.color.setHex(0x9fd4ff);
+      scene.fog.near = 220; scene.fog.far = 640;
+    }
+  }
+
+  // ------------------------------------------------------------ staged tracers
+  function clearStagedTracers() {
+    stagedTracers.forEach(function (m) {
+      scene.remove(m);
+      m.geometry.dispose(); m.material.dispose();
+    });
+    stagedTracers = [];
+  }
+
+  function addStagedTracers() {
+    clearStagedTracers();
+    var p = sim.player;
+    var dx = Math.sin(p.camYaw), dz = Math.cos(p.camYaw);
+    var ox = p.x + dx * 0.9, oz = p.z + dz * 0.9;
+    for (var k = 0; k < 3; k++) {
+      var spread = (k - 1) * 0.55;
+      var len = 26 - Math.abs(k - 1) * 6;
+      var mat = new THREE.MeshBasicMaterial({
+        color: k === 1 ? 0xffe14d : 0xff9d00, transparent: true, opacity: k === 1 ? 0.95 : 0.6,
+      });
+      var tr = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, len), mat);
+      tr.position.set(
+        ox + dx * len / 2 - Math.cos(p.camYaw) * spread,
+        1.35 - k * 0.12,
+        oz + dz * len / 2 + Math.sin(p.camYaw) * spread);
+      tr.rotation.y = p.camYaw;
+      scene.add(tr);
+      stagedTracers.push(tr);
+    }
+    sim.muzzle.position.set(ox, 1.55, oz);
+    sim.muzzle.intensity = 4;
+  }
+
+  // ------------------------------------------------------------ stages
+  function resetStageCommon() {
+    clearStagedTracers();
+    hideDialogue();
+    if (window.PH.debug.hideRoadblock) window.PH.debug.hideRoadblock();
+    if (window.PH.debug.hideFallen) window.PH.debug.hideFallen();
+    if (worldRefs.beacon) worldRefs.beacon.visible = false;
+    sim.autoDrive = false;
+    sim.holdPolice = false;
+    sim.cruiseSpeed = null;
+    camSide = 0;
+    setNight(false);
+    var ts = $('title-screen');
+    if (ts) ts.style.display = 'none';
+    var hud = $('hud');
+    if (hud) hud.style.display = 'block';
+    state.started = true;
+  }
+
+  function placeArrow(x, z, yaw, speed) {
+    var a = sim.arrowCar;
+    a.x = x; a.z = z; a.yaw = yaw; a.speed = speed || 0;
+    sim.player.x = x; sim.player.z = z; sim.player.camYaw = yaw;
+  }
+
+  function stageChase() {
+    resetStageCommon();
+    state.inCar = true; state.currentCar = 'arrow';
+    state.missionIndex = 1; state.missionStage = 1; state.missionTimeLeft = 240;
+    state.money = 15300; state.respect = 140; // M1 is banked in this shot
+    placeArrow(30, -4, Math.PI / 2, 12);
+    window.PH.debug.setWanted(3);
+    // Two police flanking the hero, like the concept: one left-rear, one
+    // right-ahead in the oncoming lane — both inside the 3/4 frame.
+    var cops = sim.police.filter(function (c) { return c.alive; });
+    if (cops[0]) { cops[0].x = 26; cops[0].z = -8.4; cops[0].yaw = Math.PI / 2; cops[0].speed = 12; }
+    if (cops[1]) { cops[1].x = 36; cops[1].z = 3.2; cops[1].yaw = Math.PI / 2; cops[1].speed = 12; }
+    sim.holdPolice = true;
+    sim.cruiseSpeed = 12; // pinned: the frame must survive a slow capture
+    window.PH.debug.placeRoadblock(112, 0, Math.PI / 2);
+    window.PH.debug.snapHeli(13);
+    window.PH.debug.clearCorridor(25, -7, 9);
+    window.PH.debug.crowdNear(60, 0, 'x', 24);
+    window.PH.debug.stageTraffic(30, -4, Math.PI / 2, 10);
+    sim.autoDrive = true;
+    cameraMode = 'chase'; camDist = 7.0; camSide = 2.2; camHeight = 2.8; // hero fills ~1/3 frame, whole car in shot
+    return { shot: '1-chase', wanted: state.wanted, police: cops.length,
+      heli: !!sim.heli, speed: Math.round(state.speedKmh) };
+  }
+
+  function stageStreet() {
+    resetStageCommon();
+    state.inCar = true; state.currentCar = 'arrow';
+    state.missionIndex = 1; state.missionStage = 2; state.missionTimeLeft = 200;
+    state.money = 15300; state.respect = 140; // M1 is banked in this shot
+    placeArrow(97, 40, Math.PI, 12);
+    window.PH.debug.setWanted(3);
+    var cops = sim.police.filter(function (c) { return c.alive; });
+    if (cops[0]) { cops[0].x = 91; cops[0].z = 22; cops[0].yaw = Math.PI; cops[0].speed = 12; }
+    if (cops[1]) { cops[1].x = 103; cops[1].z = 22; cops[1].yaw = Math.PI; cops[1].speed = 12; }
+    if (cops[2]) { cops[2].x = 97; cops[2].z = 6; cops[2].yaw = 0; cops[2].speed = 0; }
+    sim.holdPolice = true;
+    sim.cruiseSpeed = 12;
+    window.PH.debug.placeRoadblock(97, -40, 0);
+    window.PH.debug.snapHeli(13);
+    window.PH.debug.clearCorridor(100, 49, 9);
+    window.PH.debug.crowdNear(97, 40, 'z', 18);
+    window.PH.debug.stageTraffic(97, 40, Math.PI, 6);
+    sim.autoDrive = true;
+    cameraMode = 'chase'; camDist = 7.0; camSide = 2.2; camHeight = 2.8;
+    return { shot: '2-street', wanted: state.wanted, police: cops.length, heli: !!sim.heli };
+  }
+
+  function stageMission() {
+    resetStageCommon();
+    setNight(true); // true night: dark sky, kiosk lights carry the frame
+    state.inCar = false; state.currentCar = null;
+    state.missionIndex = 2; state.missionStage = 1; state.missionTimeLeft = 280;
+    state.money = 20300; state.respect = 200; // M1 + M2 banked in this shot
+    // Face SOUTH down the market street (yaw 0): the stalls line z 60..130
+    // ahead of Mateo and the yellow beacon stands at the far end (z=132).
+    // Facing north put the whole market behind his back in the first pass.
+    var p = sim.player;
+    p.x = -140; p.z = 58; p.camYaw = 0; p.speed = 0;
+    window.PH.debug.setWanted(3);
+    var cops = sim.police.filter(function (c) { return c.alive; });
+    if (cops[0]) { cops[0].x = -144; cops[0].z = 86; cops[0].yaw = Math.PI; cops[0].speed = 0; }
+    if (cops[1]) { cops[1].x = -136; cops[1].z = 86; cops[1].yaw = Math.PI; cops[1].speed = 0; }
+    sim.holdPolice = true;
+    window.PH.debug.placeRoadblock(-140, 100, 0);
+    // Enemy off the tracer line so he reads beside Mateo instead of
+    // hiding directly behind him; officer on the other side.
+    window.PH.debug.showFallen(-138.2, 64, -142.5, 61.5); // big fallen enemy centre frame, 6 m ahead
+    if (worldRefs.beacon) worldRefs.beacon.visible = true;
+    window.PH.debug.snapHeli(16);
+    window.PH.debug.clearCorridor(-140, 54, 8);
+    window.PH.debug.crowdNear(-140, 58, 'z', 16, 1);
+    addStagedTracers();
+    showDialogue('KIRA', 'Market crew turned on us, Mateo. Cut straight through — the beacon is at the far end. Watch the rooftops.');
+    cameraMode = 'foot'; camDist = 3.8; camSide = 0.8; camHeight = 2.0; // player big in frame
+    return { shot: '3-mission', wanted: state.wanted, police: cops.length, night: true };
+  }
+
+  function stageTitle() {
+    clearStagedTracers();
+    hideDialogue();
+    if (window.PH.debug.hideRoadblock) window.PH.debug.hideRoadblock();
+    if (window.PH.debug.hideFallen) window.PH.debug.hideFallen();
+    if (worldRefs.beacon) worldRefs.beacon.visible = false;
+    setNight(false);
+    sim.autoDrive = false;
+    sim.holdPolice = false;
+    sim.cruiseSpeed = null;
+    camSide = 0;
+    showTitle();
+    // Title camera high in the south-east, looking west-north-west straight
+    // down Ocean Drive: the road, its traffic and the sunlit signed
+    // facades all read behind the title, no single wall fills the frame.
+    camera.position.set(150, 30, 60);
+    camera.lookAt(-60, 6, 0);
+    return { shot: '4-start', title: true };
+  }
+
+  // ------------------------------------------------------------ camera
+  function updateCamera(dt) {
+    if (cameraMode === 'title') {
+      var t = sim.time * 0.03;
+      var cx = 150 + Math.sin(t) * 10;
+      var cz = 60 + Math.cos(t * 0.7) * 6;
+      camera.position.set(cx, 30, cz);
+      camera.lookAt(-60, 6, 0);
+      return;
+    }
+    var target, f, yaw;
+    if (state.inCar) {
+      var a = sim.arrowCar;
+      yaw = a.yaw;
+      f = { x: Math.sin(yaw), z: Math.cos(yaw) };
+      target = { x: a.x, z: a.z };
+    } else {
+      var p = sim.player;
+      yaw = p.camYaw;
+      f = { x: Math.sin(yaw), z: Math.cos(yaw) };
+      target = { x: p.x, z: p.z };
+    }
+    // Rear 3/4: behind the target, offset to the side so the hero's flank
+    // and length fill the frame instead of a flat rear face.
+    var r = { x: Math.cos(yaw), z: -Math.sin(yaw) };
+    var want = {
+      x: target.x - f.x * camDist + r.x * camSide,
+      y: camHeight,
+      z: target.z - f.z * camDist + r.z * camSide,
+    };
+    var k = 1 - Math.exp(-7 * dt);
+    camPos.x += (want.x - camPos.x) * k;
+    camPos.y += (want.y - camPos.y) * k;
+    camPos.z += (want.z - camPos.z) * k;
+    camera.position.set(camPos.x, camPos.y, camPos.z);
+    camera.lookAt(target.x + f.x * 9 + r.x * camSide * 0.4, 1.4, target.z + f.z * 9 + r.z * camSide * 0.4);
+  }
+
+  function snapCameraToTarget() {
+    var target = state.inCar ? sim.arrowCar : sim.player;
+    var yaw = state.inCar ? sim.arrowCar.yaw : sim.player.camYaw;
+    var f = { x: Math.sin(yaw), z: Math.cos(yaw) };
+    var r = { x: Math.cos(yaw), z: -Math.sin(yaw) };
+    camPos.x = target.x - f.x * camDist + r.x * camSide;
+    camPos.y = camHeight;
+    camPos.z = target.z - f.z * camDist + r.z * camSide;
+    camera.position.set(camPos.x, camPos.y, camPos.z);
+    camera.lookAt(target.x + f.x * 9 + r.x * camSide * 0.4, 1.4, target.z + f.z * 9 + r.z * camSide * 0.4);
+  }
+
+  // ------------------------------------------------------------ HUD
+  function rankName() {
+    if (state.respect < 150) return 'DOCK HAND';
+    if (state.respect < 250) return 'STREET HUSTLER';
+    if (state.respect < 400) return 'PIER RUNNER';
+    return 'BAY KING';
   }
 
   function updateHUD() {
-    var st = PH.state;
-    var m = PH.currentMission();
-    var si = PH.missionStageInfo();
-    if (m) {
-      el['mission-title'].textContent = m.title;
-      el['mission-timer'].textContent = '⏱ ' + fmtClock(st.missionTimer);
-      el['mission-stage'].textContent = 'STAGE ' + si.cur + '/' + si.total;
-      var obj = sim.shotObjective || m.objective;
-      if (st.missionIndex === 3 && st.missionStage === 1) obj = 'Return Kira’s drop to the pier';
-      if (st.missionIndex === 7 && st.missionStage === 1) obj = 'Lose the 3-star tail — stay unseen 22 s';
-      if (st.missionIndex === 6) obj = 'Escape through checkpoint ' + (sim.checkpointIndex + 1) + ' of 3';
-      el['mission-objective'].textContent = obj;
-      // Progress: real mission progress when the mission tracks it, else
-      // proximity to the beacon (1 at the beacon, 0 far away).
-      var prog = st.missionProgress;
-      if (prog <= 0 && sim.beacon) {
-        var dB = PH.dist2d(sim.player.x, sim.player.z, sim.beaconPos.x, sim.beaconPos.z);
-        prog = PH.clamp(1 - dB / 220, 0, 1);
-      }
-      el['mission-progress'].style.width = Math.round(PH.clamp(prog, 0, 1) * 100) + '%';
-      var next = PH.MISSIONS[st.missionIndex + 1];
-      el['mission-next'].innerHTML = next ? '<b>NEXT</b> ' + next.title.replace(/^M\d+ — /, '') : '<b>NEXT</b> Free roam — Sunset Bay is yours';
-    } else {
-      el['mission-title'].textContent = 'FREE ROAM — SUNSET BAY';
-      el['mission-timer'].textContent = '⏱ ' + fmtClock(st.missionTimer);
-      el['mission-stage'].textContent = '8/8 DONE';
-      el['mission-objective'].textContent = 'All 8 missions complete. The bay is yours, Mateo.';
-      el['mission-progress'].style.width = '100%';
-      el['mission-next'].innerHTML = '<b>NEXT</b> Free roam — Sunset Bay is yours';
-    }
-    el.money.textContent = PH.fmtMoney(st.money);
-    el.stars.textContent = PH.starsText(st.wanted);
-    el['wanted-label'].textContent = 'WANTED ' + st.wanted + (st.wanted > 0 ? ' — LOSE THE TAIL' : ' — CLEAN');
-    el['wanted-label'].style.color = st.wanted > 0 ? '#ff7070' : '#9dffb0';
-    var heliUp = !!sim.heli;
-    el['air-line'].textContent = heliUp ? '🚁 AIR UNIT DEPLOYED — SPOTLIGHT ON YOU'
-      : (st.wanted > 0 ? '👁 IN SIGHT — BREAK LINE OF SIGHT' : '');
-    var radio = PH.RADIO_STATIONS[st.radio];
-    el['radio-name'].textContent = radio.name;
-    el['radio-desc'].textContent = ' — ' + radio.desc + (st.radioOn ? '' : ' (muted)');
-    el['radio-line'].textContent = '♪ ' + radio.name + ' — ' + radio.desc.split(' — ')[1];
-    // Dispatch board: every live police unit, name + real distance + tactic.
-    var units = sim.police.filter(function (c) { return !c.dead; });
-    units.sort(function (a, b) {
-      return PH.dist2d(sim.player.x, sim.player.z, a.x, a.z) - PH.dist2d(sim.player.x, sim.player.z, b.x, b.z);
+    var stars = '';
+    for (var i = 0; i < 5; i++) stars += i < state.wanted ? '★' : '☆';
+    $('wanted-stars').textContent = stars;
+    $('money').textContent = window.PH.fmtMoney(state.money);
+    $('rank-line').textContent = 'RANK: ' + rankName() + ' · RESPECT ' + Math.round(state.respect);
+    var loc = window.PH.locationName(sim.player.x, sim.player.z);
+    $('loc-area').textContent = loc.area + ' · ' + loc.district;
+    $('air-line').textContent = (sim.heli && sim.heli.visible)
+      ? 'AIR: HELI SBPD-9 ON STATION' : 'AIR: CLEAR';
+    radioIdx = Math.floor(sim.time / 9) % radioLines.length;
+    $('radio-line').textContent = radioLines[radioIdx];
+    $('mission-name').textContent = window.PH.missionLabel();
+    $('mission-timer').textContent = '⏱ ' + window.PH.fmtClock(state.missionTimeLeft);
+    var m = window.PH.mission();
+    $('mission-stage').textContent = 'STAGE ' + state.missionStage + '/' + m.totalStages;
+    $('mission-next').textContent = window.PH.nextObjective();
+    var alive = sim.police.filter(function (c) { return c.alive; });
+    $('police-count').textContent = 'POLICE: ' + alive.length + ' UNITS';
+    var rows = '';
+    alive.slice(0, 5).forEach(function (c) {
+      var d = Math.round(Math.hypot(c.x - sim.player.x, c.z - sim.player.z));
+      var cls = c.tactic === 'FLANK' ? ' flank' : (c.tactic === 'BLOCK' ? ' block' : '');
+      rows += '<div class="p-row"><span>SBPD ' + c.unit + '</span>' +
+        '<span class="badge' + cls + '">' + c.tactic + '</span><span>' + d + 'm</span></div>';
     });
-    el['police-count'].textContent = units.length + (units.length === 1 ? ' UNIT' : ' UNITS');
-    var rows = units.slice(0, 5).map(function (c) {
-      var d = Math.round(PH.dist2d(sim.player.x, sim.player.z, c.x, c.z));
-      var icon = c.kind === 'heli' ? '🚁' : c.kind === 'foot' ? '🚶' : '🚔';
-      return '<div class="p-row"><span>' + icon + '</span><span class="p-name">' + c.name + '</span>' +
-        '<span class="badge badge-' + c.tactic + '">' + c.tactic + '</span>' +
-        '<span class="p-dist">' + d + ' m</span></div>';
-    }).join('');
-    if (units.length > 5) rows += '<div class="feed-line">▸ +' + (units.length - 5) + ' more units responding</div>';
-    if (!units.length) rows = '<div class="feed-line">▸ All quiet on the bay.</div>';
-    var feed = PH.feed.slice(0, 2).map(function (f) { return '<div class="feed-line">▸ ' + f.text + '</div>'; }).join('');
-    el['police-feed'].innerHTML = rows + feed;
-    // Location, vitals, respect rank — all live.
-    var loc = PH.locationName(sim.player.x, sim.player.z);
-    el['loc-area'].textContent = loc.area;
-    el['loc-sub'].textContent = loc.sub;
-    el['health-bar'].firstElementChild.style.width = st.health + '%';
-    el['car-bar'].firstElementChild.style.width = st.carHealth + '%';
-    el['health-num'].textContent = Math.round(st.health);
-    el['car-num'].textContent = Math.round(st.carHealth);
-    el['health-bar2'].firstElementChild.style.width = st.health + '%';
-    el['armour-bar'].firstElementChild.style.width = st.armour + '%';
-    var respectCap = st.respect < 100 ? 100 : st.respect < 250 ? 250 : st.respect < 500 ? 500 : 800;
-    el['respect-bar'].firstElementChild.style.width = Math.round(PH.clamp(st.respect / respectCap, 0, 1) * 100) + '%';
-    el['health-num2'].textContent = Math.round(st.health);
-    el['armour-num'].textContent = Math.round(st.armour);
-    el['respect-num'].textContent = Math.round(st.respect);
-    el['rank-line'].textContent = PH.respectTitle(st.respect) + ' · ' + Math.round(st.respect) + ' / ' + respectCap + ' RP';
-    // Weapon wheel: fists + pistol are real (pistol ammo = state.ammo);
-    // SMG / rifle are locked — no fake ammo numbers on guns Mateo owns not.
-    var wheel = [
-      { key: 1, icon: '✊', name: 'FISTS', ammo: '∞', owned: true, active: st.weapon === 'fists' },
-      { key: 2, icon: '🔫', name: 'PISTOL', ammo: String(st.ammo), owned: true, active: st.weapon === 'pistol' },
-      { key: 3, icon: '🔫', name: 'SMG', ammo: 'LOCKED', owned: false, active: false },
-      { key: 4, icon: '🔫', name: 'RIFLE', ammo: 'LOCKED', owned: false, active: false },
-    ];
-    el['weapon-slots'].innerHTML = wheel.map(function (w) {
-      return '<div class="w-slot' + (w.active ? ' active' : '') + (w.owned ? '' : ' locked') + '">' +
-        '<div class="w-key">' + w.key + '</div><div class="w-icon">' + w.icon + '</div>' +
-        '<div class="w-name">' + w.name + '</div><div class="w-ammo">' + w.ammo + '</div></div>';
-    }).join('');
-    // Car card: name + condition + big speed.
-    if (st.inCar && sim.playerCarData) {
-      el['car-name'].textContent = '🚗 ' + (sim.playerCarData.name || 'STOLEN CAR');
-      el['car-cond'].textContent = 'CONDITION ' + Math.round(st.carHealth) + '% · ' + (sim.playerCarData.isArrow ? 'SPORTS · V8' : 'STREET CAR');
-    } else {
-      el['car-name'].textContent = '🚶 ON FOOT';
-      el['car-cond'].textContent = st.aiming ? 'AIMING — ' + st.ammo + ' ROUNDS' : 'EMP ×' + st.emp + ' · SMOKE ×' + st.smoke;
-    }
-    el.speed.textContent = Math.round(st.speedKmh);
-    if (PH.dialogue.text && st.timePlayed < PH.dialogue.until) {
-      el.dialogue.style.display = 'block';
-      drawPortrait();
-      el['dialogue-name'].textContent = PH.dialogue.name.split(' — ')[0];
-      el['dialogue-role'].textContent = '— radio · fixer';
-      el['dialogue-text'].textContent = PH.dialogue.text;
-    } else el.dialogue.style.display = 'none';
+    if (!rows) rows = '<div class="p-row"><span>SBPD —</span><span class="badge">CLEAR</span><span>—</span></div>';
+    $('police-rows').innerHTML = rows;
+    $('health-num').textContent = Math.round(state.health);
+    $('armour-num').textContent = Math.round(state.armour);
+    $('respect-num').textContent = Math.round(state.respect);
+    $('health-fill').style.width = Math.max(0, state.health) + '%';
+    $('armour-fill').style.width = Math.max(0, state.armour) + '%';
+    $('respect-fill').style.width = Math.min(100, state.respect / 4) + '%';
+    $('speedo').textContent = Math.round(state.speedKmh) + ' km/h · ' + (state.inCar ? 'SCARLET ARROW' : 'ON FOOT');
+    var slots = document.querySelectorAll('#weapon-slots .w-slot');
+    if (slots[1]) slots[1].innerHTML = '🔫<br>PISTOL ' + state.ammo;
+    $('car-name').textContent = state.inCar ? 'SCARLET ARROW' : 'ON FOOT';
+    $('car-cond').textContent = state.inCar
+      ? 'CONDITION ' + Math.round(state.carCondition) + '% · FUEL ' + Math.round(state.carFuel) + '%'
+      : 'CONDITION — · FUEL —';
     drawMinimap();
   }
 
   function drawMinimap() {
-    var S = 168, C = S / 2;
-    var scale = S / 460; // world -230..230 -> map
-    mm.clearRect(0, 0, S, S);
-    mm.save();
-    mm.beginPath(); mm.arc(C, C, C - 2, 0, Math.PI * 2); mm.clip();
-    // A real coastal street map: sea everywhere first, land on top of it,
-    // then sand, district-coloured blocks, asphalt roads with dashed
-    // centre lines, the pier, and live icons — not a schematic grid.
-    mm.fillStyle = '#1d6f8e'; mm.fillRect(0, 0, S, S); // sea
-    mm.strokeStyle = 'rgba(255,255,255,0.35)'; mm.lineWidth = 1;
-    for (var wv = 0; wv < 5; wv++) {
-      mm.beginPath();
-      mm.arc(C + 185 * scale, C + (wv * 60 - 120) * scale, 13, 0.3, Math.PI - 0.3);
-      mm.stroke();
-    }
-    mm.fillStyle = '#3a2f5a'; mm.fillRect(0, 0, C + 150 * scale, S); // land
-    mm.fillStyle = '#e8c98f'; mm.fillRect(C + 150 * scale, 0, 46 * scale, S); // sand
-    // City blocks coloured by district: pastel deco east, terracotta
-    // south-west, glass blue downtown, lavender elsewhere.
-    var streets = PH.CITY.streets;
-    for (var i = 0; i < streets.length - 1; i++) {
-      for (var j = 0; j < streets.length - 1; j++) {
-        var bx = C + (streets[i] + 5) * scale, by = C + (streets[j] + 5) * scale;
-        var bw = (streets[i + 1] - streets[i] - 10) * scale;
-        var d = W.districtOf((streets[i] + streets[i + 1]) / 2, (streets[j] + streets[j + 1]) / 2);
-        mm.fillStyle = d === 'ocean' ? '#ffb3c1' : d === 'havana' ? '#c96f3f' : d === 'downtown' ? '#5a9ec4' : '#8a7fd0';
-        mm.fillRect(bx, by, bw, bw);
-      }
-    }
-    // Roads: dark asphalt bands with dashed yellow centre lines.
-    streets.forEach(function (s) {
-      mm.strokeStyle = '#2e2e38'; mm.lineWidth = 9 * scale + 3;
-      mm.beginPath(); mm.moveTo(C + s * scale, 0); mm.lineTo(C + s * scale, S); mm.stroke();
-      mm.beginPath(); mm.moveTo(0, C + s * scale); mm.lineTo(S, C + s * scale); mm.stroke();
-      mm.strokeStyle = 'rgba(232,195,60,0.85)'; mm.lineWidth = 1;
-      mm.setLineDash([4, 4]);
-      mm.beginPath(); mm.moveTo(C + s * scale, 0); mm.lineTo(C + s * scale, S); mm.stroke();
-      mm.beginPath(); mm.moveTo(0, C + s * scale); mm.lineTo(S, C + s * scale); mm.stroke();
-      mm.setLineDash([]);
+    var cv = $('minimap');
+    if (!cv) return;
+    var g = cv.getContext('2d');
+    var W2 = 180, H2 = 180;
+    g.fillStyle = '#0a1626'; g.fillRect(0, 0, W2, H2);
+    var mx = function (x) { return (x + 260) * 0.29; };
+    var my = function (z) { return (z + 160) * 0.29; };
+    // Sea on the east.
+    g.fillStyle = '#0a6fd6'; g.fillRect(mx(235), 0, W2 - mx(235), H2);
+    // Streets.
+    g.strokeStyle = '#5a6a7a'; g.lineWidth = 4;
+    g.beginPath(); g.moveTo(mx(-260), my(0)); g.lineTo(mx(235), my(0)); g.stroke();
+    window.PHWORLD.CROSS_X.forEach(function (cx) {
+      g.beginPath(); g.moveTo(mx(cx), my(-150)); g.lineTo(mx(cx), my(150)); g.stroke();
     });
-    // The wooden pier into the sea.
-    mm.strokeStyle = '#8a6238'; mm.lineWidth = 4;
-    mm.beginPath(); mm.moveTo(C + 196 * scale, C); mm.lineTo(C + 262 * scale, C); mm.stroke();
-    // District labels.
-    mm.fillStyle = 'rgba(255,255,255,0.8)'; mm.font = 'bold 7px sans-serif'; mm.textAlign = 'center';
-    mm.fillText('DOWNTOWN', C, C - 8);
-    mm.fillText('LITTLE HAVANA', C - 36, C + 40);
-    mm.fillText('OCEAN DRIVE', C + 44, C - 8);
-    // North marker.
-    mm.fillStyle = '#ffc93c'; mm.font = 'bold 11px sans-serif';
-    mm.fillText('N', C, 13);
-    // Mission pin: a yellow diamond with a pulsing white ring.
-    var m = PH.currentMission();
-    if (m && sim.beacon && sim.beacon.visible) {
-      var bx2 = C + sim.beaconPos.x * scale, by2 = C + sim.beaconPos.z * scale;
-      mm.save();
-      mm.translate(bx2, by2); mm.rotate(Math.PI / 4);
-      mm.fillStyle = '#ffc93c';
-      mm.fillRect(-4, -4, 8, 8);
-      mm.strokeStyle = '#fff'; mm.lineWidth = 1.5; mm.strokeRect(-4, -4, 8, 8);
-      mm.restore();
-      mm.strokeStyle = '#fff'; mm.lineWidth = 1.5;
-      mm.beginPath(); mm.arc(bx2, by2, 9 + Math.sin(sim.elapsed * 4) * 2, 0, Math.PI * 2); mm.stroke();
+    // Gates.
+    if (state.missionIndex === 1) {
+      var gp = [[170, 0], [100, -60], [40, -120]][Math.min(state.missionStage - 1, 2)];
+      g.fillStyle = '#ffd400'; g.fillRect(mx(gp[0]) - 4, my(gp[1]) - 4, 8, 8);
     }
-    // Police icons: blue cars (rotated body + white roof) and the red heli
-    // (circle + rotor cross). Foot patrol is a smaller blue square.
-    sim.police.forEach(function (cop) {
-      if (cop.dead) return;
-      var cx = C + cop.x * scale, cy = C + cop.z * scale;
-      if (cop.kind === 'heli') {
-        mm.fillStyle = '#ff5a5a';
-        mm.beginPath(); mm.arc(cx, cy, 4, 0, Math.PI * 2); mm.fill();
-        mm.strokeStyle = '#fff'; mm.lineWidth = 1;
-        mm.beginPath(); mm.moveTo(cx - 6, cy); mm.lineTo(cx + 6, cy); mm.moveTo(cx, cy - 6); mm.lineTo(cx, cy + 6); mm.stroke();
-      } else if (cop.kind === 'foot') {
-        mm.fillStyle = '#5a8aff';
-        mm.fillRect(cx - 2, cy - 2, 4, 4);
-      } else {
-        mm.save(); mm.translate(cx, cy); mm.rotate(cop.heading || 0);
-        mm.fillStyle = '#3a6fd9';
-        mm.fillRect(-2.5, -4, 5, 8);
-        mm.fillStyle = '#fff'; mm.fillRect(-2.5, -4, 5, 2);
-        mm.restore();
-      }
+    // Police red, heli white, player yellow.
+    sim.police.forEach(function (c) {
+      if (!c.alive) return;
+      g.fillStyle = '#ff3b30';
+      g.beginPath(); g.arc(mx(c.x), my(c.z), 3.5, 0, Math.PI * 2); g.fill();
     });
-    // The player arrow.
-    var px = C + sim.player.x * scale, py = C + sim.player.z * scale;
-    mm.save();
-    mm.translate(px, py); mm.rotate(sim.player.heading);
-    mm.fillStyle = '#fff';
-    mm.beginPath(); mm.moveTo(0, -7); mm.lineTo(5, 6); mm.lineTo(-5, 6); mm.closePath(); mm.fill();
-    mm.strokeStyle = '#000'; mm.lineWidth = 1; mm.stroke();
-    mm.restore();
-    mm.restore();
-    // Rim ring.
-    mm.strokeStyle = 'rgba(255,180,90,0.7)'; mm.lineWidth = 2;
-    mm.beginPath(); mm.arc(C, C, C - 1, 0, Math.PI * 2); mm.stroke();
-  }
-
-  function toast(text, ms) {
-    el.toast.textContent = text;
-    el.toast.style.display = 'block';
-    setTimeout(function () { el.toast.style.display = 'none'; }, ms || 2200);
-  }
-
-  // ------------------------------------------------------------ input
-  var dragging = false, lastX = 0, lastY = 0;
-
-  function keyOf(e) {
-    var k = (e.key || '').toLowerCase();
-    if (k === ' ') return ' ';
-    return k.length === 1 ? k : k;
-  }
-
-  window.addEventListener('keydown', function (e) {
-    var k = keyOf(e);
-    if (['w', 'a', 's', 'd', ' '].indexOf(k) >= 0) e.preventDefault();
-    sim.keys[k] = true;
-    if (!PH.state.started) return;
-    if (k === 'p') togglePause();
-    if (k === 'e' && !e.repeat) {
-      var r = sim.enterExitCar();
-      if (r === 'enter') toast('🚗 In the car — drive!');
-      else if (r === 'exit') toast('On foot');
+    if (sim.heli && sim.heli.visible) {
+      g.fillStyle = '#ffffff';
+      g.beginPath(); g.arc(mx(sim.heli.position.x), my(sim.heli.position.z), 3, 0, Math.PI * 2); g.fill();
     }
-    if (k === 'f' && !e.repeat) {
-      PH.state.aiming = true;
-      var res = sim.shoot();
-      AudioSys.gunshot();
-      if (res && res.hit) toast(res.hit === 'cop' ? 'Officer down!' : 'Target down');
-      setTimeout(function () { if (!sim.keys['f']) PH.state.aiming = false; }, 350);
-    }
-    if (k === 'r' && !e.repeat) {
-      PH.state.radio = (PH.state.radio + 1) % PH.RADIO_STATIONS.length;
-      toast('📻 ' + PH.RADIO_STATIONS[PH.state.radio].name);
-    }
-    if (k === 'q' && !e.repeat && PH.state.emp > 0) {
-      PH.state.emp--;
-      PH.setWanted(Math.max(0, PH.state.wanted - 2));
-      toast('⚡ EMP pulse — heat dropping');
-    }
-  });
-  window.addEventListener('keyup', function (e) {
-    sim.keys[keyOf(e)] = false;
-    if (keyOf(e) === 'f') PH.state.aiming = false;
-  });
-
-  canvas.addEventListener('mousedown', function (e) {
-    dragging = true; lastX = e.clientX; lastY = e.clientY;
-    if (canvas.requestPointerLock) { try { canvas.requestPointerLock(); } catch (err) {} }
-  });
-  window.addEventListener('mouseup', function () { dragging = false; if (document.pointerLockElement) document.exitPointerLock(); });
-  window.addEventListener('mousemove', function (e) {
-    var dx, dy;
-    if (document.pointerLockElement === canvas) { dx = e.movementX || 0; dy = e.movementY || 0; }
-    else if (dragging) { dx = e.clientX - lastX; dy = e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; }
-    else return;
-    if (PH.state.inCar) return; // driving camera follows the car
-    sim.player.camYaw -= dx * 0.0035;
-    sim.player.camPitch = PH.clamp(sim.player.camPitch - dy * 0.002, -0.6, 0.5);
-    if (PH.state.aiming) sim.player.heading = sim.player.camYaw;
-  });
-
-  window.addEventListener('resize', function () {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
-
-  // ------------------------------------------------------------ screens
-  function startGame() {
-    var save = PH.loadSave();
-    if (save && save.missionIndex > 0 && PH.state.missionIndex === 0) {
-      PH.applySave(save);
-      PH.startMission(PH.state.missionIndex);
-    }
-    PH.state.started = true;
-    PH.state.paused = false;
-    document.body.classList.remove('pre-start');
-    el['start-screen'].style.display = 'none';
-    el['pause-screen'].style.display = 'none';
-    el['busted-screen'].style.display = 'none';
-    AudioSys.init();
-    if (AudioSys.ctx && AudioSys.ctx.resume) AudioSys.ctx.resume();
-    PH.sayKira(PH.currentMission() ? PH.currentMission().brief : 'Free roam, Mateo.', 8);
-    toast('🌅 Welcome to Sunset Bay');
-  }
-  function togglePause() {
-    if (!PH.state.started || PH.state.over) return;
-    PH.state.paused = !PH.state.paused;
-    el['pause-screen'].style.display = PH.state.paused ? 'flex' : 'none';
-  }
-  document.getElementById('start-btn').addEventListener('click', startGame);
-  document.getElementById('resume-btn').addEventListener('click', togglePause);
-  document.getElementById('retry-btn').addEventListener('click', function () {
-    location.reload();
-  });
-
-  PH.onBusted = function () {
-    PH.state.over = true;
-    PH.state.health = 0;
-    el['busted-text'].textContent = 'Sunset Bay PD caught up with Mateo at wanted level ' + PH.state.wanted + '.';
-    el['busted-screen'].style.display = 'flex';
-    PH.saveGame();
-  };
-  PH.onWantedChange = function (n) {
-    if (n >= 3) toast('★★★ HEAT IS ON — helicopter inbound!');
-    else if (n === 2) toast('★★ Police cars inbound!');
-    else if (n === 1) toast('★ Police on foot — run or hide');
-    else if (n === 0) toast('Clean — heat is off');
-  };
-  PH.onMissionChange = function () { /* HUD reads state each frame */ };
-
-  // Auto-start for headless screenshots / probes (?autostart=1).
-  if (/[?&]autostart=1/.test(location.search)) {
-    setTimeout(startGame, 300);
+    g.fillStyle = '#ffe14d';
+    g.beginPath(); g.arc(mx(sim.player.x), my(sim.player.z), 4.5, 0, Math.PI * 2); g.fill();
   }
 
-  // ------------------------------------------------------------ main loop
-  var last = performance.now();
-  function loop(now) {
-    requestAnimationFrame(loop);
-    var dt = Math.min((now - last) / 1000, 0.1);
-    last = now;
-    sim.update(dt, camera);
-    AudioSys.update();
-    updateHUD();
+  // ------------------------------------------------------------ loop
+  function loop() {
+    var dt = Math.min(clock.getDelta(), 0.25);
+    if (dt <= 0) dt = 0.016;
+    window.PH.simUpdate(dt);
+    updateCamera(dt);
+    hudTimer -= dt;
+    if (hudTimer <= 0) { hudTimer = 0.12; updateHUD(); }
     renderer.render(scene, camera);
-    if (!window.__PIERHEAT_READY) window.__PIERHEAT_READY = true;
   }
-  requestAnimationFrame(loop);
 
-  // ------------------------------------------------------------ debug API (probe / screenshots)
-  PH.debug = {
-    start: startGame,
-    state: function () {
-      return {
-        money: PH.state.money, wanted: PH.state.wanted, health: PH.state.health,
-        ammo: PH.state.ammo, mission: PH.state.missionIndex, stage: PH.state.missionStage,
-        inCar: PH.state.inCar, started: PH.state.started, completed: PH.state.completed,
-        x: sim.player.x, z: sim.player.z, speed: PH.state.speedKmh,
-        drivingDistance: PH.state.drivingDistance, heatArmed: PH.state.heatArmed,
-        police: sim.police.filter(function (c) { return !c.dead; }).length,
-        peds: sim.peds.filter(function (p) { return !p.dead; }).length,
-        traffic: sim.traffic.length, beacon: { x: sim.beaconPos.x, z: sim.beaconPos.z },
-      };
-    },
-    teleport: function (x, z) {
-      if (PH.state.inCar && sim.playerCarData) { sim.playerCarData.x = x; sim.playerCarData.z = z; }
-      sim.player.x = x; sim.player.z = z;
-      sim.mateo.position.set(x, 0, z);
-    },
-    setCamYaw: function (yaw) { sim.player.camYaw = yaw; },
-    aim: function (on) { PH.state.aiming = !!on; },
-    setMission: function (i) { PH.startMission(i); },
-    setWanted: function (n) { PH.setWanted(n); },
-    spawnPolice: function (n, kind) {
-      for (var i = 0; i < n; i++) {
-        var a = Math.random() * Math.PI * 2, r = PH.rand(15, 30);
-        if (kind === 'foot') sim.spawnPoliceFoot(sim.player.x + Math.cos(a) * r, sim.player.z + Math.sin(a) * r);
-        else sim.spawnPoliceCar(sim.player.x + Math.cos(a) * r, sim.player.z + Math.sin(a) * r);
-      }
-    },
-    spawnPedNear: function (n, d) {
-      for (var i = 0; i < n; i++) {
-        var a = Math.random() * Math.PI * 2;
-        sim.spawnPed(sim.player.x + Math.cos(a) * (d || 10), sim.player.z + Math.sin(a) * (d || 10));
-      }
-    },
-    clearPoliceFar: function () {
-      // Remove every police unit (used by probes to test decay cleanly).
-      sim.police.forEach(function (c) { c.dead = true; c.g.visible = false; });
-      sim.police = [];
-      sim.heli = null;
-    },
-    clearWitnesses: function () {
-      // Move every pedestrian far away and remove all police: a clean room
-      // for witness-rule tests (no witness within 30 m of the player).
-      sim.police.forEach(function (c) { c.dead = true; c.g.visible = false; });
-      sim.police = [];
-      sim.heli = null;
-      sim.peds.forEach(function (p) { p.x = 195; p.z = 135; p.g.position.set(195, 0, 135); });
-    },
-    enterArrow: function () {
-      PH.debug.teleport(sim.arrowCar.x - 2, sim.arrowCar.z);
-      return sim.enterExitCar();
-    },
-    snapHeli: function (alt) {
-      // Put the helicopter exactly on its station (24 m ahead of the
-      // player, `alt` m up — 13 default, 22 for the mission shot so it
-      // clears the Little Havana rooftops) right before the shutter: the
-      // heli lerps to its station over ~1 s, and at headless frame rates
-      // it would otherwise still be climbing into frame when the
-      // screenshot fires.
-      if (!sim.heli) return null;
-      var h = sim.heli;
-      h.x = sim.player.x + Math.sin(sim.player.heading) * 24;
-      h.z = sim.player.z + Math.cos(sim.player.heading) * 24;
-      h.g.position.set(h.x, alt || 13, h.z);
-      return { x: Math.round(h.x), z: Math.round(h.z) };
-    },
-    setCamera: function (x, y, z, lx, ly, lz) {
-      // Direct camera placement for the title shot (the loop does not move
-      // the camera before the game starts, and the boot view sits inside a
-      // building block). Camera is the closure camera from boot.
-      camera.position.set(x, y, z);
-      camera.lookAt(lx, ly, lz);
-    },
-    // ---- deterministic shot staging (v6): place the city around the
-    // camera so every one of the four shots is a busy action frame.
-    // All positions are relative to the player/car, so the frame reads the
-    // same on every run; distances and tactics on the HUD stay live.
-    stageChase: function () {
-      // Mission 2 pier run, 3 stars, on Ocean Drive heading east into the
-      // low sun: police tight behind, roadblock ahead, heli spotlighting,
-      // traffic in the lane, peds on the sidewalks. The Arrow starts
-      // already rolling at 22 m/s (~79 km/h): headless SwiftShader runs
-      // the sim at ~5 fps, so a standing start would still read 9 km/h
-      // when the shutter fires — a chase frame needs a moving car.
-      PH.startMission(1);
-      PH.state.money = 15300; // $12,800 start + M1 reward $2,500
-      PH.state.respect = 140;
-      PH.state.health = 76; PH.state.armour = 58; PH.state.carHealth = 88;
-      PH.state.missionTimer = 161; // 02:41 on the job clock
-      PH.state.heatArmed = true; // the pier-run heat is already on: STAGE 2/2
-      sim.playerCarData.x = 100; sim.playerCarData.z = 40;
-      sim.playerCarData.heading = Math.PI / 2; // east, into the sun + sea
-      sim.playerCarData.speed = 26; // ~94 km/h rolling; headless drag bleeds it slowly
-      sim.playerCarData.g.position.set(100, 0, 40);
-      sim.playerCarData.g.rotation.y = Math.PI / 2;
-      sim.player.x = 100; sim.player.z = 40; sim.player.heading = Math.PI / 2;
-      PH.state.inCar = true; sim.mateo.visible = false;
-      PH.debug.clearPoliceFar();
-      PH.setWanted(3); // spawns the heli on the next update
-      // Pursuit cars FLANKING the Arrow (ahead-left, ahead-right, ahead
-      // centre) — a chase camera looks forward, so cars directly behind the
-      // player sit behind the camera and cars level with it sit at the
-      // extreme frame edges. Ahead-side slots stay clearly in frame.
-      // Each holds its formation slot (see the slot branch in updatePolice)
-      // instead of piling onto the bumper, and starts at the player's
-      // speed so it does not lag into the Arrow. Spawned on their slots.
-      var c1 = sim.spawnPoliceCar(114, 32); c1.heading = Math.PI / 2; c1.slot = { a: 14, s: -8 }; c1.speed = 26;
-      var c2 = sim.spawnPoliceCar(114, 48); c2.heading = Math.PI / 2; c2.slot = { a: 14, s: 8 }; c2.speed = 26;
-      var c3 = sim.spawnPoliceCar(122, 40); c3.heading = Math.PI / 2; c3.slot = { a: 22, s: 0 }; c3.speed = 26;
-      // The 40 ambient pedestrians include some standing ON the road: the
-      // Arrow at 26 m/s would hit one and spike the wanted level mid-shot.
-      // Move every ped in the road corridor to the open beach instead.
-      sim.peds.forEach(function (ped) {
-        if (!ped.dead && Math.abs(ped.z - 40) < 6 && ped.x > 85 && ped.x < 175) {
-          ped.x = PH.rand(155, 175); ped.z = PH.rand(10, 70);
-          ped.g.position.set(ped.x, 0, ped.z);
-        }
-      });
-      // No palm trunk down the middle of the chase frame: shift the palms
-      // standing on the z = 40 sightline east of the Arrow to the south
-      // sidewalk, where they frame the road instead of splitting it.
-      sim.clearPalmCorridor(115, 170, 35, 45, 56);
-      // Roadblock parked across the road ahead.
-      var rb = sim.spawnPoliceCar(160, 40);
-      rb.heading = Math.PI; rb.g.rotation.y = Math.PI; rb.roadblock = true; rb.tactic = 'ROADBLOCK';
-      // Traffic in the lane ahead + one car overtaking on the left.
-      sim.spawnTrafficCar(138, 40, Math.PI / 2, 0xf2c230);
-      sim.spawnTrafficCar(148, 44, Math.PI / 2, 0x2e7fd8);
-      sim.spawnTrafficCar(132, 36, Math.PI / 2, 0x37b268);
-      sim.spawnTrafficCar(168, 40, Math.PI / 2, 0xe8e8e8);
-      // Peds on the Ocean Drive sidewalks, ahead of the camera at the
-      // shutter — the north-sidewalk peds sit east of x = 148 so the chase
-      // camera (which now runs 5 m south of them) does not drive right
-      // past one and fill the frame edge with the back of its head.
-      sim.spawnPed(112, 47); sim.spawnPed(150, 47); sim.spawnPed(158, 47);
-      sim.spawnPed(126, 33); sim.spawnPed(140, 33); sim.spawnPed(166, 47);
-      PH.sayKira('Heat is on, Mateo — two stars. Get to the pier and do not stop.', 8);
-      sim.keys['w'] = true; // rolling: speed holds for the shot
-      return { money: PH.state.money, wanted: PH.state.wanted, police: sim.police.length };
-    },
-    stageStreet: function () {
-      // M7 THREE GATES, northbound chase up the Ocean Drive grid street
-      // (x = 80): the Arrow rolls at ~90 km/h past deco fronts and glass
-      // towers, two police cars flanking ahead-left and ahead-right, a
-      // third dead ahead, a roadblock across the street, traffic in the
-      // lane, the heli spotlighting from above. A different chase from
-      // shot 1 (east into the sun on the z = 40 road) and a busier frame
-      // than the old on-foot version of this shot.
-      PH.feed.length = 0; // init already logged M1 once; no duplicate line
-      PH.startMission(6);
-      PH.state.money = 39600; // start + M1..M6 rewards
-      PH.state.respect = 340; // 100 + 6 finished jobs x 40
-      PH.state.health = 82; PH.state.armour = 70; PH.state.carHealth = 91;
-      PH.state.missionTimer = 73; // 01:13 on the job clock
-      PH.state.heatArmed = true;
-      sim.playerCarData.x = 80; sim.playerCarData.z = 60;
-      sim.playerCarData.heading = Math.PI; // north, up the grid street
-      sim.playerCarData.speed = 25; // ~90 km/h rolling; headless drag bleeds it slowly
-      sim.playerCarData.g.position.set(80, 0, 60);
-      sim.playerCarData.g.rotation.y = Math.PI;
-      sim.player.x = 80; sim.player.z = 60; sim.player.heading = Math.PI;
-      PH.state.inCar = true; sim.mateo.visible = false;
-      PH.debug.clearPoliceFar();
-      PH.setWanted(3); // spawns the heli on the next update
-      // Flanking pursuit: ahead-left and ahead-right slots, plus one dead
-      // ahead, all at the player's speed so the formation holds (same slot
-      // mechanic as stageChase — see the slot branch in updatePolice).
-      var c1 = sim.spawnPoliceCar(72, 46); c1.heading = Math.PI; c1.slot = { a: 14, s: -8 }; c1.speed = 25;
-      var c2 = sim.spawnPoliceCar(88, 46); c2.heading = Math.PI; c2.slot = { a: 14, s: 8 }; c2.speed = 25;
-      var c3 = sim.spawnPoliceCar(80, 38); c3.heading = Math.PI; c3.slot = { a: 22, s: 0 }; c3.speed = 25;
-      // Roadblock parked across the street ahead.
-      var rb = sim.spawnPoliceCar(80, 16);
-      rb.heading = Math.PI / 2; rb.g.rotation.y = Math.PI / 2; rb.roadblock = true; rb.tactic = 'ROADBLOCK';
-      // Traffic in the lane ahead, northbound and southbound.
-      sim.spawnTrafficCar(80, 30, Math.PI, 0xf2c230);
-      sim.spawnTrafficCar(84, 4, Math.PI, 0x2e7fd8);
-      sim.spawnTrafficCar(76, 48, 0, 0x37b268);
-      sim.spawnTrafficCar(80, -8, Math.PI, 0xe8e8e8);
-      // Peds on the sidewalks flanking the street.
-      sim.spawnPed(72.5, 52); sim.spawnPed(87.5, 44); sim.spawnPed(72.5, 36);
-      sim.spawnPed(87.5, 28); sim.spawnPed(72.5, 24); sim.spawnPed(87.5, 58);
-      PH.sayKira('Three gates, one route — do not stop, Mateo. SBPD is already on your tail.', 8);
-      sim.keys['w'] = true; // rolling: speed holds for the shot
-      return { money: PH.state.money, wanted: PH.state.wanted, police: sim.police.length };
-    },
-    stageMission: function () {
-      // Mission 3 cross-town drop, staged as a night-market firefight on
-      // the x = 0 street in Little Havana: six lit stalls with striped
-      // canopies line both sidewalks, bulb strings sag across the street,
-      // a crowd browses between them, and Mateo cuts through the middle
-      // aiming south toward the beacon at the far end while SBPD pushes in
-      // from ahead. The market IS Little Havana, so the mission's own
-      // objective text stands as-is. Mateo at (0, 76) aiming south; the
-      // camera is pinned north-west of him, low, looking south-east down
-      // the market: Mateo at the left third in three-quarter aim, stalls
-      // and crowd receding behind him, police, tracers and the beacon all
-      // in the same frame. The heli holds station above the market.
-      PH.startMission(2);
-      if (W.buildNightMarket) W.buildNightMarket(sim.scene, 0, 92);
-      PH.state.money = 19500; // start + M1 + M2 rewards
-      PH.state.respect = 180;
-      PH.state.missionTimer = 94; // 01:34 on the job clock
-      sim.player.x = 0; sim.player.z = 76; sim.player.heading = 0.35;
-      sim.player.camYaw = 0.35; // looking south-east down the market street
-      sim.player.camPitch = 0.18; // lift the view: the heli must read in frame
-      // Pinned camera: north-west of Mateo, HIGH (4.2 m) so the lens looks
-      // down over the stalls and the crowd: Mateo left-third in
-      // three-quarter aim with his pistol arm reading against the street,
-      // the tracers and the fallen enemy visible on the road ahead, police
-      // and beacon beyond.
-      sim.shotCam = { pos: [-7, 4.2, 67], look: [1.5, 1.0, 90] };
-      sim.shotObjective = 'Deliver the package through the night market';
-      sim.mateo.position.set(0, 0, 76); sim.mateo.rotation.y = 0.35;
-      PH.state.aiming = true;
-      PH.debug.clearPoliceFar();
-      PH.setWanted(3);
-      // Two pursuit cars on the market street ahead, facing Mateo
-      // (headlights and light bars toward the camera). Spawned 24–32 m out:
-      // they close 1–9 m before the shutter depending on the headless frame
-      // rate, so they end up 15–31 m out — tight, but not on top of him.
-      // A third car sits sideways across the street past the beacon as a
-      // roadblock, and two foot officers push in between the stalls.
-      var p1 = sim.spawnPoliceCar(0, 100); p1.heading = Math.PI;
-      var p2 = sim.spawnPoliceCar(0, 108); p2.heading = Math.PI;
-      var rb = sim.spawnPoliceCar(0, 122); rb.heading = Math.PI / 2; rb.g.rotation.y = Math.PI / 2; rb.roadblock = true; rb.tactic = 'ROADBLOCK';
-      sim.spawnPoliceFoot(-5.5, 92); sim.spawnPoliceFoot(5.5, 100);
-      // The drop beacon at the far end of the market, on the street.
-      sim.setBeacon(0, 112);
-      // No palm trunk down the middle of this frame: shift every palm in
-      // the market street (x -14..14, z 60..122) just north of the market,
-      // behind the camera.
-      sim.clearPalmCorridor(-14, 14, 60, 122, 54);
-      // Market crowd browsing between the stalls — none in Mateo's line of
-      // fire down the street centre (x near 0, z 76..95), none closer than
-      // 10 m to the camera.
-      sim.spawnPed(-4, 84); sim.spawnPed(4.5, 88); sim.spawnPed(-3, 96); sim.spawnPed(4, 104);
-      sim.spawnPed(-4.5, 110); sim.spawnPed(3, 114); sim.spawnPed(-2, 80); sim.spawnPed(5, 98);
-      sim.spawnPed(-5, 106); sim.spawnPed(2.5, 82); sim.spawnPed(-3.5, 112); sim.spawnPed(4.8, 90);
-      sim.spawnPed(-4.8, 100); sim.spawnPed(4.2, 86); sim.spawnPed(-2.2, 108); sim.spawnPed(3.8, 118);
-      sim.spawnPed(-5, 90); sim.spawnPed(5, 112);
-      // The firefight read: one enemy already down in the street ahead of
-      // Mateo, one officer down beside a stall, a tracer from Mateo's
-      // pistol to the fallen enemy, a return tracer toward Mateo, and a
-      // muzzle flash at his gun. Dead peds/cops are skipped by the
-      // per-frame updates, so they stay lying where they are staged.
-      var down = sim.spawnPed(4.5, 89); down.dead = true; down.g.rotation.x = -Math.PI / 2; down.g.position.y = 0.25;
-      var downCop = sim.spawnPoliceFoot(-2.8, 94); downCop.dead = true; downCop.g.rotation.x = -Math.PI / 2; downCop.g.position.y = 0.25;
-      if (W.addTracer) {
-        // Bright orange tracers: Mateo's fire to the fallen enemy (two
-        // parallel bars so the line reads at a glance), plus return fire
-        // from the foot officer by the east stalls back toward Mateo.
-        W.addTracer(sim.scene, 0.5, 1.35, 77, 4.5, 0.7, 89);
-        W.addTracer(sim.scene, 0.55, 1.5, 77, 4.5, 0.85, 89);
-        W.addTracer(sim.scene, 5.5, 1.2, 100, 0.3, 1.3, 77.5);
-      }
-      if (W.muzzleFlash) W.muzzleFlash(sim.scene, 1.1, 1.4, 77.5);
-      // Ambient traffic wanders the grid: clear any car that drifted into
-      // the hero area (within 26 m of Mateo) to the far west end of this
-      // road, so no random car parks on Mateo or the Arrow.
-      sim.traffic.forEach(function (car) {
-        if (PH.dist2d(car.x, car.z, 0, 92) < 26) {
-          car.x = PH.rand(-120, -90); car.z = 40; car.heading = Math.PI / 2;
-          car.g.position.set(car.x, 0, car.z); car.g.rotation.y = car.heading;
-        }
-      });
-      PH.sayKira('Package in the trunk. Cut through the night market — the beacon is at the far end, and SBPD is already pushing in. No shooting unless you have to.', 8);
-      return { wanted: PH.state.wanted, police: sim.police.length };
-    },
-    stageTitle: function () {
-      // Title screen: the city behind the overlay is busy — traffic on the
-      // grid street in front of the camera, a patrol car, peds on the walk.
-      // Camera sits south-east of downtown, high, looking north-west
-      // across the grid toward the signed towers: the downtown marquees
-      // face south, so their names read from this side, with the low sun
-      // at the right and the whole skyline in frame instead of one wall.
-      PH.debug.setCamera(55, 30, 95, -30, 10, -90);
-      sim.spawnTrafficCar(8, 40, 0, 0xd83a2e);
-      sim.spawnTrafficCar(32, 40, 0, 0x2e7fd8);
-      sim.spawnTrafficCar(-8, 40, Math.PI, 0xf2c230);
-      sim.spawnTrafficCar(48, 40, 0, 0x37b268);
-      sim.spawnTrafficCar(88, 40, 0, 0xe8e8e8);
-      sim.spawnTrafficCar(104, 40, Math.PI, 0xff7ab8);
-      sim.spawnTrafficCar(20, 0, Math.PI / 2, 0xe8e8e8);
-      sim.spawnTrafficCar(120, 10, 0, 0x37b268);
-      var pc = sim.spawnPoliceCar(56, 40); pc.heading = 0;
-      sim.spawnPed(14, 47); sim.spawnPed(26, 33); sim.spawnPed(38, 47);
-      sim.spawnPed(2, 33); sim.spawnPed(44, 33);
-      return { traffic: sim.traffic.length, police: sim.police.length };
-    },
-    driveForward: function (seconds) { sim.keys['w'] = true; },
-    stopDriving: function () { sim.keys['w'] = false; sim.keys['s'] = false; },
-    shoot: function () { return sim.shoot(); },
-    enterCar: function () { return sim.enterExitCar(); },
-    setKeys: function (keys) { sim.keys = keys; },
+  // sim.update is invoked through this indirection so main.js never has to
+  // know the sim module's internals beyond one function.
+  window.PH.simUpdate = function (dt) { window.PH.sim.update(dt); };
+  window.PH.simEnterCar = function () { window.PH.sim.enterCar(); };
+  window.PH.simExitCar = function () { window.PH.sim.exitCar(); };
+
+  // Expose the stages on the debug handle the probe and shots scripts use.
+  window.PH.debug = Object.assign(window.PH.debug || {}, {
+    stageChase: function () { var r = stageChase(); snapCameraToTarget(); updateHUD(); return r; },
+    stageStreet: function () { var r = stageStreet(); snapCameraToTarget(); updateHUD(); return r; },
+    stageMission: function () { var r = stageMission(); snapCameraToTarget(); updateHUD(); return r; },
+    stageTitle: function () { var r = stageTitle(); updateHUD(); return r; },
+    setNight: setNight,
+  });
+  window.PH.setCameraMode = function (mode, dist, height) {
+    cameraMode = mode;
+    if (dist) camDist = dist;
+    if (height) camHeight = height;
+    snapCameraToTarget();
   };
+  window.PH.startGame = startGame;
+  window.PH.showTitle = showTitle;
 
-  window.PH = PH;
-})();
-
-// ---- PIER HEAT v6.2: shot 3 staging fix (written fresh in this session) ----
-// The staged mission shot had a lamp post crossing the frame and Mateo standing
-// in front of the Scarlet Arrow. After the original staging, hide the lamp on
-// the camera ray and re-stage the Arrow + Mateo so the car reads clearly.
-(function () {
-  var PH = window.PH;
-  if (!PH || !PH.debug || !PH.debug.stageMission) return;
-  var _stageMission = PH.debug.stageMission;
-  function setIf(obj, key, val) { if (obj && key in obj) obj[key] = val; }
-  PH.debug.stageMission = function () {
-    _stageMission();
-    var S = PH.sim;
-    if (!S || !S.scene) return;
-    try {
-      // 1) hide the lamp post near (0, 76) that crosses the frame.
-      var prot = new Set();
-      var protect = function (o) { if (o && o.traverse) o.traverse(function (c) { prot.add(c); }); };
-      protect(S.playerCar); protect(S.mateo);
-      (S.traffic || []).forEach(function (t) { protect(t.g); });
-      (S.police || []).forEach(function (p) { protect(p.g || p.car); });
-      (S.peds || []).forEach(function (p) { protect(p.g); });
-      if (S.heli) protect(S.heli.g || S.heli);
-      var poles = [];
-      S.scene.traverse(function (o) {
-        if (o.isMesh && o.geometry && o.geometry.type === 'CylinderGeometry') {
-          var prm = o.geometry.parameters;
-          if (prm && prm.height > 4 && prm.radiusTop < 0.2) {
-            var wp = new THREE.Vector3(); o.getWorldPosition(wp);
-            if (Math.hypot(wp.x - 0, wp.z - 76) < 5) poles.push(wp);
-          }
-        }
-      });
-      poles.forEach(function (wp) {
-        S.scene.traverse(function (o) {
-          if (!o.isMesh || prot.has(o)) return;
-          var p = new THREE.Vector3(); o.getWorldPosition(p);
-          if (Math.hypot(p.x - wp.x, p.z - wp.z) < 3.5 && p.y < 6) o.visible = false;
-        });
-      });
-    } catch (e) { /* lamp hide is cosmetic */ }
-    try {
-      // 2) park the Scarlet Arrow in frame at the market's south end — the
-      // getaway car waiting past the stalls — and leave Mateo where the
-      // market staging put him, aiming down the street.
-      if (S.arrowCar) { S.arrowCar.x = 5.8; S.arrowCar.z = 106; }
-      setIf(S.playerCarData, 'x', 5.8); setIf(S.playerCarData, 'z', 106);
-      setIf(S.playerCarData, 'heading', 0.15);
-      if (S.playerCar) {
-        S.playerCar.position.set(5.8, 0, 106);
-        S.playerCar.rotation.y = 0.15;
-      }
-    } catch (e) { /* staging moves are cosmetic */ }
-    try {
-      // 3) keep the sightline clear: peds wander in front of the camera at
-      // random, and ramming police converge on the Arrow. Move them aside.
-      var cam = (S.shotCam && S.shotCam.pos) ? S.shotCam.pos : [-7, 4.2, 67];
-      var ax = 5.8, az = 106;
-      var moveRec = function (rec, nx, nz) {
-        if (!rec || typeof rec.x !== 'number') return;
-        rec.x = nx; rec.z = nz;
-        if (rec.g) { rec.g.position.x = nx; rec.g.position.z = nz; }
-      };
-      (S.peds || []).forEach(function (p) {
-        if (typeof p.x !== 'number') return;
-        var dCam = Math.hypot(p.x - cam[0], p.z - cam[2]);
-        var dArr = Math.hypot(p.x - ax, p.z - az);
-        if (dCam < 12 || dArr < 8) moveRec(p, p.x, p.z + 26);
-      });
-      (S.police || []).forEach(function (p) {
-        if (typeof p.x !== 'number') return;
-        var dx = p.x - ax, dz = p.z - az, d = Math.hypot(dx, dz);
-        if (d < 6 && d > 0.01) moveRec(p, ax + dx / d * 14, az + dz / d * 14);
-      });
-      (S.traffic || []).forEach(function (t) {
-        if (typeof t.x !== 'number') return;
-        if (Math.hypot(t.x - ax, t.z - az) < 7) moveRec(t, t.x + 22, t.z);
-      });
-    } catch (e) { /* sightline clearing is cosmetic */ }
-  };
-})();
-
-// ---- PIER HEAT v6.2: save slots with progress on the title screen ----
-(function () {
-  function build() {
-    try {
-      var PH = window.PH;
-      var btn = document.getElementById('start-btn');
-      var scr = document.getElementById('start-screen');
-      if (!btn || !scr || document.getElementById('v62-saves')) return;
-      var sv = null;
-      try { sv = PH.loadSave(); } catch (e) { sv = null; }
-      var panel = document.createElement('div');
-      panel.id = 'v62-saves';
-      panel.style.cssText = 'margin:14px auto 0;max-width:520px;text-align:left;background:rgba(20,12,28,.72);border:1px solid rgba(255,180,90,.45);border-radius:12px;padding:10px 14px;color:#f2e8d8;';
-      var html = '<div style="font-weight:700;letter-spacing:2px;color:#ffb45a;font-size:13px;margin-bottom:6px;">SAVE SLOTS</div>';
-      var fmtTime = function (s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
-      var missionTitle = function (i) {
-        var M = PH.MISSIONS, t = null;
-        if (M) t = Array.isArray(M) ? M[i] : (M[i] || M['m' + (i + 1)] || M['M' + (i + 1)]);
-        return (t && (t.title || t.name)) || ('M' + (i + 1));
-      };
-      if (sv) {
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;">'
-          + '<div><b style="color:#ffd9a0;">SLOT 1</b> &nbsp; ' + missionTitle(sv.missionIndex || 0)
-          + ' &nbsp;·&nbsp; $' + (sv.money || 0).toLocaleString('en-US')
-          + ' &nbsp;·&nbsp; Respect ' + (sv.respect || 0)
-          + ' &nbsp;·&nbsp; ' + fmtTime(sv.timePlayed) + '</div>'
-          + '<button id="v62-continue" style="background:#ffb45a;color:#241608;border:0;border-radius:8px;padding:7px 12px;font-weight:700;cursor:pointer;">LANJUTKAN ▶</button></div>';
-      } else {
-        html += '<div style="padding:6px 0;"><b style="color:#ffd9a0;">SLOT 1</b> &nbsp; EMPTY — no save yet</div>';
-      }
-      html += '<div style="padding:4px 0;color:#b8a894;"><b style="color:#ffd9a0;">SLOT 2</b> &nbsp; EMPTY</div>';
-      html += '<div style="padding:4px 0;color:#b8a894;"><b style="color:#ffd9a0;">SLOT 3</b> &nbsp; EMPTY</div>';
-      html += '<div style="font-size:12px;color:#b8a894;margin-top:4px;">Saves are stored locally in this browser. Starting a new game overwrites Slot 1.</div>';
-      panel.innerHTML = html;
-      btn.insertAdjacentElement('afterend', panel);
-      var cont = document.getElementById('v62-continue');
-      if (cont) cont.addEventListener('click', function () {
-        try { var s2 = PH.loadSave(); if (s2) PH.applySave(s2); } catch (e) { /* ignore */ }
-        btn.click();
-      });
-    } catch (e) { /* title extras never block start */ }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', build);
-  else build();
 })();

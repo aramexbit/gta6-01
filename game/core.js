@@ -1,248 +1,222 @@
-// PIER HEAT — Sunset Bay: core state, utilities, witness-rule wanted, save.
-// Pure logic, no rendering here. Everything the other modules share lives here.
-
+// PIER HEAT v6.4 — core.js
+// Game state, mission definitions, crime / wanted logic, damage routing,
+// district naming and the localStorage save. No rendering lives here:
+// world.js builds the city, sim.js moves things in it, main.js runs the loop.
 (function () {
   'use strict';
 
-  var PH = window.PH || (window.PH = {});
+  // ---------------------------------------------------------------- state
+  var SAVE_KEY = 'pierheat-save-v1';
 
-  // ------------------------------------------------------------ utilities
-  PH.clamp = function (v, a, b) { return v < a ? a : v > b ? b : v; };
-  PH.lerp = function (a, b, t) { return a + (b - a) * t; };
-  PH.rand = function (a, b) { return a + Math.random() * (b - a); };
-  PH.randInt = function (a, b) { return Math.floor(PH.rand(a, b + 1)); };
-  PH.pick = function (arr) { return arr[Math.floor(Math.random() * arr.length)]; };
-  PH.dist2d = function (ax, az, bx, bz) {
-    var dx = ax - bx, dz = az - bz;
-    return Math.sqrt(dx * dx + dz * dz);
-  };
-  PH.angleLerp = function (a, b, t) {
-    var d = b - a;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    return a + d * t;
-  };
-  PH.fmtMoney = function (n) { return '$' + Math.round(n).toLocaleString('en-US'); };
-  PH.starsText = function (n) {
-    var s = '';
-    for (var i = 0; i < 5; i++) s += i < n ? '★' : '☆';
-    return s;
-  };
-
-  // ------------------------------------------------------------ constants
-  PH.CITY = {
-    half: 150,            // playable city half-extent (metres)
-    streetGap: 40,        // grid spacing
-    streets: [-120, -80, -40, 0, 40, 80, 120],
-    beachX: 150,          // sand starts here
-    seaX: 196,            // water starts here
-    witnessRange: 30,     // a crime needs a witness inside this radius
-    policeNearRange: 40,  // decay check radius
-    decaySeconds: 22,     // quiet seconds before wanted drops one star
-  };
-
-  PH.SAVE_KEY = 'pierheat-sunset-bay-save-v1';
-
-  // ------------------------------------------------------------ game state
-  PH.state = {
+  var state = {
     started: false,
-    paused: false,
-    over: false,
-    money: 12800,   // Mateo is an established getaway driver: the wallet
-                     // already holds real job money, and mission rewards
-                     // add to it — the HUD number is never faked.
-    wanted: 0,
-    health: 100,
-    armour: 60,     // absorbs damage before health does (see damagePlayer)
-    respect: 100,   // street standing; +40 per finished job, ranks the crew
-    weapon: 'pistol', // current weapon shown in the wheel
-    smgOwned: false,  // locked wheel slots: no SMG / rifle yet
-    rifleOwned: false,
-    ammo: 48,       // pistol rounds — the wheel reads this live
-    emp: 1,
-    smoke: 1,
-    missionIndex: 0,      // 0..7, 8 = all done (free roam)
-    missionStage: 0,      // sub-step inside a mission
-    missionTimer: 0,
-    missionProgress: 0,
-    carHealth: 100,
-    speedKmh: 0,
-    radio: 0,             // index into RADIO_STATIONS
-    radioOn: true,
     inCar: false,
-    aiming: false,
-    drivingDistance: 0,   // metres driven since mission 2 began
-    heatArmed: false,     // mission-2 heat has fired
-    quietSeconds: 0,      // seconds with no police near
+    missionIndex: 0,        // 0 = M1 PIER RUN, 1 = M2 THREE GATES, 2 = M3 NIGHT MARKET
+    missionStage: 1,        // stage inside the current mission (1-based)
+    missionTimeLeft: 300,   // seconds left on the mission clock
+    wanted: 0,              // 0..5 stars
+    heatArmed: false,       // becomes true once the first chase fires
+    money: 12800,           // starting wallet; M1 pays +2,500 -> $15,300
+    health: 100,
+    armour: 50,
+    respect: 100,
+    ammo: 48,               // pistol rounds
+    speedKmh: 0,
+    carCondition: 100,
+    carFuel: 100,
+    currentCar: null,       // 'arrow' | 'stolen' | null
     kills: 0,
-    carsStolen: 0,
-    timePlayed: 0,
-    completed: false,
+    gatesPassed: 0,
   };
 
-  PH.RADIO_STATIONS = [
-    { name: 'Nightwave 98.3', desc: 'Running Red — original synth loop' },
-    { name: 'Bay FM 91.1', desc: 'Golden Hour — mellow keys' },
-    { name: 'Static 104.7', desc: 'Harbour Talk — late-night calls' },
+  // ------------------------------------------------------------- missions
+  // Every mission is original fiction set in Sunset Bay. Stage counts and
+  // rewards are the contract the HUD and the save slots display.
+  var MISSIONS = [
+    {
+      id: 'M1', name: 'PIER RUN', totalStages: 1, timeLimit: 300,
+      briefing: 'Kira: the Scarlet Arrow is parked in the Marina lot. Take it.',
+      next: 'TAKE THE SCARLET ARROW',
+      rewardMoney: 2500, rewardRespect: 40,
+    },
+    {
+      id: 'M2', name: 'THREE GATES', totalStages: 3, timeLimit: 240,
+      briefing: 'Kira: three gates, three checkpoints. Thread them before the Bay wakes up.',
+      next: 'GATE 1 — PIER PLAZA',
+      rewardMoney: 5000, rewardRespect: 60,
+    },
+    {
+      id: 'M3', name: 'NIGHT MARKET', totalStages: 2, timeLimit: 300,
+      briefing: 'Kira: the market crew turned on us. Cut through Little Havana on foot.',
+      next: 'REACH THE MARKET BEACON',
+      rewardMoney: 7500, rewardRespect: 80,
+    },
   ];
 
-  // ------------------------------------------------------------ save / load
-  PH.saveGame = function () {
-    try {
-      localStorage.setItem(PH.SAVE_KEY, JSON.stringify({
-        money: PH.state.money,
-        missionIndex: PH.state.missionIndex,
-        kills: PH.state.kills,
-        carsStolen: PH.state.carsStolen,
-        timePlayed: PH.state.timePlayed,
-        respect: PH.state.respect,
-        armour: PH.state.armour,
-      }));
-    } catch (e) { /* storage unavailable: game still plays */ }
-  };
+  function mission() { return MISSIONS[state.missionIndex] || MISSIONS[0]; }
 
-  PH.loadSave = function () {
+  function missionLabel() {
+    var m = mission();
+    return m.id + ' · ' + m.name;
+  }
+
+  // Next-objective line for the HUD. Always starts with "NEXT".
+  function nextObjective() {
+    var m = mission();
+    if (state.missionIndex === 0) return 'NEXT: TAKE THE SCARLET ARROW';
+    if (state.missionIndex === 1) {
+      var gates = ['PIER PLAZA', 'PALM ROW', 'NORTH GATE'];
+      var i = Math.min(state.missionStage - 1, gates.length - 1);
+      return 'NEXT: GATE ' + state.missionStage + ' — ' + gates[i];
+    }
+    if (state.missionIndex === 2) {
+      return state.missionStage === 1
+        ? 'NEXT: CLEAR THE MARKET CREW'
+        : 'NEXT: REACH THE MARKET BEACON';
+    }
+    return 'NEXT: ' + m.next;
+  }
+
+  function completeMission() {
+    var m = mission();
+    state.money += m.rewardMoney;
+    state.respect += m.rewardRespect;
+    state.missionIndex = Math.min(state.missionIndex + 1, MISSIONS.length - 1);
+    state.missionStage = 1;
+    state.gatesPassed = 0;
+    var nm = mission();
+    state.missionTimeLeft = nm.timeLimit;
+    saveGame();
+    return { paid: m.rewardMoney, respect: m.rewardRespect, next: nm.id };
+  }
+
+  // ------------------------------------------------------- crime / wanted
+  var WANTED_LABELS = ['CLEAN', 'SUSPECT', 'PURSUIT', 'MANHUNT', 'LOCKDOWN', 'CITYWIDE'];
+
+  function wantedLabel() { return WANTED_LABELS[state.wanted] || 'CLEAN'; }
+
+  // Armour absorbs damage before health. Returns the health actually lost.
+  // 25 dmg vs 60 armour -> armour 35, health untouched, lost 0.
+  // 50 more dmg -> armour 0, health -15, lost 15.
+  function damagePlayer(amount) {
+    var n = Math.max(0, amount);
+    var absorbed = Math.min(state.armour, n);
+    state.armour -= absorbed;
+    var lost = n - absorbed;
+    state.health = Math.max(0, state.health - lost);
+    return lost;
+  }
+
+  function setWantedStars(n) {
+    state.wanted = Math.max(0, Math.min(5, n | 0));
+    if (state.wanted > 0) state.heatArmed = true;
+    return state.wanted;
+  }
+
+  function addHeat(n) { return setWantedStars(state.wanted + n); }
+
+  function coolDown() {
+    // Wanted decays one star at a time once the player breaks line of sight.
+    if (state.wanted > 0) state.wanted -= 1;
+    return state.wanted;
+  }
+
+  // ----------------------------------------------------------- districts
+  // Where am I? Used by the HUD location label and the minimap title.
+  function locationName(x, z) {
+    if (x >= 200) return { area: 'Ocean Pier', district: 'Pier District' };
+    if (x <= -100 && z >= 20) return { area: 'Little Havana Market', district: 'Little Havana' };
+    if (x <= -100) return { area: 'Little Havana', district: 'Little Havana' };
+    if (z >= 20 && z < 150) return { area: 'Marina Park', district: 'Sunset Bay' };
+    if (Math.abs(z) <= 14) return { area: 'Ocean Drive', district: 'Sunset Bay' };
+    if (z < -14) return { area: 'North Grid', district: 'Sunset Bay' };
+    return { area: 'Sunset Bay', district: 'Downtown' };
+  }
+
+  // -------------------------------------------------------------- save
+  function saveGame() {
     try {
-      var raw = localStorage.getItem(PH.SAVE_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw);
+      var s = {
+        missionIndex: state.missionIndex,
+        money: state.money,
+        respect: state.respect,
+        health: Math.round(state.health),
+        armour: Math.round(state.armour),
+        ammo: state.ammo,
+        savedAt: Date.now(),
+      };
+      window.localStorage.setItem(SAVE_KEY, JSON.stringify(s));
+      return s;
     } catch (e) { return null; }
-  };
+  }
 
-  PH.applySave = function (save) {
-    if (!save) return;
-    PH.state.money = typeof save.money === 'number' ? save.money : PH.state.money;
-    PH.state.missionIndex = typeof save.missionIndex === 'number' ? PH.clamp(save.missionIndex, 0, 8) : 0;
-    PH.state.kills = save.kills || 0;
-    PH.state.carsStolen = save.carsStolen || 0;
-    PH.state.timePlayed = save.timePlayed || 0;
-    PH.state.respect = typeof save.respect === 'number' ? save.respect : PH.state.respect;
-    PH.state.armour = typeof save.armour === 'number' ? PH.clamp(save.armour, 0, 100) : PH.state.armour;
-  };
+  function loadSave() {
+    try {
+      var raw = window.localStorage.getItem(SAVE_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || typeof s.missionIndex !== 'number') return null;
+      return s;
+    } catch (e) { return null; }
+  }
 
-  // ------------------------------------------------------------ witness rule
-  // A crime only raises wanted when a witness can see it: a police unit, or a
-  // pedestrian who is still walking (not fleeing), within 30 metres.
-  // Returns true when the crime was witnessed.
-  PH.witnessedCrime = function (kind, x, z) {
-    var sim = PH.sim;
-    if (!sim) return false;
-    var range = PH.CITY.witnessRange;
-    var i, d;
-    for (i = 0; i < sim.police.length; i++) {
-      var p = sim.police[i];
-      if (!p || p.dead) continue;
-      d = PH.dist2d(x, z, p.x, p.z);
-      if (d <= range) return true;
-    }
-    for (i = 0; i < sim.peds.length; i++) {
-      var ped = sim.peds[i];
-      if (!ped || ped.dead || ped.fleeing) continue;
-      d = PH.dist2d(x, z, ped.x, ped.z);
-      if (d <= range) return true;
-    }
-    return false;
-  };
+  function clearSave() {
+    try { window.localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ }
+  }
 
-  // Apply a crime. `stars` is how many wanted stars it adds when witnessed.
-  // Silent crimes (no witness) change nothing. Returns whether it was seen.
-  PH.commitCrime = function (kind, stars, x, z) {
-    var seen = PH.witnessedCrime(kind, x, z);
-    if (seen) {
-      PH.addWanted(stars);
-      PH.state.quietSeconds = 0;
-    }
-    return seen;
-  };
+  function fmtMoney(n) { return '$' + Math.round(n).toLocaleString('en-US'); }
 
-  PH.addWanted = function (stars) {
-    var before = PH.state.wanted;
-    PH.state.wanted = PH.clamp(PH.state.wanted + stars, 0, 5);
-    if (PH.state.wanted !== before && PH.onWantedChange) PH.onWantedChange(PH.state.wanted, before);
-    return PH.state.wanted;
-  };
+  function addMoney(n) { state.money += n; return state.money; }
 
-  PH.setWanted = function (n) {
-    var before = PH.state.wanted;
-    PH.state.wanted = PH.clamp(n, 0, 5);
-    PH.state.quietSeconds = 0;
-    if (PH.state.wanted !== before && PH.onWantedChange) PH.onWantedChange(PH.state.wanted, before);
-    return PH.state.wanted;
-  };
+  function addRespect(n) { state.respect = Math.max(0, state.respect + n); return state.respect; }
 
-  // Damage routing: armour soaks the hit first, health only takes the rest.
-  // Returns how much health was actually lost (0 when armour held it all).
-  PH.damagePlayer = function (amount) {
-    var st = PH.state;
-    var soaked = Math.min(st.armour, amount);
-    st.armour = PH.clamp(st.armour - soaked, 0, 100);
-    var toHealth = amount - soaked;
-    st.health = PH.clamp(st.health - toHealth, 0, 100);
-    return toHealth;
-  };
+  // Fresh run: back to the opening wallet, M1 and a clean wanted slate.
+  // The save file is left alone — Slot 1 keeps showing the last progress
+  // until a mission completes and overwrites it.
+  function resetRun() {
+    state.missionIndex = 0;
+    state.missionStage = 1;
+    state.missionTimeLeft = MISSIONS[0].timeLimit;
+    state.wanted = 0;
+    state.heatArmed = false;
+    state.money = 12800;
+    state.health = 100;
+    state.armour = 50;
+    state.respect = 100;
+    state.ammo = 48;
+    state.gatesPassed = 0;
+    state.inCar = false;
+    state.currentCar = null;
+    return state;
+  }
 
-  // Street rank from respect points — shown beside the respect bar.
-  PH.respectTitle = function (r) {
-    if (r >= 500) return 'SHOT CALLER';
-    if (r >= 250) return 'FIXER';
-    if (r >= 100) return 'DOCK HAND';
-    return 'ROOKIE';
-  };
+  function fmtClock(sec) {
+    var s = Math.max(0, Math.ceil(sec));
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return (m < 10 ? '0' : '') + m + ':' + (r < 10 ? '0' : '') + r;
+  }
 
-  // Where the player is, from real coordinates — the location label reads this.
-  PH.locationName = function (x, z) {
-    if (x >= 200 && Math.abs(z) < 12) return { area: 'THE PIER', sub: 'Sunset Bay · end of the boardwalk' };
-    if (x >= 196) return { area: 'THE SEA', sub: 'Sunset Bay · open water' };
-    if (x > 150) return { area: 'OCEAN BEACH', sub: 'Sunset Bay · sand and palms' };
-    if (x > 80) return { area: 'OCEAN DRIVE', sub: 'Sunset Bay · pastel deco row' };
-    if (z > 60 && x < 40) return { area: 'LITTLE HAVANA', sub: 'Sunset Bay · terracotta corner' };
-    if (Math.abs(x) <= 40 && Math.abs(z) <= 40) return { area: 'DOWNTOWN', sub: 'Sunset Bay · glass towers' };
-    if (z < -60 && x > 100) return { area: 'THE MARINA', sub: 'Sunset Bay · moored boats' };
-    if (z < -60) return { area: 'NORTH BAY', sub: 'Sunset Bay · quiet streets' };
-    return { area: 'SUNSET BAY', sub: 'Downtown grid · golden hour' };
-  };
-
-  // Distance to the nearest living police unit, or Infinity when none.
-  PH.nearestPoliceDist = function (x, z) {
-    var sim = PH.sim;
-    if (!sim) return Infinity;
-    var best = Infinity;
-    for (var i = 0; i < sim.police.length; i++) {
-      var p = sim.police[i];
-      if (!p || p.dead) continue;
-      var d = PH.dist2d(x, z, p.x, p.z);
-      if (d < best) best = d;
-    }
-    return best;
-  };
-
-  // Wanted decay: called every frame with dt. Only ticks down when no police
-  // unit is within 40 m; 22 quiet seconds drops one star.
-  PH.updateWantedDecay = function (dt) {
-    if (PH.state.wanted <= 0) { PH.state.quietSeconds = 0; return; }
-    var sim = PH.sim;
-    if (!sim) return;
-    var near = PH.nearestPoliceDist(sim.player.x, sim.player.z) <= PH.CITY.policeNearRange;
-    if (near) { PH.state.quietSeconds = 0; return; }
-    PH.state.quietSeconds += dt;
-    if (PH.state.quietSeconds >= PH.CITY.decaySeconds) {
-      PH.state.quietSeconds = 0;
-      PH.addWanted(-1);
-    }
-  };
-
-  // ------------------------------------------------------------ events feed
-  PH.feed = []; // {t, text} recent event lines for the police panel
-  PH.pushFeed = function (text) {
-    PH.feed.unshift({ t: PH.state.timePlayed, text: text });
-    if (PH.feed.length > 6) PH.feed.length = 6;
-  };
-
-  // Dialogue queue for Kira (radio handler).
-  PH.dialogue = { name: '', text: '', until: 0 };
-  PH.sayKira = function (text, seconds) {
-    PH.dialogue = { name: 'KIRA — radio', text: text, until: PH.state.timePlayed + (seconds || 6) };
-  };
-
-  window.PH = PH;
+  // ------------------------------------------------------------ export
+  window.PH = window.PH || {};
+  window.PH.state = state;
+  window.PH.MISSIONS = MISSIONS;
+  window.PH.mission = mission;
+  window.PH.missionLabel = missionLabel;
+  window.PH.nextObjective = nextObjective;
+  window.PH.completeMission = completeMission;
+  window.PH.damagePlayer = damagePlayer;
+  window.PH.setWantedStars = setWantedStars;
+  window.PH.addHeat = addHeat;
+  window.PH.coolDown = coolDown;
+  window.PH.wantedLabel = wantedLabel;
+  window.PH.locationName = locationName;
+  window.PH.saveGame = saveGame;
+  window.PH.loadSave = loadSave;
+  window.PH.clearSave = clearSave;
+  window.PH.fmtMoney = fmtMoney;
+  window.PH.fmtClock = fmtClock;
+  window.PH.addMoney = addMoney;
+  window.PH.addRespect = addRespect;
+  window.PH.resetRun = resetRun;
 })();

@@ -14,3 +14,5 @@ out/
 # v6.7 screenshots: ~/workspace/makefun/gta6-01-shots-v67.mjs (Playwright, headless Chromium)
 # v6.8: capture scripts live in /tmp, never committed
 # v6.8 rev 2 — beach crowd 38 NPCs + flee behaviour, heli in every shot
+# v7.0 — restage pass: tighter cameras, round street-map minimap, dense HUD
+# v7.0 rev 2 — flash toned down, helis reframed, speedometer KM/H fixed

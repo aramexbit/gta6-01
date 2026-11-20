@@ -61,7 +61,9 @@
     scene.add(sky);
     scene.fog = new THREE.Fog(isSunset ? 0xf2a05c : 0xbcd9ea, 120, 520);
 
-    var sun = new THREE.DirectionalLight(isSunset ? 0xffb066 : 0xfff2d8, isSunset ? 2.4 : 2.6);
+    // v7.0: the day sun is weaker and warmer (2.6 white washed the hero
+    // car pale cream); golden hour unchanged.
+    var sun = new THREE.DirectionalLight(isSunset ? 0xffb066 : 0xffe9c0, isSunset ? 2.4 : 2.0);
     sun.position.set(isSunset ? -160 : 90, isSunset ? 55 : 190, isSunset ? -40 : 60);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
@@ -73,13 +75,14 @@
     scene.add(new THREE.HemisphereLight(
       isSunset ? 0xffd9a0 : 0xbfdfff,
       isSunset ? 0x8a5a3a : 0x8a9a7a,
-      isSunset ? 0.9 : 1.0
+      isSunset ? 0.9 : 0.85
     ));
     world.sun = sun;
 
-    // Low sun disc for the golden-hour frame: a soft radial glow, not a
-    // star, so it reads as a sun low over the ocean.
-    if (isSunset) {
+    // Sun disc in both modes: a soft radial glow, not a star — low over
+    // the ocean at golden hour, high with glare in the day sky, so the
+    // sky never reads flat pale blue.
+    {
       var sunTex = PH.makeCanvasTexture(128, 128, function (g, w, h) {
         var grad = g.createRadialGradient(64, 64, 2, 64, 64, 62);
         grad.addColorStop(0, 'rgba(255,244,200,1)');
@@ -91,8 +94,8 @@
       var sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
         map: sunTex, color: 0xffffff, transparent: true, opacity: 0.95, fog: false, depthWrite: false
       }));
-      sunDisc.position.set(-150, 62, -420);
-      sunDisc.scale.set(70, 70, 1);
+      sunDisc.position.set(isSunset ? -150 : 140, isSunset ? 62 : 95, isSunset ? -420 : -380);
+      sunDisc.scale.set(isSunset ? 70 : 55, isSunset ? 70 : 55, 1);
       scene.add(sunDisc);
     }
 
@@ -706,48 +709,50 @@
       return p;
     }
     if (shot === 1) {
-      // Chase: the road right in front of the lens.
-      fruitCart(-15, 0, 13, 0.5);
-      crate(-22, 0, 11.5, 0.4); crate(-21.2, 0, 12.6, -0.3); crate(-21.6, 1.1, 12, 0.2);
-      trashCan(-11, 0, 10.5);
-      hydrantFg(-12.5, 0, 8);
-      benchFg(-19, 0, 13.8, 0.3);
-      walker(-21.5, 0, 13.0, Math.PI, 'walk');
-      walker(-13.5, 0, 15.5, 0, 'walk');
-      walker(-18.5, 0, 15, Math.PI * 0.9, 'run');
+      // Chase: props at the frame EDGES only — v6.9 put a walker and the
+      // fruit cart dead-centre in front of the lens, hiding the hero.
+      fruitCart(-27, 0, 9, 0.5);
+      crate(-8, 0, 8.5, 0.4); crate(-8.8, 0, 9.6, -0.3); crate(-8.4, 1.1, 9, 0.2);
+      trashCan(-9, 0, 6);
+      hydrantFg(-26, 0, 6.5);
+      benchFg(-27, 0, 12, 0.3);
+      walker(-26.5, 0, 7, Math.PI, 'walk');
+      walker(-7.5, 0, 5, 0, 'walk');
+      walker(-25, 0, 2, Math.PI * 0.9, 'run');
     } else if (shot === 2) {
-      // On foot: the sidewalk right in front of the lens.
-      fruitCart(-7.9, 0, -2.2, -0.6);
-      crate(-12.2, 0, -2.0, 0.3, 0.8); crate(-11.3, 0, -4.9, -0.2, 0.8);
-      trashCan(-8.2, 0, -3.2);
-      benchFg(-12.4, 0, -3.4, Math.PI / 2);
-      hydrantFg(-12.5, 0, -4.5);
-      walker(-8.4, 0, -2.2, Math.PI, 'walk');
-      walker(-11.9, 0, -2.8, 0, 'walk');
-      walker(-7.9, 0, -4.5, Math.PI, 'walk');
+      // On foot: props at the sidewalk edges, ahead of Mateo — v6.9 put
+      // a walker and a crate between the lens and Mateo, filling the frame.
+      // v7.0 rev3: the trash can and fruit cart were still close enough
+      // to the lens to read as giant objects at the right edge.
+      fruitCart(-5.8, 0, -13.5, -0.6);
+      crate(-13.8, 0, -7.5, 0.3, 0.8); crate(-13.2, 0, -10.2, -0.2, 0.8);
+      trashCan(-6.0, 0, -12.5);
+      benchFg(-13.6, 0, -5.2, Math.PI / 2);
+      hydrantFg(-13.8, 0, -9);
+      walker(-13.8, 0, -8.5, Math.PI, 'walk');
+      walker(-6.5, 0, -10.5, 0, 'walk');
+      walker(-12.8, 0, -10.5, Math.PI, 'walk');
     } else if (shot === 3) {
-      // Mission: the pier deck in front of the lens (deck top y=1.35).
-      // Props sit 4-6 units out, at the frame edges — anything closer
-      // fills the whole frame (in the first v6.9 render a crate 1 unit
-      // from the lens hid Mateo, Kira and the whole pier). The crates
-      // are small (tops at eye level) so Mateo and Kira show above them.
-      crate(-51.6, 1.35, 41.2, 0.5, 0.7);
-      crate(-49.6, 1.35, 40.2, -0.4, 0.7);
-      towelSurf(-53.5, 1.35, 42.6, 0.4, 0xffd23e);
-      trashCan(-53.9, 1.35, 41.6);
+      // Mission: the pier deck at the frame EDGES — v6.9 put crates, a
+      // trash can and a surfboard across the middle, hiding Mateo & Kira.
+      crate(-59.5, 1.35, 36.5, 0.5, 0.7);
+      crate(-58.8, 1.35, 35.2, -0.4, 0.7);
+      towelSurf(-47.5, 1.35, 36.5, 0.4, 0xffd23e);
+      trashCan(-47.8, 1.35, 37.5);
       cyl(0.22, 0.16, 0.3,
-        new THREE.MeshStandardMaterial({ color: 0xff5d5d, roughness: 0.7 }), -50.6, 1.5, 42.6, 10);
-      walker(-49.6, 1.35, 39.2, Math.PI * 0.75, 'walk');
-      walker(-53.6, 1.35, 43.2, Math.PI * 0.2, 'walk');
+        new THREE.MeshStandardMaterial({ color: 0xff5d5d, roughness: 0.7 }), -59.2, 1.5, 39.5, 10);
+      walker(-47.6, 1.35, 36.2, Math.PI * 0.75, 'walk');
+      walker(-58.2, 1.35, 39.8, Math.PI * 0.2, 'walk');
     } else if (shot === 4) {
-      // Combat: the pale road right in front of the lens.
-      fruitCart(-18, 0, 24, 0.4);
-      crate(-20.5, 0, 23.5, 0.3); crate(-20.6, 0, 23.6, -0.3);
-      trashCan(-13.5, 0, 23);
-      hydrantFg(-12.5, 0, 26);
-      walker(-15.5, 0, 22, Math.PI, 'run');
-      walker(-20, 0, 25.5, Math.PI * 0.85, 'run');
-      walker(-14, 0, 26.5, Math.PI * 1.1, 'walk');
+      // Combat: props at the road edges — v6.9 put the overturned cart
+      // dead-centre in front of the lens, hiding Mateo's legs and the car.
+      fruitCart(-25.5, 0, 28, 0.4);
+      crate(-12, 0, 29, 0.3); crate(-12.1, 0, 29.1, -0.3);
+      trashCan(-25.8, 0, 31);
+      hydrantFg(-11.8, 0, 32);
+      walker(-25.2, 0, 31, Math.PI, 'run');
+      walker(-12.2, 0, 27, Math.PI * 0.85, 'run');
+      walker(-24.8, 0, 34, Math.PI * 1.1, 'walk');
     }
     return group;
   };

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
   var PH = window.PH = window.PH || {};
-  PH.VERSION = '6.9';
+  PH.VERSION = '7.0';
 
   // ---------- tiny DOM helper ----------
   PH.el = function (id) { return document.getElementById(id); };
@@ -284,13 +284,66 @@
       if (a) a.style.width = Math.max(0, Math.min(100, armor)) + '%';
     },
     setAmmo: function (n) { var e = PH.el('ammo'); if (e) e.textContent = n; },
-    setSpeed: function (kmh) { var e = PH.el('speed'); if (e) e.textContent = Math.round(kmh); },
-    dialog: function (who, line) {
+    setSpeed: function (kmh) {
+      var e = PH.el('speed'); if (e) e.textContent = Math.round(kmh);
+      // v7.0 rev2: textContent used to wipe the <small>KM/H</small> child,
+      // so the big speedometer showed a bare number at the frame edge.
+      var b = PH.el('speedBig'); if (b) b.innerHTML = Math.round(kmh) + ' <small>KM/H</small>';
+    },
+    // v7.0 — dense top-rank HUD: mission stage bar + timer + next step.
+    setMission: function (stage, progress, timer, next) {
+      var s = PH.el('objStage'), f = PH.el('objBarFill'), t = PH.el('objTimer'), n = PH.el('objNext');
+      if (s) s.textContent = stage || '';
+      if (f) f.style.width = Math.max(0, Math.min(100, (progress || 0) * 100)) + '%';
+      if (t) t.textContent = timer || '';
+      if (n) n.textContent = next || '';
+    },
+    setCash: function (str) { var e = PH.el('cash'); if (e) e.textContent = str || ''; },
+    setCar: function (name, cond) {
+      var e = PH.el('carName'); if (e) e.textContent = name || '';
+      var c = PH.el('carCond'); if (c) c.textContent = cond || '';
+    },
+    setRadioText: function (str) { var e = PH.el('radioText'); if (e) e.textContent = str || ''; },
+    // Dispatch board: named police units with role, distance and tactic.
+    // Pass [] (or null) to hide the board when the heat is off.
+    setDispatch: function (rows) {
+      var d = PH.el('dispatch'), list = PH.el('dispatchList');
+      if (!d || !list) return;
+      if (!rows || !rows.length) { d.style.display = 'none'; return; }
+      list.innerHTML = '';
+      rows.forEach(function (r) {
+        var div = document.createElement('div');
+        div.className = 'drow';
+        var tag = document.createElement('span'); tag.className = 'dtag'; tag.textContent = r.tag || '';
+        var nm = document.createElement('span'); nm.className = 'dname'; nm.textContent = r.unit + ' — ' + r.role;
+        var ds = document.createElement('span'); ds.className = 'ddist'; ds.textContent = r.dist || '';
+        div.appendChild(tag); div.appendChild(nm); div.appendChild(ds);
+        list.appendChild(div);
+      });
+      d.style.display = 'block';
+    },
+    setWeapons: function (slots, selected) {
+      var w = PH.el('weapons');
+      if (!w) return;
+      var html = '';
+      (slots || []).forEach(function (s, i) {
+        html += '<div class="wslot' + (i === selected ? ' sel' : '') + '"><span class="wico">' + s.ico + '</span><span class="wlab">' + s.name + '</span><span class="wammo">' + s.ammo + '</span></div>';
+      });
+      w.innerHTML = html;
+      w.style.display = 'block';
+    },
+    dialog: function (who, line, portrait) {
       var d = PH.el('dialog');
       if (!d) return;
       PH.el('dlgWho').textContent = who;
       PH.el('dlgLine').textContent = line;
-      d.style.display = 'block';
+      var p = PH.el('dlgPortrait');
+      if (p) {
+        var key = (portrait || who || '').toUpperCase();
+        p.textContent = key.indexOf('KIRA') === 0 ? 'K' : 'M';
+        p.className = 'portrait ' + (key.indexOf('KIRA') === 0 ? 'kira' : 'mateo');
+      }
+      d.style.display = 'flex';
     },
     hideDialog: function () { var d = PH.el('dialog'); if (d) d.style.display = 'none'; },
     toast: function (msg, ms) {
@@ -322,20 +375,31 @@
     ctx.fillStyle = '#0a141d'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#0d3b52'; ctx.fillRect(0, 0, px(-102), H);
     ctx.fillStyle = '#8a744e'; ctx.fillRect(px(-102), 0, px(-28) - px(-102), H);
-    ctx.fillStyle = '#152433';
+    // v7.0: blocks read as city blocks (clearly lighter than the ground)
+    // and the street grid is dense, so the whole canvas reads as a map.
+    ctx.fillStyle = '#2a4258';
     for (var gx = -10; gx < 160; gx += 40) {
       for (var gz = -160; gz < 160; gz += 40) {
         ctx.fillRect(px(gx + 4), pz(gz + 4), px(gx + 36) - px(gx + 4), pz(gz + 36) - pz(gz + 4));
       }
     }
+    // Minor cross streets every 20 units, faint, so the map has a real
+    // grid instead of a few thick bars floating on dark ground.
+    ctx.strokeStyle = '#4a6a80'; ctx.lineWidth = 1.5;
+    for (var mx = 10; mx < 160; mx += 20) {
+      ctx.beginPath(); ctx.moveTo(px(mx), pz(b.z0)); ctx.lineTo(px(mx), pz(b.z1)); ctx.stroke();
+    }
+    for (var mz = -140; mz < 160; mz += 20) {
+      ctx.beginPath(); ctx.moveTo(px(b.x0), pz(mz)); ctx.lineTo(px(b.x1), pz(mz)); ctx.stroke();
+    }
     // roads: bright, wide, high-contrast lines on the dark ground, each
     // drawn over a darker casing so the edge stays crisp.
     ctx.lineCap = 'round';
     (data.roads || []).forEach(function (r) {
-      var lw = Math.max(3, (r.w || 8) / (b.x1 - b.x0) * W * 0.85);
-      ctx.strokeStyle = '#05090d'; ctx.lineWidth = lw + 3;
+      var lw = Math.max(2, (r.w || 8) / (b.x1 - b.x0) * W * 0.35);
+      ctx.strokeStyle = '#05090d'; ctx.lineWidth = lw + 1.5;
       ctx.beginPath(); ctx.moveTo(px(r.x0), pz(r.z0)); ctx.lineTo(px(r.x1), pz(r.z1)); ctx.stroke();
-      ctx.strokeStyle = '#f2f5f7'; ctx.lineWidth = lw;
+      ctx.strokeStyle = '#c9d6de'; ctx.lineWidth = lw;
       ctx.beginPath(); ctx.moveTo(px(r.x0), pz(r.z0)); ctx.lineTo(px(r.x1), pz(r.z1)); ctx.stroke();
     });
     // Sunset Blvd centre line in yellow so the main avenue stands out.
@@ -376,8 +440,9 @@
       ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.restore();
     }
-    // north + frame label
+    // north arrow + frame label
     ctx.fillStyle = '#fff'; ctx.font = '900 13px Arial, sans-serif'; ctx.textAlign = 'left';
+    ctx.beginPath(); ctx.moveTo(13, 20); ctx.lineTo(18, 30); ctx.lineTo(8, 30); ctx.closePath(); ctx.fill();
     ctx.fillText('N', 8, 16);
     ctx.font = '700 11px Arial, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.75)';
     ctx.fillText('SUNSET BAY', 8, H - 8);

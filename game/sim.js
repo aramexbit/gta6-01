@@ -248,7 +248,10 @@
   // two struts and four wheels with rims. Faces +Z, like the traffic cars.
   PH.buildHeroCar = function () {
     var g = new THREE.Group();
-    var paint = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.45, metalness: 0.15 });
+    // v7.0: deeper burnt orange, matte (roughness up, metalness near zero)
+    // — the old 0xff7a1a / metal 0.15 washed to pale cream under the
+    // midday sun in shot 4; this paint stays orange in any light.
+    var paint = new THREE.MeshStandardMaterial({ color: 0xf25c00, roughness: 0.62, metalness: 0.05 });
     var glass = new THREE.MeshStandardMaterial({ color: 0x0e1a24, roughness: 0.1, metalness: 0.85 });
     var chrome = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.2, metalness: 0.95 });
     var dark = stdMat(0x1a1a1a, 0.4);
@@ -711,9 +714,12 @@
     var spot = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8),
       new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2b0, emissiveIntensity: 2.5 }));
     spot.position.set(1.7, -0.85, 0); heli.add(spot);
-    var beam = new THREE.Mesh(new THREE.ConeGeometry(1.6, 5, 12, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }));
-    beam.position.set(2.6, -3.2, 0); beam.rotation.z = -0.5; heli.add(beam);
+    // v7.0: the searchlight beam is long enough to reach the ground from
+    // the staged heli height, so it reads as a spotlight hitting the
+    // street/pier instead of a cone floating in the sky.
+    var beam = new THREE.Mesh(new THREE.ConeGeometry(2.2, 12, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
+    beam.position.set(3.4, -6.8, 0); beam.rotation.z = -0.35; heli.add(beam);
     var pdTex = PH.makeCanvasTexture(256, 64, function (ctx, w, h) {
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
       ctx.fillStyle = '#1d4f9c'; ctx.font = '900 34px Arial Black, Arial, sans-serif';
@@ -805,27 +811,43 @@
       map: PH.flashTexture(), color: 0xffd27a, transparent: true,
       blending: THREE.AdditiveBlending, depthWrite: false
     }));
-    sprite.scale.set(1.4, 1.4, 1);
+    // v7.0 rev2: the flash was a frame-filling white blob — its point
+    // light (140) washed the hero car, the street and Mateo pale. A
+    // 2.2-unit star + a modest light still reads big at thumbnail size.
+    sprite.scale.set(2.2, 2.2, 1);
     sprite.visible = false;
     scene.add(sprite);
-    var light = new THREE.PointLight(0xffc860, 0, 14, 1.6);
+    var core = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: PH.flashTexture(), color: 0xffffff, transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    core.scale.set(1.2, 1.2, 1);
+    core.visible = false;
+    scene.add(core);
+    // v7.0 rev3: the point light is only a warm pool on Mateo's hands —
+    // at 45 it washed the hero car and the whole foreground cream.
+    var light = new THREE.PointLight(0xffc860, 0, 9, 1.6);
     scene.add(light);
     return {
-      sprite: sprite, light: light, on: false, timer: 0,
+      sprite: sprite, core: core, light: light, on: false, timer: 0,
       showAt: function (pos) {
         sprite.position.copy(pos);
+        core.position.copy(pos);
         light.position.copy(pos);
         sprite.visible = true;
-        light.intensity = 60;
+        core.visible = true;
+        light.intensity = 15;
         this.on = true; this.timer = 0;
       },
-      hide: function () { sprite.visible = false; light.intensity = 0; this.on = false; },
+      hide: function () { sprite.visible = false; core.visible = false; light.intensity = 0; this.on = false; },
       update: function (dt, hold) {
         if (!this.on) return;
         this.timer += dt;
         var flick = 0.85 + Math.sin(this.timer * 47) * 0.15;
         sprite.material.opacity = flick;
-        sprite.scale.set(1.3 + Math.sin(this.timer * 31) * 0.2, 1.3 + Math.cos(this.timer * 29) * 0.2, 1);
+        core.material.opacity = flick;
+        sprite.scale.set(2.1 + Math.sin(this.timer * 31) * 0.3, 2.1 + Math.cos(this.timer * 29) * 0.3, 1);
+        core.scale.set(1.15 + Math.sin(this.timer * 37) * 0.15, 1.15 + Math.cos(this.timer * 33) * 0.15, 1);
         if (!hold && this.timer > 0.09) this.hide();
       }
     };

@@ -777,3 +777,134 @@
 
   window.PH = PH;
 })();
+
+// ---- PIER HEAT v6.2: shot 3 staging fix (written fresh in this session) ----
+// The staged mission shot had a lamp post crossing the frame and Mateo standing
+// in front of the Scarlet Arrow. After the original staging, hide the lamp on
+// the camera ray and re-stage the Arrow + Mateo so the car reads clearly.
+(function () {
+  var PH = window.PH;
+  if (!PH || !PH.debug || !PH.debug.stageMission) return;
+  var _stageMission = PH.debug.stageMission;
+  function setIf(obj, key, val) { if (obj && key in obj) obj[key] = val; }
+  PH.debug.stageMission = function () {
+    _stageMission();
+    var S = PH.sim;
+    if (!S || !S.scene) return;
+    try {
+      // 1) hide the lamp post near (127.5, 40) that crosses the frame.
+      var prot = new Set();
+      var protect = function (o) { if (o && o.traverse) o.traverse(function (c) { prot.add(c); }); };
+      protect(S.playerCar); protect(S.mateo);
+      (S.traffic || []).forEach(function (t) { protect(t.g); });
+      (S.police || []).forEach(function (p) { protect(p.g || p.car); });
+      (S.peds || []).forEach(function (p) { protect(p.g); });
+      if (S.heli) protect(S.heli.g || S.heli);
+      var poles = [];
+      S.scene.traverse(function (o) {
+        if (o.isMesh && o.geometry && o.geometry.type === 'CylinderGeometry') {
+          var prm = o.geometry.parameters;
+          if (prm && prm.height > 4 && prm.radiusTop < 0.2) {
+            var wp = new THREE.Vector3(); o.getWorldPosition(wp);
+            if (Math.hypot(wp.x - 127.5, wp.z - 40) < 4) poles.push(wp);
+          }
+        }
+      });
+      poles.forEach(function (wp) {
+        S.scene.traverse(function (o) {
+          if (!o.isMesh || prot.has(o)) return;
+          var p = new THREE.Vector3(); o.getWorldPosition(p);
+          if (Math.hypot(p.x - wp.x, p.z - wp.z) < 3.5 && p.y < 6) o.visible = false;
+        });
+      });
+    } catch (e) { /* lamp hide is cosmetic */ }
+    try {
+      // 2) park the Scarlet Arrow in frame (front-right 3/4 to the camera)
+      // and stand Mateo beside it, not in front of it.
+      if (S.arrowCar) { S.arrowCar.x = 134; S.arrowCar.z = 41.5; }
+      setIf(S.playerCarData, 'x', 134); setIf(S.playerCarData, 'z', 41.5);
+      setIf(S.playerCarData, 'heading', 0.35);
+      if (S.playerCar) {
+        S.playerCar.position.set(134, 0, 41.5);
+        S.playerCar.rotation.y = 0.35;
+      }
+      if (S.player) { S.player.x = 128.5; S.player.z = 38.5; S.player.heading = -0.45; }
+      if (S.mateo) {
+        S.mateo.position.set(128.5, 0, 38.5);
+        S.mateo.rotation.y = -0.45;
+      }
+    } catch (e) { /* staging moves are cosmetic */ }
+    try {
+      // 3) keep the sightline clear: peds wander in front of the camera at
+      // random, and ramming police converge on the Arrow. Move them aside.
+      var cam = (S.shotCam && S.shotCam.pos) ? S.shotCam.pos : [122, 1.4, 52];
+      var ax = 134, az = 41.5;
+      var moveRec = function (rec, nx, nz) {
+        if (!rec || typeof rec.x !== 'number') return;
+        rec.x = nx; rec.z = nz;
+        if (rec.g) { rec.g.position.x = nx; rec.g.position.z = nz; }
+      };
+      (S.peds || []).forEach(function (p) {
+        if (typeof p.x !== 'number') return;
+        var dCam = Math.hypot(p.x - cam[0], p.z - cam[2]);
+        var dArr = Math.hypot(p.x - ax, p.z - az);
+        if (dCam < 12 || dArr < 8) moveRec(p, p.x, p.z + 26);
+      });
+      (S.police || []).forEach(function (p) {
+        if (typeof p.x !== 'number') return;
+        var dx = p.x - ax, dz = p.z - az, d = Math.hypot(dx, dz);
+        if (d < 9 && d > 0.01) moveRec(p, ax + dx / d * 14, az + dz / d * 14);
+      });
+      (S.traffic || []).forEach(function (t) {
+        if (typeof t.x !== 'number') return;
+        if (Math.hypot(t.x - ax, t.z - az) < 7) moveRec(t, t.x + 22, t.z);
+      });
+    } catch (e) { /* sightline clearing is cosmetic */ }
+  };
+})();
+
+// ---- PIER HEAT v6.2: save slots with progress on the title screen ----
+(function () {
+  function build() {
+    try {
+      var PH = window.PH;
+      var btn = document.getElementById('start-btn');
+      var scr = document.getElementById('start-screen');
+      if (!btn || !scr || document.getElementById('v62-saves')) return;
+      var sv = null;
+      try { sv = PH.loadSave(); } catch (e) { sv = null; }
+      var panel = document.createElement('div');
+      panel.id = 'v62-saves';
+      panel.style.cssText = 'margin:14px auto 0;max-width:520px;text-align:left;background:rgba(20,12,28,.72);border:1px solid rgba(255,180,90,.45);border-radius:12px;padding:10px 14px;color:#f2e8d8;';
+      var html = '<div style="font-weight:700;letter-spacing:2px;color:#ffb45a;font-size:13px;margin-bottom:6px;">SAVE SLOTS</div>';
+      var fmtTime = function (s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+      var missionTitle = function (i) {
+        var M = PH.MISSIONS, t = null;
+        if (M) t = Array.isArray(M) ? M[i] : (M[i] || M['m' + (i + 1)] || M['M' + (i + 1)]);
+        return (t && (t.title || t.name)) || ('M' + (i + 1));
+      };
+      if (sv) {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;">'
+          + '<div><b style="color:#ffd9a0;">SLOT 1</b> &nbsp; ' + missionTitle(sv.missionIndex || 0)
+          + ' &nbsp;·&nbsp; $' + (sv.money || 0).toLocaleString('en-US')
+          + ' &nbsp;·&nbsp; Respect ' + (sv.respect || 0)
+          + ' &nbsp;·&nbsp; ' + fmtTime(sv.timePlayed) + '</div>'
+          + '<button id="v62-continue" style="background:#ffb45a;color:#241608;border:0;border-radius:8px;padding:7px 12px;font-weight:700;cursor:pointer;">LANJUTKAN ▶</button></div>';
+      } else {
+        html += '<div style="padding:6px 0;"><b style="color:#ffd9a0;">SLOT 1</b> &nbsp; EMPTY — no save yet</div>';
+      }
+      html += '<div style="padding:4px 0;color:#b8a894;"><b style="color:#ffd9a0;">SLOT 2</b> &nbsp; EMPTY</div>';
+      html += '<div style="padding:4px 0;color:#b8a894;"><b style="color:#ffd9a0;">SLOT 3</b> &nbsp; EMPTY</div>';
+      html += '<div style="font-size:12px;color:#b8a894;margin-top:4px;">Saves are stored locally in this browser. Starting a new game overwrites Slot 1.</div>';
+      panel.innerHTML = html;
+      btn.insertAdjacentElement('afterend', panel);
+      var cont = document.getElementById('v62-continue');
+      if (cont) cont.addEventListener('click', function () {
+        try { var s2 = PH.loadSave(); if (s2) PH.applySave(s2); } catch (e) { /* ignore */ }
+        btn.click();
+      });
+    } catch (e) { /* title extras never block start */ }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', build);
+  else build();
+})();

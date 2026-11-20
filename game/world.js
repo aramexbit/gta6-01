@@ -721,3 +721,362 @@
 
   window.PH = PH;
 })();
+
+// ---- PIER HEAT v6.2 fidelity pass (written fresh in this session) ----
+// Sports-car body: sloped hood, arched fenders, sloping roofline, low stance.
+// Contract kept from v6.1 makeCar: returns a THREE.Group; userData.wheels holds
+// the four tyre meshes, userData.body is the main lower-body mesh (first child),
+// userData.length is the body length. Local axes: +x = front, y = up, z = width.
+function makeCar_v62(color, opts) {
+  var L = (opts && opts.length) || 4.4;
+  var wx = L * 0.32; // wheelbase half-length
+  var g = new THREE.Group();
+  function lam(c, e) {
+    var m = new THREE.MeshLambertMaterial({ color: c });
+    if (e !== undefined && e !== null) m.emissive = new THREE.Color(e);
+    return m;
+  }
+  var bodyMat = lam(typeof color === 'number' ? color : 0xcccccc);
+  var glassMat = lam(0x9fd4e8, 0x2a4a5a);
+  var darkMat = lam(0x14141a);
+  var tyreMat = lam(0x181818);
+  var hubMat = lam(0xd8d8d8);
+  var headMat = lam(0xfff2b0, 0xffedb0);
+  var tailMat = lam(0xff2a2a, 0xcc0000);
+  function add(geo, material, x, y, z, rz) {
+    var m = new THREE.Mesh(geo, material);
+    m.position.set(x, y, z);
+    if (rz) m.rotation.z = rz;
+    g.add(m);
+    return m;
+  }
+  function box(w, h, d) { return new THREE.BoxGeometry(w, h, d); }
+  // 0: main lower body slab (userData.body) — low and long.
+  var body = add(box(L, 0.5, 1.86), bodyMat, 0, 0.52, 0, 0);
+  // lower valance + side skirts
+  add(box(L * 0.92, 0.12, 1.88), darkMat, 0, 0.3, 0, 0);
+  add(box(L * 0.5, 0.1, 0.07), darkMat, 0, 0.32, 0.94, 0);
+  add(box(L * 0.5, 0.1, 0.07), darkMat, 0, 0.32, -0.94, 0);
+  // sloped hood: nose lower than cowl
+  add(box(1.35, 0.09, 1.68), bodyMat, L / 2 - 0.72, 0.8, 0, -0.13);
+  // front splitter + grille + bumpers
+  add(box(0.3, 0.08, 1.7), darkMat, L / 2 - 0.1, 0.28, 0, 0);
+  add(box(0.06, 0.18, 1.15), darkMat, L / 2 + 0.08, 0.52, 0, 0);
+  add(box(0.2, 0.3, 1.84), bodyMat, L / 2 - 0.02, 0.44, 0, 0);
+  add(box(0.2, 0.3, 1.84), bodyMat, -L / 2 + 0.02, 0.44, 0, 0);
+  // headlights / taillights
+  add(box(0.08, 0.15, 0.44), headMat, L / 2 + 0.05, 0.66, 0.58, 0);
+  add(box(0.08, 0.15, 0.44), headMat, L / 2 + 0.05, 0.66, -0.58, 0);
+  add(box(0.08, 0.15, 0.44), tailMat, -L / 2 - 0.05, 0.66, 0.58, 0);
+  add(box(0.08, 0.15, 0.44), tailMat, -L / 2 - 0.05, 0.66, -0.58, 0);
+  // arched fenders over each wheel (torus half-arch, body colour)
+  var fenderGeo = new THREE.TorusGeometry(0.48, 0.1, 8, 14, Math.PI);
+  [wx, -wx].forEach(function (fx) {
+    [0.97, -0.97].forEach(function (fz) {
+      var f = new THREE.Mesh(fenderGeo, bodyMat);
+      f.position.set(fx, 0.36, fz);
+      g.add(f);
+    });
+  });
+  // cabin: dark interior core, then sloped glass + roof sloping down to the rear
+  add(box(1.9, 0.42, 1.4), darkMat, -0.15, 1.0, 0, 0);
+  add(box(0.07, 0.55, 1.5), glassMat, 0.72, 1.03, 0, 0.45);
+  add(box(0.07, 0.42, 1.42), glassMat, -1.0, 1.03, 0, -0.38);
+  add(box(1.45, 0.32, 0.05), glassMat, -0.15, 1.06, 0.78, 0);
+  add(box(1.45, 0.32, 0.05), glassMat, -0.15, 1.06, -0.78, 0);
+  add(box(1.8, 0.07, 1.42), bodyMat, -0.18, 1.3, 0, 0.08);
+  // mirrors
+  add(box(0.14, 0.09, 0.12), darkMat, 0.55, 1.02, 1.0, 0);
+  add(box(0.14, 0.09, 0.12), darkMat, 0.55, 1.02, -1.0, 0);
+  // spoiler: small lip always; full wing when opts.sport
+  add(box(0.5, 0.06, 1.5), bodyMat, -L / 2 + 0.18, 0.84, 0, 0);
+  if (opts && opts.sport) {
+    add(box(0.55, 0.05, 1.62), bodyMat, -L / 2 + 0.12, 1.04, 0, 0);
+    add(box(0.07, 0.2, 0.07), darkMat, -L / 2 + 0.12, 0.93, 0.55, 0);
+    add(box(0.07, 0.2, 0.07), darkMat, -L / 2 + 0.12, 0.93, -0.55, 0);
+  }
+  // wheels: tyre (spun by sim) + hub + cap
+  var wheels = [];
+  [wx, -wx].forEach(function (fx) {
+    [0.95, -0.95].forEach(function (fz) {
+      var tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.26, 14), tyreMat);
+      tyre.rotation.x = Math.PI / 2;
+      tyre.position.set(fx, 0.36, fz);
+      g.add(tyre);
+      wheels.push(tyre);
+      var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.28, 10), hubMat);
+      hub.rotation.x = Math.PI / 2;
+      hub.position.set(fx, 0.36, fz);
+      g.add(hub);
+      var cap = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.3, 8), darkMat);
+      cap.rotation.x = Math.PI / 2;
+      cap.position.set(fx, 0.36, fz);
+      g.add(cap);
+    });
+  });
+  g.userData.wheels = wheels;
+  g.userData.body = body;
+  g.userData.length = L;
+  return g;
+}
+if (window.PH && window.PH.world) window.PH.world.makeCar = makeCar_v62;
+
+// ---- PIER HEAT v6.2: Mateo proportions + window variation + signed skyline ----
+// Mateo: head a touch smaller vs the body, arms angled slightly away from the
+// torso, jacket widened so it covers the torso fully from every angle.
+(function () {
+  var W = window.PH && window.PH.world;
+  if (!W || !W.makeMateo) return;
+  var _makeMateo = W.makeMateo;
+  W.makeMateo = function () {
+    var g = _makeMateo();
+    try {
+      var kids = g.children || [];
+      for (var i = 0; i < kids.length; i++) {
+        var k = kids[i];
+        if (!k || !k.position) continue;
+        if (k.position.y > 1.7 && k.position.x === 0 && k.position.z === 0) {
+          k.scale.set(0.88, 0.88, 0.88); // head group
+          k.position.y = 1.8;
+        } else if (k.userData && k.userData.upper) {
+          k.rotation.z = k.position.x < 0 ? 0.07 : -0.07; // arms hang clear
+        } else if (Math.abs(k.position.y - 0.95) < 0.01 && k.position.x === 0) {
+          k.scale.x = 1.04; k.scale.z = 1.04; // jacket torso group
+        }
+      }
+    } catch (e) { /* keep the original Mateo on any surprise */ }
+    return g;
+  };
+})();
+
+// Windows: repeat the facade texture per building size (tall = smaller, denser
+// windows; low = bigger windows), randomise the pattern phase, and vary the
+// warm lit-vs-dark emissive per building instead of one flat pattern.
+function v62TowerWindows(seed) {
+  var c = document.createElement('canvas'); c.width = 128; c.height = 256;
+  var x = c.getContext('2d');
+  x.fillStyle = '#3a3348'; x.fillRect(0, 0, 128, 256);
+  var s = seed || 12345;
+  var rnd = function () { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  for (var r = 0; r < 8; r++) {
+    for (var col = 0; col < 4; col++) {
+      var lit = rnd();
+      x.fillStyle = lit < 0.45 ? '#ffd9a0' : lit < 0.7 ? '#ff9a50' : '#1c2030';
+      x.fillRect(10 + col * 30, 10 + r * 30, 20, 20);
+    }
+  }
+  var t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(2, 2);
+  return t;
+}
+function v62SignTexture(text) {
+  var c = document.createElement('canvas'); c.width = 512; c.height = 128;
+  var x = c.getContext('2d');
+  x.fillStyle = '#101018'; x.fillRect(0, 0, 512, 128);
+  x.strokeStyle = '#ff9a3c'; x.lineWidth = 6; x.strokeRect(6, 6, 500, 116);
+  x.fillStyle = '#ffd9a0'; x.font = 'bold 52px Arial, sans-serif';
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(text, 256, 68);
+  return new THREE.CanvasTexture(c);
+}
+function v62RoofSign(scene, x, y, z, w, text) {
+  var tex = v62SignTexture(text);
+  var face = new THREE.MeshBasicMaterial({ map: tex });
+  var dark = new THREE.MeshLambertMaterial({ color: 0x14141c });
+  var sign = new THREE.Mesh(new THREE.BoxGeometry(w, 2.2, 0.7), [dark, dark, dark, dark, face, face]);
+  sign.position.set(x, y + 1.2, z);
+  sign.rotation.y = Math.atan2(-x, -z);
+  scene.add(sign);
+  var legMat = new THREE.MeshLambertMaterial({ color: 0x22222c });
+  [-w / 3, w / 3].forEach(function (off) {
+    var leg = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.2, 0.25), legMat);
+    leg.position.set(x + Math.cos(sign.rotation.y) * off, y + 0.1, z - Math.sin(sign.rotation.y) * off);
+    scene.add(leg);
+  });
+  return sign;
+}
+(function () {
+  var W = window.PH && window.PH.world;
+  if (!W || !W.buildBuildings) return;
+  var _buildBuildings = W.buildBuildings;
+  W.buildBuildings = function (scene) {
+    _buildBuildings(scene);
+    try {
+      var list = W.buildings || [];
+      for (var i = 0; i < list.length; i++) {
+        var b = list[i];
+        if (!b || !b.geometry || !b.geometry.parameters || !b.material) continue;
+        var p = b.geometry.parameters;
+        var map = b.material.map;
+        if (map) {
+          map.wrapS = THREE.RepeatWrapping;
+          map.wrapT = THREE.RepeatWrapping;
+          map.repeat.set(Math.max(1, Math.min(3, Math.round(p.width / 7))), Math.max(1, Math.min(4, Math.round(p.height / 7))));
+          map.offset.set((((i * 37) % 10) / 10) * 0.5, 0);
+          map.needsUpdate = true;
+        }
+        var pick = (i * 2654435761) % 100;
+        var em = pick < 45 ? 0xffb060 : pick < 70 ? 0xff9a40 : pick < 88 ? 0x8a6a44 : 0x2a1e12;
+        if (b.material.emissive) b.material.emissive.setHex(em);
+      }
+      // named rooftop signs on the four downtown towers (h >= 30)
+      var names = ['HOTEL SERIWA', 'LAGUNA RASI', 'PIRA PALACE', 'SUNSET PIER'];
+      var ni = 0;
+      for (var j = 0; j < list.length; j++) {
+        var t = list[j];
+        if (!t || !t.geometry || !t.geometry.parameters) continue;
+        if (t.geometry.parameters.height >= 30 && ni < names.length) {
+          v62RoofSign(scene, t.position.x, t.geometry.parameters.height, t.position.z, 12, names[ni++]);
+        }
+      }
+      // denser skyline: extra towers around the outer edges, each signed
+      var towers = [
+        [-90, -140, 20, 34, 18, 'MARINA BAY HOTEL'], [-30, -140, 22, 44, 20, 'CASA DEL SOL'],
+        [30, -140, 20, 30, 18, 'THE MERIDIAN'], [90, -140, 22, 40, 20, 'PALM COURT'],
+        [-60, 140, 20, 28, 18, 'CORAL ARCADE'], [0, 140, 22, 38, 20, 'VISTA LUMINA'],
+        [60, 140, 20, 32, 18, 'BAHIA GRANDE'], [-140, -60, 18, 30, 20, 'TORRE AURORA'],
+        [-140, 60, 18, 36, 20, 'SELAT SUITES'], [142, -100, 18, 26, 18, 'PIER 9 RESIDENCES'],
+        [142, 100, 18, 30, 18, 'CASA MARINA']
+      ];
+      for (var k = 0; k < towers.length; k++) {
+        var tw = towers[k];
+        var mat = new THREE.MeshLambertMaterial({ map: v62TowerWindows(1000 + k * 7919), emissive: 0x3a2818 });
+        var mesh = new THREE.Mesh(new THREE.BoxGeometry(tw[2], tw[3], tw[4]), mat);
+        mesh.position.set(tw[0], tw[3] / 2, tw[1]);
+        scene.add(mesh);
+        v62RoofSign(scene, tw[0], tw[3], tw[1], 11, tw[5]);
+      }
+    } catch (e) { /* skyline extras are cosmetic; never break the build */ }
+  };
+})();
+
+// ---- PIER HEAT v6.2: fill the empty block quadrants (park / parking / stall) ----
+// Every 40 m block holds two buildings on one diagonal; the other diagonal's
+// quadrants are bare cream ground. Fill a third of the blocks (deterministic
+// hash, tower blocks skipped) with a pocket park, a marked parking bay with a
+// parked car, or a street-food stall.
+(function () {
+  var W = window.PH && window.PH.world;
+  if (!W || !W.buildStreetProps) return;
+  var _buildStreetProps = W.buildStreetProps;
+  function lam(c, e) {
+    var m = new THREE.MeshLambertMaterial({ color: c });
+    if (e !== undefined && e !== null) m.emissive = new THREE.Color(e);
+    return m;
+  }
+  function bx(scene, mat, w, h, d, x, y, z, ry) {
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    if (ry) m.rotation.y = ry;
+    scene.add(m);
+    return m;
+  }
+  function v62Park(scene, x, z) {
+    bx(scene, lam(0x4a7c3a), 6, 0.15, 6, x, 0.08, z, 0);
+    var bush = lam(0x2e5a2e);
+    [-1.9, 1.9].forEach(function (off, i) {
+      var b = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), bush);
+      b.position.set(x + off, 0.6, z + (i === 0 ? -1.9 : 1.9));
+      scene.add(b);
+    });
+    var wood = lam(0x8a5a2e);
+    bx(scene, wood, 1.8, 0.12, 0.5, x, 0.45, z - 1.2, 0);
+    bx(scene, wood, 1.8, 0.5, 0.1, x, 0.7, z - 1.42, 0);
+    try {
+      if (W.makePalm) { var p = W.makePalm(); p.position.set(x + 1.8, 0, z + 1.8); scene.add(p); }
+    } catch (e) { /* palm optional */ }
+  }
+  function v62Parking(scene, x, z, seed) {
+    bx(scene, lam(0x2c2c34), 7, 0.1, 5, x, 0.06, z, 0);
+    var line = lam(0xf2f2f2);
+    [-2.3, 0, 2.3].forEach(function (off) { bx(scene, line, 0.12, 0.02, 4.5, x + off, 0.12, z, 0); });
+    var colors = [0x3c78d8, 0xd8b13c, 0x7a4a9a, 0x4a9a6a];
+    var car = makeCar_v62(colors[seed % colors.length], { length: 4.4 });
+    car.position.set(x - 1.15, 0, z);
+    car.rotation.y = 0;
+    scene.add(car);
+  }
+  function v62Stall(scene, x, z, seed) {
+    var canopies = [0xff7a3c, 0xffd23c, 0x3cc8ff];
+    var pole = lam(0x3a3a44);
+    [[-1.5, -1.2], [1.5, -1.2], [-1.5, 1.2], [1.5, 1.2]].forEach(function (c) {
+      var p = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 6), pole);
+      p.position.set(x + c[0], 1.2, z + c[1]);
+      scene.add(p);
+    });
+    bx(scene, lam(canopies[seed % canopies.length]), 3.2, 0.12, 2.7, x, 2.45, z, 0);
+    bx(scene, lam(0x6a4a2e), 2.6, 0.9, 1.1, x, 0.45, z, 0);
+    bx(scene, lam(0xf2f2f2), 2.7, 0.08, 1.2, x, 0.95, z, 0);
+    var crate = lam(0x9a7a3c);
+    bx(scene, crate, 0.6, 0.6, 0.6, x - 1.9, 0.3, z + 0.8, 0.3);
+    bx(scene, crate, 0.6, 0.6, 0.6, x + 1.9, 0.3, z - 0.8, 0);
+    var bulb = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
+    [-1.2, 0, 1.2].forEach(function (off) {
+      var s = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5), bulb);
+      s.position.set(x + off, 2.3, z + 1.25);
+      scene.add(s);
+    });
+  }
+  W.buildStreetProps = function (scene) {
+    _buildStreetProps(scene);
+    try {
+      var centers = [-100, -60, -20, 20, 60, 100];
+      var towerBlocks = { '-20,-20': 1, '-20,20': 1, '20,-20': 1, '20,20': 1 };
+      for (var i = 0; i < centers.length; i++) {
+        for (var j = 0; j < centers.length; j++) {
+          var cx = centers[i], cz = centers[j];
+          if (towerBlocks[cx + ',' + cz]) continue;
+          var h = ((cx * 31 + cz * 17) % 3 + 3) % 3;
+          if (h !== 0) continue;
+          var quads = [[cx - 8, cz + 8], [cx + 8, cz - 8]];
+          for (var q = 0; q < quads.length; q++) {
+            var qx = quads[q][0], qz = quads[q][1];
+            var kind = ((qx * 13 + qz * 29) % 3 + 3) % 3;
+            if (kind === 0) v62Park(scene, qx, qz);
+            else if (kind === 1) v62Parking(scene, qx, qz, qx + qz);
+            else v62Stall(scene, qx, qz, qx + qz);
+          }
+        }
+      }
+    } catch (e) { /* block fills are cosmetic; never break the build */ }
+  };
+})();
+
+// ---- PIER HEAT v6.2: facade marquee signs on the tall towers ----
+// The roof signs sit above the title camera's frame, so the four downtown
+// towers (and the four north-edge skyline towers) also get a lit marquee on
+// their north face, which is the face the title camera looks at.
+(function () {
+  var W = window.PH && window.PH.world;
+  if (!W || !W.buildBuildings) return;
+  var _bb = W.buildBuildings;
+  function marquee(scene, x, y, z, w, text) {
+    var tex = v62SignTexture(text);
+    var face = new THREE.MeshBasicMaterial({ map: tex });
+    var dark = new THREE.MeshLambertMaterial({ color: 0x14141c });
+    var sign = new THREE.Mesh(new THREE.BoxGeometry(w, 2.4, 0.5), [dark, dark, dark, dark, face, face]);
+    sign.position.set(x, y, z);
+    scene.add(sign);
+  }
+  W.buildBuildings = function (scene) {
+    _bb(scene);
+    try {
+      var list = W.buildings || [];
+      var names = ['HOTEL SERIWA', 'LAGUNA RASI', 'PIRA PALACE', 'SUNSET PIER'];
+      var ni = 0;
+      for (var j = 0; j < list.length; j++) {
+        var t = list[j];
+        if (!t || !t.geometry || !t.geometry.parameters) continue;
+        var p = t.geometry.parameters;
+        if (p.height >= 30 && ni < names.length) {
+          marquee(scene, t.position.x, p.height * 0.62, t.position.z + p.depth / 2 + 0.35, 11, names[ni++]);
+        }
+      }
+      var north = [[-90, -140, 34, 'MARINA BAY HOTEL'], [-30, -140, 44, 'CASA DEL SOL'], [30, -140, 30, 'THE MERIDIAN'], [90, -140, 40, 'PALM COURT']];
+      for (var k = 0; k < north.length; k++) {
+        marquee(scene, north[k][0], north[k][2] * 0.62, north[k][1] + 10.35, 11, north[k][3]);
+      }
+    } catch (e) { /* marquee signs are cosmetic */ }
+  };
+})();

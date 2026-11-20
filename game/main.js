@@ -1,352 +1,529 @@
-// PIER HEAT — Sunset Bay (v6.7)
-// main.js — boot, camera, input, HUD, procedural WebAudio, and the debug
-// staging API the screenshot harness uses (?shot=1..4, PH.debug.*).
-// v6.7: four new staged framings — bridge chase, market walk, harbor
-// chase, beach title — replacing the v6.6 shots.
+// PIER HEAT — Sunset Bay v6.8
+// main.js — boots the renderer, builds the world and its crowds, stages
+// the four screenshot scenes (chase / on foot / mission / combat) and runs
+// the playable game: drive the Scarlet Arrow, walk as Mateo, lose the
+// Bay City PD, save with P. Shot scenes are chosen with ?shot=1..4.
 (function () {
-  var PH = window.PH = window.PH || {};
-  var core = PH.core, world = PH.world, sim = PH.sim;
+  'use strict';
+  var PH = window.PH;
+
+  window.__errors = [];
+  window.__ready = false;
+  window.__mateoOk = false;
+  window.addEventListener('error', function (e) { window.__errors.push(String(e.message || e.error)); });
+  window.addEventListener('unhandledrejection', function (e) { window.__errors.push('rejection: ' + String(e.reason)); });
 
   var params = new URLSearchParams(location.search);
-  var shotParam = params.get('shot');
-  var autoStart = params.get('autostart') === '1' || !!shotParam;
+  var shotNum = parseInt(params.get('shot') || '0', 10) || 0;
+  var seed = parseInt(params.get('seed') || '1', 10) || 1;
+  PH.setSeed(seed);
+  var SHOT_MODE = shotNum >= 1 && shotNum <= 4;
+  var SAVE_KEY = 'pierheat-save-v68';
 
-  var canvas = document.getElementById('game');
-  core.init(canvas);
-  world.build(core.scene);
-  sim.init(core.scene);
-
-  // ------------------------------------------------------------ audio
-  // All sound is synthesised in WebAudio: engine hum, two-tone siren,
-  // gunshot noise. No audio assets, no network.
-  var audio = PH.audio = {
-    ctx: null, engineOsc: null, engineGain: null, sirenOsc: null,
-    ensure: function () {
-      try {
-        if (this.ctx) return;
-        var AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        this.ctx = new AC();
-        this.engineGain = this.ctx.createGain();
-        this.engineGain.gain.value = 0;
-        this.engineGain.connect(this.ctx.destination);
-        this.engineOsc = this.ctx.createOscillator();
-        this.engineOsc.type = 'sawtooth';
-        this.engineOsc.frequency.value = 55;
-        var lp = this.ctx.createBiquadFilter();
-        lp.type = 'lowpass'; lp.frequency.value = 320;
-        this.engineOsc.connect(lp); lp.connect(this.engineGain);
-        this.engineOsc.start();
-      } catch (e) { /* silent without audio */ }
-    },
-    engine: function (speed) {
-      if (!this.ctx || !this.engineOsc) return;
-      this.engineOsc.frequency.value = 50 + Math.abs(speed) * 4;
-      this.engineGain.gain.value = 0.02 + Math.min(0.05, Math.abs(speed) * 0.002);
-    },
-    gunshot: function () {
-      try {
-        if (!this.ctx) return;
-        var len = this.ctx.sampleRate * 0.12;
-        var buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-        var d = buf.getChannelData(0);
-        for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-        var src = this.ctx.createBufferSource();
-        src.buffer = buf;
-        var g = this.ctx.createGain(); g.gain.value = 0.25;
-        src.connect(g); g.connect(this.ctx.destination);
-        src.start();
-      } catch (e) {}
-    },
-    sirenBurst: function () {
-      try {
-        if (!this.ctx) return;
-        var o = this.ctx.createOscillator();
-        o.type = 'square';
-        o.frequency.value = 750;
-        var g = this.ctx.createGain(); g.gain.value = 0.05;
-        o.connect(g); g.connect(this.ctx.destination);
-        o.start();
-        var t = 0, self = this;
-        var iv = setInterval(function () {
-          t++;
-          o.frequency.value = t % 2 ? 950 : 750;
-          if (t > 5) { clearInterval(iv); try { o.stop(); } catch (e) {} }
-        }, 320);
-      } catch (e) {}
-    }
-  };
-  window.addEventListener('pointerdown', function () { audio.ensure(); }, { once: true });
-  window.addEventListener('keydown', function () { audio.ensure(); }, { once: true });
-
-  // ------------------------------------------------------------ input
+  var renderer, scene, camera, clock;
+  var world, traffic, cityCrowd, beachCrowd, police, hero, heroState;
+  var mateo = null, kira = null, flash = null;
+  var wanted = 0, hp = 100, armor = 80, ammo = 12;
+  var onFoot = false;
   var keys = {};
-  var yaw = 0, pitch = 0;
-  window.addEventListener('keydown', function (e) {
-    keys[e.key.toLowerCase()] = true;
-    if (e.key === 'e' || e.key === 'E') sim.toggleEnterExit();
-    if (e.key === ' ') { keys.space = true; e.preventDefault(); }
-    if (e.key >= '1' && e.key <= '4') {
-      var w = ['Fists', 'Pistol', 'SMG', 'Rifle'][+e.key - 1];
-      sim.state.weapon = w;
-      sim.state.ammo = w === 'Fists' ? 0 : (w === 'Pistol' ? 24 : (w === 'SMG' ? 60 : 12));
-    }
-    if (e.key === 'f' || e.key === 'F') sim.shoot();
-  });
-  window.addEventListener('keyup', function (e) {
-    keys[e.key.toLowerCase()] = false;
-    if (e.key === ' ') keys.space = false;
-  });
-  canvas.addEventListener('click', function () {
-    if (document.pointerLockElement !== canvas) {
-      try { canvas.requestPointerLock(); } catch (e) {}
-    }
-  });
-  document.addEventListener('mousemove', function (e) {
-    if (document.pointerLockElement === canvas) {
-      yaw -= e.movementX * 0.0025;
-      pitch = core.clamp(pitch - e.movementY * 0.002, -0.5, 0.4);
-    }
-  });
-  canvas.addEventListener('mousedown', function (e) {
-    if (e.button === 0) sim.shoot();
-  });
+  var objective = { x: -58, z: 40 };
+  var threat = { active: false, x: 0, z: 0 };
+  var elapsed = 0;
+  var minimapEl = null;
 
-  // ------------------------------------------------------------ camera
-  var camTarget = { pos: new THREE.Vector3(0, 6, -14), look: new THREE.Vector3(0, 1, 0) };
-  var camMode = 'free';
-  function setStageCam(stage) {
-    camMode = 'stage';
-    camTarget.pos.copy(stage.cam);
-    camTarget.look.copy(stage.look);
-    core.camera.position.copy(stage.cam);
-    core.camera.lookAt(stage.look);
+  function buildRenderer() {
+    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    if ('outputColorSpace' in renderer && THREE.SRGBColorSpace) renderer.outputColorSpace = THREE.SRGBColorSpace;
+    PH.el('app').appendChild(renderer.domElement);
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1200);
+    camera.position.set(0, 6, 40);
+    clock = new THREE.Clock();
+    window.addEventListener('resize', function () {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
   }
-  function updateCamera(dt) {
-    var cam = core.camera;
-    if (camMode === 'stage') {
-      cam.position.copy(camTarget.pos);
-      cam.lookAt(camTarget.look);
+
+  function setObjective(title, text, ox, oz) {
+    PH.hud.setObjective(title, text);
+    if (ox != null) { objective.x = ox; objective.z = oz; }
+  }
+
+  function setWanted(n) {
+    wanted = Math.max(0, Math.min(5, n));
+    PH.hud.setWanted(wanted);
+    threat.active = wanted >= 1;
+    if (wanted >= 1) PH.audio.siren(true); else PH.audio.siren(false);
+  }
+
+  // Freeze a traffic car at an exact staged spot (speed 0, custom lane).
+  function stageTrafficCar(i, x, z, headingNorth) {
+    var rec = traffic.cars[i % traffic.cars.length];
+    if (headingNorth == null) headingNorth = true;
+    if (headingNorth) {
+      rec.route = { axis: 'z', lane: x, from: -1000, to: 1000, dir: 1 };
+      rec.pos = z;
+    } else {
+      rec.route = { axis: 'x', lane: z, from: -1000, to: 1000, dir: 1 };
+      rec.pos = x;
+    }
+    rec.speed = 0;
+    traffic.place(rec);
+    if (!headingNorth) rec.group.rotation.y = Math.PI / 2;
+    return rec;
+  }
+
+  function placePoliceCar(i, x, z, ry) {
+    var car = police.cars[i % police.cars.length];
+    car.position.set(x, 0, z);
+    car.rotation.y = ry;
+    return car;
+  }
+  function placeOfficer(i, x, z, ry) {
+    var o = police.officers[i % police.officers.length];
+    o.group.position.set(x, 0, z);
+    o.group.rotation.y = ry;
+    PH.posePerson(o, 0);
+    return o;
+  }
+
+  // ---------------- shot staging ----------------
+  function stageShot1() {
+    // COVER — golden-hour chase down Sunset Blvd, beach on the left.
+    // Hero big in frame, police cruisers visible around it, the helicopter
+    // frozen in the upper sky so it is always in frame.
+    setWanted(3);
+    setObjective('PIER HEAT — LOSE THE HEAT', 'Lose the Bay City PD and reach the pier.', -58, 40);
+    heroState.x = -20; heroState.z = 8; heroState.heading = Math.PI + 0.3; heroState.speed = 26;
+    // Cruisers pull alongside / just ahead of the hero, never between the
+    // camera and the hero (they would out-size it).
+    placePoliceCar(0, -16.5, -2, Math.PI);
+    placePoliceCar(1, -23.5, -8, Math.PI);
+    placePoliceCar(2, -16.5, -18, Math.PI);
+    stageTrafficCar(0, -23.5, -30, true);
+    stageTrafficCar(1, -16.5, -42, true);
+    stageTrafficCar(2, 8, -40, false);
+    stageTrafficCar(3, 30, -40, false);
+    police.frozen = true;
+    police.heli.position.set(-8, 10, -14);
+    police.heli.rotation.y = Math.PI * 0.75;
+    camera.fov = 48; camera.updateProjectionMatrix();
+    camera.position.set(-13, 3.2, 20);
+    camera.lookAt(-20, 1.8, -4);
+    PH.hud.setSpeed(96);
+    PH.hud.setVitals(100, 80);
+    PH.hud.setAmmo(12);
+  }
+
+  function stageShot2() {
+    // ON FOOT — Mateo Vega walking the shopfront sidewalk, big in frame.
+    // He stands on the east sidewalk (x -10), shops to his right, the road
+    // and the beach to his left; the camera stays tight behind him.
+    setWanted(0);
+    setObjective('PIER HEAT — MEET KIRA', 'Meet Kira at the pier — follow the yellow marker.', -58, 40);
+    if (mateo) {
+      mateo.setPos(-10, -4, Math.PI / 2);
+      mateo.group.visible = true;
+      mateo.play('walk');
+    }
+    heroState.x = -20; heroState.z = -30; heroState.heading = Math.PI; heroState.speed = 0;
+    stageTrafficCar(0, -23.5, -34, true);
+    stageTrafficCar(1, -16.5, -52, true);
+    stageTrafficCar(2, -23.5, 12, true);
+    police.frozen = true;
+    police.heli.position.set(30, 30, -40);
+    police.heli.rotation.y = Math.PI * 0.6;
+    camera.fov = 50; camera.updateProjectionMatrix();
+    camera.position.set(-10, 2.2, 0.5);
+    camera.lookAt(-10, 1.4, -10);
+    PH.hud.setSpeed(0);
+    PH.hud.setVitals(100, 80);
+    PH.hud.setAmmo(12);
+  }
+
+  function stageShot3() {
+    // MISSION — Mateo meets handler Kira on the pier, dialogue in-engine.
+    // Both stand ON the pier deck (deck top y = 1.35), facing each other.
+    setWanted(0);
+    setObjective('PIER HEAT — THE PIER JOB', 'Meet Kira at the pier and hear the plan.', -58, 40);
+    if (mateo) {
+      mateo.setPos(-52, 38.5, Math.PI - 0.15);
+      mateo.group.position.y = 1.35;
+      mateo.group.visible = true;
+      mateo.play('idle');
+    }
+    if (kira) {
+      kira.setPos(-56.5, 38.5, 0.15);
+      kira.group.position.y = 1.35;
+      kira.group.visible = true;
+      kira.play('idle');
+    }
+    heroState.x = -20; heroState.z = 60; heroState.heading = Math.PI; heroState.speed = 0;
+    stageTrafficCar(0, -23.5, 30, true);
+    stageTrafficCar(1, -16.5, 44, true);
+    // Clear the pier strollers to the far west end so the meeting is the
+    // only thing in the middle of the frame.
+    cityCrowd.walkers.forEach(function (p, i) {
+      if (p.home && p.home.pier) {
+        p.home = { pier: true, x: -72 - (i % 3) * 5, z: (i % 2 === 0) ? 38.5 : 41.5 };
+        p.group.position.set(p.home.x, 1.35, p.home.z);
+      }
+    });
+    police.frozen = true;
+    police.heli.position.set(-62, 16, 8);
+    police.heli.rotation.y = Math.PI * 0.8;
+    camera.fov = 55; camera.updateProjectionMatrix();
+    camera.position.set(-48.5, 2.1, 44);
+    camera.lookAt(-54, 2.0, 38.5);
+    PH.hud.dialog('KIRA — RADIO', 'The heat is on every corner of Sunset Bay. Take the Scarlet Arrow, cut through the market, and don\'t stop till the pier.');
+    PH.hud.setVitals(100, 80);
+    PH.hud.setAmmo(12);
+    PH.hud.setSpeed(0);
+  }
+
+  function stageShot4() {
+    // COMBAT — open-street shootout with the Bay City PD, five stars.
+    // Mateo takes cover by the Scarlet Arrow's front fender and fires
+    // north at the cruisers; the helicopter holds over the beach.
+    setWanted(5);
+    setObjective('PIER HEAT — HOLD THE LINE', 'The Bay City PD wants the Scarlet Arrow. Hold the line.', -20, 40);
+    heroState.x = -24; heroState.z = 34; heroState.heading = Math.PI; heroState.speed = 0;
+    if (mateo) {
+      // Mateo faces south (+Z), toward the cruisers; the camera sits north
+      // of him and sees his back as he fires. The pair stands south of the
+      // camera so both stay left of the minimap (facing south, west is right).
+      mateo.setPos(-19.5, 31, -Math.PI / 2);
+      mateo.group.visible = true;
+      mateo.play('aim');
+    }
+    placePoliceCar(0, -23.5, 46, Math.PI);
+    placePoliceCar(1, -16.5, 52, Math.PI);
+    placePoliceCar(2, -23.5, 60, Math.PI);
+    placeOfficer(0, -21.5, 41, Math.PI);
+    placeOfficer(1, -18, 43.5, Math.PI);
+    placeOfficer(2, -23, 38, Math.PI);
+    stageTrafficCar(0, -16.5, 12, true);
+    stageTrafficCar(1, -23.5, -2, true);
+    police.frozen = true;
+    police.heli.position.set(-14, 12, 55);
+    police.heli.rotation.y = Math.PI * 0.7;
+    camera.fov = 55; camera.updateProjectionMatrix();
+    camera.position.set(-16, 3.4, 19.5);
+    camera.lookAt(-21.5, 1.4, 40);
+    PH.hud.setVitals(82, 65);
+    PH.hud.setAmmo(9);
+    PH.hud.setSpeed(0);
+    // Muzzle flash stays on for the staged combat frame.
+    if (flash && mateo) {
+      var fwd = mateo.forward();
+      var pos = mateo.group.position.clone().addScaledVector(fwd, 0.7);
+      pos.y = 1.45;
+      flash.showAt(pos);
+    }
+  }
+
+  function stageShot(n) {
+    if (n === 1) stageShot1();
+    else if (n === 2) stageShot2();
+    else if (n === 3) stageShot3();
+    else if (n === 4) stageShot4();
+  }
+
+  // ---------------- free play ----------------
+  function loadSave() {
+    try {
+      var raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) { return null; }
+  }
+  function saveGame() {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        x: heroState.x, z: heroState.z, heading: heroState.heading,
+        wanted: wanted, hp: hp, armor: armor, ammo: ammo, onFoot: onFoot
+      }));
+      PH.hud.toast('Progress saved — Sunset Bay remembers you.');
+    } catch (e) { /* storage may be unavailable */ }
+  }
+
+  function bindInput() {
+    window.addEventListener('keydown', function (e) {
+      keys[e.code] = true;
+      if (e.code === 'KeyM') PH.audio.toggleMute();
+      if (e.code === 'KeyP' && !SHOT_MODE) saveGame();
+      if (e.code === 'KeyF' && !SHOT_MODE) toggleOnFoot();
+    });
+    window.addEventListener('keyup', function (e) { keys[e.code] = false; });
+    window.addEventListener('pointerdown', function (e) {
+      if (e.target && e.target.closest && e.target.closest('#muteBtn')) return;
+      if (!SHOT_MODE && onFoot && ammo > 0) shoot();
+    });
+    var muteBtn = PH.el('muteBtn');
+    if (muteBtn) muteBtn.addEventListener('click', function () {
+      PH.audio.unlock();
+      PH.audio.toggleMute();
+    });
+    var playBtn = PH.el('playBtn');
+    if (playBtn) playBtn.addEventListener('click', function () {
+      PH.audio.unlock();
+      PH.el('title').style.display = 'none';
+      PH.hud.toast('Nightwave 98.3 is on the radio — drive!');
+    });
+  }
+
+  function toggleOnFoot() {
+    onFoot = !onFoot;
+    if (mateo) mateo.group.visible = onFoot;
+    if (onFoot && mateo) {
+      mateo.setPos(heroState.x + 2.5, heroState.z + 1.5, heroState.heading);
+      mateo.play('walk');
+      PH.audio.engineOff();
+    } else if (mateo) {
+      mateo.play('idle');
+    }
+    PH.hud.toast(onFoot ? 'On foot — Mateo Vega' : 'Back in the Scarlet Arrow');
+  }
+
+  function shoot() {
+    ammo = Math.max(0, ammo - 1);
+    PH.hud.setAmmo(ammo);
+    PH.audio.shoot();
+    if (mateo) {
+      mateo.play('fire');
+      setTimeout(function () { if (onFoot) mateo.play('aim'); }, 320);
+      var fwd = mateo.forward();
+      var pos = mateo.group.position.clone().addScaledVector(fwd, 0.7);
+      pos.y = 1.45;
+      flash.showAt(pos);
+    }
+  }
+
+  // ---------------- build ----------------
+  function build() {
+    buildRenderer();
+    minimapEl = PH.el('minimap');
+    var mode = (shotNum === 1) ? 'sunset' : 'day';
+    world = PH.buildWorld(scene, mode);
+    traffic = PH.buildTraffic(scene, world, 16);
+    cityCrowd = PH.buildCityCrowd(scene, world, 130);
+    beachCrowd = PH.buildBeachCrowd(scene, world);
+    police = PH.buildPolice(scene, world);
+    hero = PH.buildHeroCar();
+    scene.add(hero);
+    heroState = { x: -20, z: 34, heading: Math.PI, speed: 0 };
+    flash = PH.makeMuzzleFlash(scene);
+    PH.audio.bindGestures();
+    bindInput();
+    // Default HUD.
+    PH.hud.setVitals(hp, armor);
+    PH.hud.setAmmo(ammo);
+    setWanted(0);
+    setObjective('PIER HEAT — LOSE THE HEAT', 'Lose the Bay City PD and reach the pier.', -58, 40);
+  }
+
+  function loadCharacters() {
+    var jobs = [];
+    jobs.push(PH.loadMateo('vendor/mateo.glb').then(function (loaded) {
+      mateo = PH.makeMateo(loaded);
+      mateo.group.visible = false;
+      scene.add(mateo.group);
+      window.__mateo = mateo;
+      window.__mateoOk = true;
+    }));
+    jobs.push(PH.loadMateo('vendor/mateo.glb').then(function (loaded) {
+      PH.retint(loaded.group, { MateoJacket: 0x0e7a7a, MateoTee: 0x222831, MateoHair: 0x2a1a12 });
+      kira = PH.makeMateo(loaded);
+      kira.group.visible = false;
+      scene.add(kira.group);
+      window.__kira = kira;
+    }));
+    return Promise.all(jobs.map(function (p) {
+      return p.catch(function () { /* stand-in stays hidden; visual check will catch it */ });
+    }));
+  }
+
+  function heroForward() {
+    return new THREE.Vector3(Math.sin(heroState.heading), 0, Math.cos(heroState.heading));
+  }
+
+  function updateHero(dt) {
+    if (SHOT_MODE) {
+      hero.position.set(heroState.x, 0, heroState.z);
+      hero.rotation.y = heroState.heading;
       return;
     }
-    // free play: 3/4 chase cam, low and close, so the car's doors and
-    // windows stay readable while driving.
-    // v6.6 fix: follow the figure actually in use — mateoFigure() is the
-    // vendored GLB when it loaded. mateo() is the procedural stand-in,
-    // which stays at the origin when the GLB is active, so the old code
-    // pointed the camera at an empty intersection 60 m from Mateo.
-    var hero = sim.state.onFoot ? sim.mateoFigure().position : null;
-    var hx, hz, heading;
-    if (sim.state.onFoot) {
-      hx = hero.x; hz = hero.z; heading = sim.mateoFigure().rotation.y;
-      var bx = hx - Math.sin(heading) * 5.5, bz = hz - Math.cos(heading) * 5.5;
-      cam.position.set(bx, 2.4 + pitch * 2, bz);
-      cam.lookAt(hx, 1.5, hz);
-    } else {
-      var hp = sim.heroCar().position;
-      heading = sim.heroCar().rotation.y;
-      var fx = Math.cos(heading), fz = -Math.sin(heading);
-      var rx = -fz, rz = fx; // right side of the car
-      var cx = hp.x - fx * 8.5 + rx * 4.5;
-      var cz = hp.z - fz * 8.5 + rz * 4.5;
-      cam.position.lerp(new THREE.Vector3(cx, 2.6 + pitch * 2, cz), Math.min(1, dt * 5));
-      cam.lookAt(hp.x + fx * 4, 1.1, hp.z + fz * 4);
+    if (onFoot) {
+      var mvx = 0, mvz = 0;
+      if (keys.KeyW || keys.ArrowUp) mvz -= 1;
+      if (keys.KeyS || keys.ArrowDown) mvz += 1;
+      if (keys.KeyA || keys.ArrowLeft) mvx -= 1;
+      if (keys.KeyD || keys.ArrowRight) mvx += 1;
+      var moving = (mvx !== 0 || mvz !== 0);
+      if (moving && mateo) {
+        var camA = Math.atan2(camera.position.x - mateo.group.position.x, camera.position.z - mateo.group.position.z);
+        var ang = camA + Math.atan2(mvx, -mvz);
+        var sp = (keys.ShiftLeft || keys.ShiftRight) ? 6.5 : 3.4;
+        mateo.group.position.x += Math.sin(ang) * sp * dt;
+        mateo.group.position.z += Math.cos(ang) * sp * dt;
+        mateo.group.rotation.y = ang - Math.PI / 2;
+        mateo.play(sp > 4 ? 'run' : 'walk');
+      } else if (mateo) {
+        mateo.play('idle');
+      }
+      if (mateo) {
+        mateo.group.position.x = Math.max(-125, Math.min(165, mateo.group.position.x));
+        mateo.group.position.z = Math.max(-165, Math.min(165, mateo.group.position.z));
+      }
+      return;
     }
-  }
-
-  // ------------------------------------------------------------ HUD
-  var el = {};
-  ['wanted-stars', 'money', 'mission-name', 'mission-stage', 'mission-timer',
-   'dispatch-board', 'weapon-name', 'weapon-ammo', 'health-bar', 'armour-bar',
-   'respect-bar', 'speed', 'kira-text', 'hud', 'title-screen', 'crosshair',
-   'minimap', 'kira-portrait', 'toast'].forEach(function (id) {
-    el[id] = document.getElementById(id);
-  });
-  var lastHud = '';
-  function updateHUD() {
-    var h = sim.getHUD();
-    var key = h.wanted + '|' + h.money + '|' + h.respect + '|' + h.health + '|' +
-      h.armour + '|' + h.weapon + '|' + h.ammo + '|' + h.mission.stage + '|' +
-      Math.ceil(h.mission.timer) + '|' + h.speed + '|' + h.onFoot;
-    el['wanted-stars'].textContent = '★'.repeat(h.wanted) + '☆'.repeat(5 - h.wanted);
-    el['money'].textContent = '$' + h.money.toLocaleString('en-US');
-    el['mission-name'].textContent = 'M' + h.mission.id.slice(1) + ' — ' + h.mission.name;
-    el['mission-stage'].textContent = 'STAGE ' + h.mission.stage + '/' + h.mission.stages;
-    var t = Math.max(0, Math.ceil(h.mission.timer));
-    el['mission-timer'].textContent = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
-    el['weapon-name'].textContent = h.weapon;
-    el['weapon-ammo'].textContent = h.weapon === 'Fists' ? '—' : h.ammo;
-    el['health-bar'].style.width = h.health + '%';
-    el['armour-bar'].style.width = h.armour + '%';
-    el['respect-bar'].style.width = Math.min(100, h.respect) + '%';
-    el['speed'].textContent = h.speed + ' km/h';
-    if (key !== lastHud) {
-      lastHud = key;
-      var db = h.dispatch.map(function (d) {
-        return '<div class="drow"><span>' + d.unit + '</span><span>' + d.dist +
-          'm</span><b>' + d.tactic + '</b></div>';
-      }).join('');
-      el['dispatch-board'].innerHTML = db;
-      el['crosshair'].style.display = h.onFoot ? 'block' : 'none';
+    // Driving.
+    var accel = 0;
+    if (keys.KeyW || keys.ArrowUp) accel = 14;
+    if (keys.KeyS || keys.ArrowDown) accel = -9;
+    if (keys.Space) accel = (heroState.speed > 0) ? -26 : 0;
+    heroState.speed += accel * dt;
+    heroState.speed *= (1 - 0.35 * dt);
+    heroState.speed = Math.max(-8, Math.min(34, heroState.speed));
+    var steer = 0;
+    if (keys.KeyA || keys.ArrowLeft) steer = 1;
+    if (keys.KeyD || keys.ArrowRight) steer = -1;
+    if (Math.abs(heroState.speed) > 0.5) {
+      heroState.heading += steer * 1.5 * dt * Math.sign(heroState.speed);
     }
-  }
-  // Kira's portrait: painted once on a 2D canvas — headset, dark hair,
-  // confident smile. She is the radio handler, not a photograph.
-  function drawKira() {
-    var cv = el['kira-portrait'];
-    if (!cv) return;
-    var g = cv.getContext('2d');
-    g.clearRect(0, 0, 96, 96);
-    g.fillStyle = '#1a2a4a'; g.fillRect(0, 0, 96, 96);
-    g.fillStyle = '#e8b88a';
-    g.beginPath(); g.arc(48, 50, 26, 0, Math.PI * 2); g.fill(); // face
-    g.fillStyle = '#1a1a1a'; // hair
-    g.beginPath(); g.arc(48, 40, 27, Math.PI, 0); g.fill();
-    g.fillRect(20, 40, 10, 26); g.fillRect(66, 40, 10, 26);
-    g.fillStyle = '#14161c'; // eyes
-    g.beginPath(); g.arc(38, 50, 3, 0, Math.PI * 2); g.fill();
-    g.beginPath(); g.arc(58, 50, 3, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = '#14161c'; g.lineWidth = 2; // smile
-    g.beginPath(); g.arc(48, 60, 8, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke();
-    g.strokeStyle = '#00e5ff'; g.lineWidth = 4; // headset band
-    g.beginPath(); g.arc(48, 48, 29, Math.PI * 1.1, Math.PI * 1.9); g.stroke();
-    g.fillStyle = '#00e5ff'; // ear cups
-    g.fillRect(16, 46, 6, 12); g.fillRect(74, 46, 6, 12);
-    g.fillStyle = '#ffe9b0'; g.font = 'bold 11px Arial';
-    g.fillText('KIRA', 38, 90);
-  }
-  drawKira();
-  // Kira's lines rotate with the mission stage.
-  var KIRA_LINES = {
-    bridge: 'Kira: "Bridge run, Mateo — sea on both sides, no way off. Two units on your bumper, roadblock under the gantry. Don\'t stop."',
-    marketday: 'Kira: "Blend in, Mateo. The market\'s packed — buy the drop, smile at the vendors, and walk out like a local."',
-    harbor: 'Kira: "Harbor\'s hot — containers left and right, crane overhead, freighter at your back. Thread the lane and go."',
-    beachtitle: 'Kira: "Mateo, you\'re live. Sunset Bay is yours — just don\'t let the Bay City PD write the ending."'
-  };
-  function setKira(stage) {
-    if (el['kira-text']) el['kira-text'].textContent = KIRA_LINES[stage] || KIRA_LINES.title;
-  }
-  setKira('beachtitle');
-
-  // ------------------------------------------------------------ minimap
-  var mmCtx = el['minimap'] ? el['minimap'].getContext('2d') : null;
-  var mmTimer = 0;
-  function drawMinimap(dt) {
-    if (!mmCtx) return;
-    mmTimer += dt;
-    if (mmTimer < 0.15) return;
-    mmTimer = 0;
-    var g = mmCtx, S = 180;
-    g.clearRect(0, 0, S, S);
-    g.fillStyle = '#14101f'; g.fillRect(0, 0, S, S);
-    function toMap(x, z) { return [(x + 80) / 220 * S, (z + 80) / 160 * S]; }
-    // ocean + beach
-    g.fillStyle = '#0f7a6e';
-    var oc = toMap(138, -80); g.fillRect(oc[0], 0, S - oc[0], S);
-    g.fillStyle = '#e8c98a';
-    var bc = toMap(100, -80); g.fillRect(bc[0], 0, oc[0] - bc[0], S);
-    // roads
-    g.strokeStyle = '#5a5470'; g.lineWidth = 5;
-    [-60, -30, 0, 30, 60].forEach(function (v) {
-      var a = toMap(v, -75), b = toMap(v, 75);
-      g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
-      var c = toMap(-75, v), d = toMap(100, v);
-      g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.stroke();
+    var fwd = heroForward();
+    heroState.x += fwd.x * heroState.speed * dt;
+    heroState.z += fwd.z * heroState.speed * dt;
+    heroState.x = Math.max(-28, Math.min(166, heroState.x));
+    heroState.z = Math.max(-166, Math.min(166, heroState.z));
+    hero.position.set(heroState.x, 0, heroState.z);
+    hero.rotation.y = heroState.heading;
+    PH.hud.setSpeed(Math.abs(heroState.speed) * 3.6);
+    PH.audio.engine(Math.abs(heroState.speed) / 34);
+    // Wanted heat: police close by raise it, distance cools it.
+    var nearest = 1e9;
+    police.cars.forEach(function (car) {
+      var d = Math.hypot(car.position.x - heroState.x, car.position.z - heroState.z);
+      if (d < nearest) nearest = d;
     });
-    // mission beacon
-    var bp = toMap(-45, 62);
-    g.fillStyle = '#ffd23e';
-    g.beginPath(); g.arc(bp[0], bp[1], 5, 0, Math.PI * 2); g.fill();
-    // police (blue dots) — dispatch order
-    var h = sim.getHUD();
-    var hp = toMap(h.hero.x, h.hero.z);
-    g.fillStyle = '#ff5a1a';
-    g.beginPath(); g.arc(hp[0], hp[1], 5, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = '#ffffff'; g.lineWidth = 1.5;
-    g.beginPath(); g.arc(hp[0], hp[1], 5, 0, Math.PI * 2); g.stroke();
-    g.fillStyle = '#ffe9b0'; g.font = 'bold 11px Arial';
-    g.fillText('N', 8, 14);
+    if (nearest < 18 && wanted < 5) setWanted(wanted + 1);
+    else if (nearest > 60 && wanted > 0 && Math.random() < dt * 0.1) setWanted(wanted - 1);
   }
 
-  // ------------------------------------------------------------ title
-  var started = false;
-  function startGame() {
-    if (started) return;
-    started = true;
-    if (el['title-screen']) el['title-screen'].style.display = 'none';
-    if (el['hud']) el['hud'].style.display = 'block';
-    camMode = 'free';
-    sim.freePlay();
-    setKira('chase');
+  function updateCamera(dt) {
+    if (SHOT_MODE) return; // staged cameras stay put
+    var target;
+    if (onFoot && mateo) {
+      var mp = mateo.group.position;
+      var ry = mateo.group.rotation.y;
+      var back = new THREE.Vector3(-Math.cos(ry), 0, Math.sin(ry));
+      target = mp.clone().addScaledVector(back, 4.2);
+      target.y = 2.4;
+      camera.position.lerp(target, 1 - Math.pow(0.001, dt));
+      camera.lookAt(mp.x, mp.y + 1.4, mp.z);
+    } else {
+      var fwd = heroForward();
+      var behind = hero.position.clone().addScaledVector(fwd, -9);
+      behind.y = 4.2;
+      camera.position.lerp(behind, 1 - Math.pow(0.001, dt));
+      camera.lookAt(hero.position.x + fwd.x * 8, 1.4, hero.position.z + fwd.z * 8);
+    }
   }
-  var btn = document.getElementById('btn-start');
-  if (btn) btn.addEventListener('click', startGame);
 
-  // ------------------------------------------------------------ staging
-  var STAGES = { '1': 'bridge', '2': 'marketday', '3': 'harbor', '4': 'beachtitle' };
-  function applyStage(name) {
-    var framing = sim.stage(name);
-    setStageCam(framing);
-    setKira(name);
-    if (el['title-screen']) el['title-screen'].style.display = name === 'beachtitle' ? 'flex' : 'none';
-    if (el['hud']) el['hud'].style.display = name === 'beachtitle' ? 'none' : 'block';
-    updateHUD();
+  function updatePolice(dt) {
+    if (SHOT_MODE) return;
+    // Police cars cruise toward the hero while the heat is on.
+    if (wanted >= 1) {
+      police.cars.forEach(function (car, i) {
+        var dx = heroState.x - car.position.x, dz = heroState.z - car.position.z;
+        var d = Math.hypot(dx, dz) || 1;
+        if (d > 10) {
+          car.position.x += (dx / d) * 11 * dt;
+          car.position.z += (dz / d) * 11 * dt;
+          car.rotation.y = Math.atan2(dx, dz);
+        }
+      });
+    }
   }
-  PH.debug = {
-    stageBridge: function () { applyStage('bridge'); return sim.counts(); },
-    stageMarket: function () { applyStage('marketday'); return sim.counts(); },
-    stageHarbor: function () { applyStage('harbor'); return sim.counts(); },
-    stageBeach: function () { applyStage('beachtitle'); return sim.counts(); },
-    counts: function () { return sim.counts(); },
-    hud: function () { return sim.getHUD(); },
-    stage: function (n) { applyStage(n); return sim.counts(); }
-  };
 
-  // Mateo's vendored GLB, when present: the loader tries vendor/mateo.glb
-  // and the game keeps its procedural Mateo when the file is absent.
-  var glbSettled = false;
-  core.loadGLB('vendor/mateo.glb').then(function (g) {
-    window.__MATEO_GLB = g ? 'loaded' : 'absent';
-    if (g) sim.setMateoGLB(g);
-    glbSettled = true;
-  }).catch(function () {
-    window.__MATEO_GLB = 'absent';
-    glbSettled = true;
-  });
-  setTimeout(function () { glbSettled = true; }, 4000);
+  function drawMinimap() {
+    if (!minimapEl) return;
+    var px = onFoot && mateo ? mateo.group.position.x : heroState.x;
+    var pz = onFoot && mateo ? mateo.group.position.z : heroState.z;
+    var heading = onFoot && mateo ? mateo.group.rotation.y : heroState.heading;
+    PH.drawMinimap(minimapEl, {
+      bounds: { x0: -110, x1: 120, z0: -130, z1: 130 },
+      roads: world.roads,
+      player: { x: px, z: pz, heading: heading },
+      police: police.cars.map(function (c) { return { x: c.position.x, z: c.position.z }; }),
+      objective: objective,
+      wanted: wanted,
+      time: elapsed
+    });
+  }
 
-  // ------------------------------------------------------------ main loop
-  var clock = new THREE.Clock();
   var frames = 0;
-  var input = {
-    get w() { return !!keys['w'] || !!keys['arrowup']; },
-    get a() { return !!keys['a'] || !!keys['arrowleft']; },
-    get s() { return !!keys['s'] || !!keys['arrowdown']; },
-    get d() { return !!keys['d'] || !!keys['arrowright']; },
-    get space() { return !!keys['space']; }
-  };
   function loop() {
     requestAnimationFrame(loop);
     var dt = Math.min(clock.getDelta(), 0.05);
-    core.tick(dt);
-    sim.update(dt, input);
+    elapsed += dt;
+    world.update(dt, elapsed);
+    traffic.update(dt);
+    threat.x = heroState.x; threat.z = heroState.z;
+    cityCrowd.update(dt, elapsed, threat);
+    beachCrowd.update(dt, elapsed, threat);
+    police.update(dt, elapsed, { x: heroState.x, z: heroState.z });
+    updateHero(dt);
+    updatePolice(dt);
     updateCamera(dt);
-    audio.engine(sim.state.onFoot ? 0 : sim.state.speed || 0);
-    core.renderer.render(core.scene, core.camera);
-    updateHUD();
-    drawMinimap(dt);
+    if (mateo) mateo.update(dt);
+    if (kira) kira.update(dt);
+    if (flash) flash.update(dt, shotNum === 4);
+    if (shotNum === 4 && flash && mateo && !flash.on) {
+      var fwd = mateo.forward();
+      var pos = mateo.group.position.clone().addScaledVector(fwd, 0.7);
+      pos.y = 1.45;
+      flash.showAt(pos);
+    }
+    drawMinimap();
+    renderer.render(scene, camera);
     frames++;
-    if (!window.__PIERHEAT_READY && glbSettled && frames >= 3) {
-      window.__PIERHEAT_READY = true;
+    if (!window.__ready && frames >= 4) {
+      window.__ready = true;
+      window.__shot = shotNum;
+      var loading = PH.el('loading');
+      if (loading) loading.style.display = 'none';
+      if (!SHOT_MODE) {
+        var saved = loadSave();
+        if (saved) {
+          heroState.x = saved.x; heroState.z = saved.z; heroState.heading = saved.heading;
+          setWanted(saved.wanted || 0);
+          hp = saved.hp != null ? saved.hp : 100;
+          armor = saved.armor != null ? saved.armor : 80;
+          ammo = saved.ammo != null ? saved.ammo : 12;
+          PH.hud.setVitals(hp, armor);
+          PH.hud.setAmmo(ammo);
+          PH.hud.toast('Save loaded — welcome back to Sunset Bay.');
+        }
+        PH.el('title').style.display = 'flex';
+      }
     }
   }
 
-  // Boot: a ?shot= param stages that shot at once; ?autostart=1 skips the
-  // title screen into free play; otherwise the title screen waits.
-  if (shotParam && STAGES[shotParam]) {
-    applyStage(STAGES[shotParam]);
-  } else if (autoStart) {
-    startGame();
-  }
-  loop();
+  build();
+  loadCharacters().then(function () {
+    if (SHOT_MODE) stageShot(shotNum);
+    loop();
+  }).catch(function () {
+    if (SHOT_MODE) stageShot(shotNum);
+    loop();
+  });
 })();

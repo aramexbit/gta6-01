@@ -58,6 +58,31 @@
     });
   };
 
+  // East-west road: dashes and edge lines run ALONG the road (horizontal in
+  // texture space). The original texture drew them across it, and the 340 m
+  // plane stretched the whole tile, so no marking was ever visible.
+  W.roadTextureH = function () {
+    return canvasTex(256, 256, function (g, w, h) {
+      g.fillStyle = '#33333e'; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#3a3a46';
+      for (var i = 0; i < 900; i++) g.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      g.fillStyle = '#e8c33c';
+      g.fillRect(0, h / 2 - 4, 46, 8); g.fillRect(90, h / 2 - 4, 46, 8); g.fillRect(180, h / 2 - 4, 46, 8);
+      g.fillStyle = '#d8d8d8';
+      g.fillRect(0, 6, w, 4); g.fillRect(0, h - 10, w, 4);
+    });
+  };
+
+  // Zebra crossing tile: five white stripes on a transparent tile, so the
+  // asphalt shows between them.
+  W.zebraTexture = function () {
+    return canvasTex(128, 128, function (g, w, h) {
+      g.clearRect(0, 0, w, h);
+      g.fillStyle = 'rgba(240,240,240,0.92)';
+      for (var i = 0; i < 5; i++) g.fillRect(8 + i * 24, 6, 14, h - 12);
+    });
+  };
+
   W.sandTexture = function () {
     return canvasTex(256, 256, function (g, w, h) {
       g.fillStyle = '#e8c98f'; g.fillRect(0, 0, w, h);
@@ -137,9 +162,9 @@
       scene.add(cl); W.clouds.push(cl);
     }
 
-    var hemi = new THREE.HemisphereLight(0xffc9a0, 0x3a2a55, 0.85);
+    var hemi = new THREE.HemisphereLight(0xffd9b0, 0x5a3a6a, 1.25);
     scene.add(hemi);
-    var sunLight = new THREE.DirectionalLight(0xffb060, 1.6);
+    var sunLight = new THREE.DirectionalLight(0xffc070, 2.2);
     sunLight.position.set(300, 140, -60);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.set(2048, 2048);
@@ -147,26 +172,31 @@
     sunLight.shadow.camera.top = 220; sunLight.shadow.camera.bottom = -220;
     sunLight.shadow.camera.far = 900;
     scene.add(sunLight);
-    scene.add(new THREE.AmbientLight(0x805080, 0.5));
-    scene.fog = new THREE.Fog(0xc96a7a, 260, 850);
+    scene.add(new THREE.AmbientLight(0x9a6a8a, 0.9));
+    scene.fog = new THREE.Fog(0xd98a7a, 320, 900);
   };
 
   W.buildGroundAndSea = function (scene) {
-    var roadTex = W.roadTexture();
-    roadTex.wrapS = roadTex.wrapT = THREE.RepeatWrapping;
+    var roadTexH = W.roadTextureH();
+    roadTexH.wrapS = roadTexH.wrapT = THREE.RepeatWrapping;
+    roadTexH.repeat.set(34, 1); // one tile per 10 m along the road
+    var roadTexV = W.roadTexture();
+    roadTexV.wrapS = roadTexV.wrapT = THREE.RepeatWrapping;
+    roadTexV.repeat.set(1, 34);
 
     // City base slab.
     var base = new THREE.Mesh(new THREE.PlaneGeometry(340, 340), mat(0x8a7f70));
     base.rotation.x = -Math.PI / 2; base.position.set(0, 0, 0); base.receiveShadow = true;
     scene.add(base);
 
-    // Roads: dark strips along every grid line, both directions.
+    // Roads: dark strips along every grid line, both directions, with real
+    // centre dashes and edge lines (the tile repeats every 10 m now).
     var streets = PH.CITY.streets;
     streets.forEach(function (s) {
-      var r1 = new THREE.Mesh(new THREE.PlaneGeometry(340, 9), new THREE.MeshLambertMaterial({ map: roadTex }));
+      var r1 = new THREE.Mesh(new THREE.PlaneGeometry(340, 9), new THREE.MeshLambertMaterial({ map: roadTexH }));
       r1.rotation.x = -Math.PI / 2; r1.position.set(0, 0.02, s); r1.receiveShadow = true;
       scene.add(r1);
-      var r2 = new THREE.Mesh(new THREE.PlaneGeometry(9, 340), new THREE.MeshLambertMaterial({ map: roadTex }));
+      var r2 = new THREE.Mesh(new THREE.PlaneGeometry(9, 340), new THREE.MeshLambertMaterial({ map: roadTexV }));
       r2.rotation.x = -Math.PI / 2; r2.position.set(s, 0.02, 0); r2.receiveShadow = true;
       scene.add(r2);
       // Sidewalks: pale strips flanking each road.
@@ -175,6 +205,18 @@
         sw1.rotation.x = -Math.PI / 2; sw1.position.set(0, 0.03, s + off); sw1.receiveShadow = true; scene.add(sw1);
         var sw2 = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 340), mat(0xa89a86));
         sw2.rotation.x = -Math.PI / 2; sw2.position.set(s + off, 0.03, 0); sw2.receiveShadow = true; scene.add(sw2);
+      });
+    });
+
+    // Zebra crossings at every grid intersection: one striped plane per
+    // intersection, stripes across the east-west road. (A second plane
+    // rotated 90 degrees used to overlap it and read as a chessboard.)
+    var zebraTex = W.zebraTexture();
+    var zebraMat = new THREE.MeshBasicMaterial({ map: zebraTex, transparent: true, opacity: 0.8 });
+    streets.forEach(function (sx) {
+      streets.forEach(function (sz) {
+        var z1 = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), zebraMat);
+        z1.rotation.x = -Math.PI / 2; z1.position.set(sx, 0.05, sz); scene.add(z1);
       });
     });
 
@@ -233,27 +275,40 @@
     blockCenters.forEach(function (bc, idx) {
       var bx = bc[0], bz = bc[1];
       var district = W.districtOf(bx, bz);
-      var count = district === 'downtown' ? 1 : 2;
+      // Every block builds two buildings now: downtown gets a tower plus a
+      // low annex, so the block is not one slab in a 40 m empty lot.
+      var count = 2;
       for (var k = 0; k < count; k++) {
         var ox = count === 1 ? 0 : (k === 0 ? -8 : 8);
         var oz = count === 1 ? 0 : (k === 0 ? -8 : 8);
         var h, w, d, color, tex = null;
-        if (district === 'downtown') {
+        var litRatio = PH.rand(0.15, 0.55); // lit-window share varies per building
+        if (district === 'downtown' && k === 1) {
+          // Low annex beside the tower: glass, but short and narrow.
+          h = PH.rand(8, 16); w = PH.rand(10, 14); d = PH.rand(10, 14);
+          color = PH.pick(W.PALETTE.glass);
+          tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
+        } else if (district === 'downtown') {
           h = PH.rand(20, 46); w = PH.rand(16, 24); d = PH.rand(16, 24);
           color = PH.pick(W.PALETTE.glass);
-          tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), 0.35);
+          tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         } else if (district === 'ocean') {
           h = PH.rand(7, 14); w = PH.rand(12, 18); d = PH.rand(12, 18);
           color = PH.pick(W.PALETTE.deco);
+          tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         } else if (district === 'havana') {
           h = PH.rand(6, 11); w = PH.rand(12, 18); d = PH.rand(12, 16);
           color = PH.pick(W.PALETTE.havana);
+          tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         } else {
           h = PH.rand(8, 18); w = PH.rand(12, 18); d = PH.rand(12, 18);
           color = PH.pick(W.PALETTE.deco.concat(W.PALETTE.havana));
+          tex = W.windowTexture('#' + new THREE.Color(color).getHexString(), litRatio);
         }
+        // The window texture is also the emissive map, so lit windows glow
+        // warm at golden hour while dark ones stay dark.
         var material = tex
-          ? new THREE.MeshLambertMaterial({ map: tex })
+          ? new THREE.MeshLambertMaterial({ map: tex, emissive: 0xffb060, emissiveMap: tex, emissiveIntensity: 0.35 })
           : mat(color);
         var b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
         b.position.set(bx + ox, h / 2, bz + oz);
@@ -262,10 +317,33 @@
         W.buildings.push(b);
         // Roof box / parapet in a pastel accent (not flat grey) and a glowing
         // sign for deco blocks, so rooftops vary from the street too.
-        var roof = box(w * 0.7, 0.8, d * 0.7, PH.pick([0x444455, 0x7a5a8a, 0x4a7a8a, 0x8a6a5a]), bx + ox, h + 0.4, bz + oz);
+        var roof = box(w * 0.7, 0.8, d * 0.7, PH.pick([0x444455, 0x7a5a8a, 0x4a7a8a, 0x8a6a5a, 0xc96f3f, 0x3a6a5a]), bx + ox, h + 0.4, bz + oz);
         scene.add(roof);
-        if (district === 'ocean' && Math.random() < 0.6) {
-          var sign = box(w * 0.6, 1.1, 0.3, PH.pick([0xff5a8a, 0x37e0c0, 0xffc93c]), bx + ox, h - 0.6, bz + oz + d / 2 + 0.2,
+        // Setback crown on tall towers: a smaller second storey so the
+        // skyline is not a row of flat slabs.
+        if (district === 'downtown' && Math.random() < 0.5) {
+          var crown = box(w * 0.45, PH.rand(3, 7), d * 0.45, PH.pick(W.PALETTE.glass), bx + ox, h + 2.8, bz + oz);
+          scene.add(crown);
+        }
+        // Rooftop water tank on a terracotta block.
+        if (district === 'havana' && Math.random() < 0.5) {
+          scene.add(cyl(1.1, 1.1, 2.2, 0x6b4a28, bx + ox + w * 0.2, h + 1.9, bz + oz, 8));
+        }
+        // Shop awning over the street-facing ground floor: a slanted bright
+        // slab so the base of every low building reads as a storefront.
+        if (district !== 'downtown' && Math.random() < 0.75) {
+          var awn = box(w * 0.8, 0.18, 2.2, PH.pick([0xff5a8a, 0x37e0c0, 0xffc93c, 0xffffff, 0x2e7fd8]), bx + ox, 3.1, bz + oz + d / 2 + 0.9);
+          awn.rotation.x = 0.22;
+          scene.add(awn);
+        }
+        // Glowing signage: a tall vertical neon strip on downtown towers,
+        // a horizontal band on deco / havana fronts.
+        if (district === 'downtown' && Math.random() < 0.5) {
+          var neon = box(0.3, h * 0.55, 0.5, PH.pick([0xff5a8a, 0x37e0c0, 0xffc93c, 0x8fd0ff]), bx + ox + w / 2 + 0.25, h * 0.5, bz + oz,
+            { emissive: 0xffffff, ei: 0.9 });
+          scene.add(neon);
+        } else if (district !== 'downtown' && Math.random() < 0.65) {
+          var sign = box(w * 0.6, 1.1, 0.3, PH.pick([0xff5a8a, 0x37e0c0, 0xffc93c, 0x2e7fd8]), bx + ox, h - 0.6, bz + oz + d / 2 + 0.2,
             { emissive: 0xff5a8a, ei: 0.7 });
           scene.add(sign);
         }
@@ -335,7 +413,7 @@
         scene.add(lamp);
         var arm = box(1.6, 0.12, 0.12, 0x2c2c34, s + 6.7, 5.1, t);
         scene.add(arm);
-        var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), mat(0xffe08a, { emissive: 0xffc040, ei: 1.2 }));
+        var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), mat(0xffe08a, { emissive: 0xffc040, ei: 2.0 }));
         bulb.position.set(s + 5.9, 5.0, t); scene.add(bulb);
         if (Math.random() < 0.5) {
           var bench = new THREE.Group();
@@ -412,16 +490,21 @@
     }
     var armL = arm(-1), armR = arm(1);
     g.add(armL); g.add(armR);
-    // Pistol, hidden unless aiming / shooting. Hero scale (about 2x true
-    // size) in bright steel with a dark grip: from the aim camera behind
-    // Mateo a true-scale dark pistol vanishes behind his torso — this one
-    // sticks out past his hands and reads as a gun at a glance, even at
-    // thumbnail size, and the bright barrel separates from both the
-    // orange jacket and the dark asphalt.
+    // Pistol, hidden unless aiming / shooting. Hero scale (about 2.5x true
+    // size), two-tone so it reads against ANY background: a dark frame
+    // against light cars and sky, a bright steel slide against dark
+    // asphalt and the orange jacket. A bright-only pistol vanished against
+    // the Arrow's pale glass in the mission shot; a dark-only one would
+    // vanish against the road.
     var pistol = new THREE.Group();
-    pistol.add(box(0.11, 0.2, 0.6, 0x9a9aa8, 0, 0, 0.16));
-    pistol.add(box(0.09, 0.26, 0.13, 0x4a4a58, 0, -0.14, -0.03));
-    pistol.position.set(0.17, 1.3, 0.58);
+    pistol.add(box(0.14, 0.24, 0.66, 0x1a1a22, 0, 0, 0.16));
+    pistol.add(box(0.12, 0.09, 0.6, 0xd8d8e0, 0, 0.1, 0.16, { emissive: 0x666677, ei: 0.6 }));
+    pistol.add(box(0.09, 0.26, 0.13, 0x4a4a58, 0, -0.16, -0.03));
+    // Sits well forward of the chest (z 0.95, not 0.58) and at hand height
+    // (y 1.45): the aiming arms reach ~0.9 m, so a pistol at 0.58 hides
+    // behind the hands — this one sticks out past them and reads as a gun.
+    pistol.position.set(0.17, 1.45, 0.95);
+    pistol.scale.set(1.3, 1.3, 1.3);
     pistol.visible = false;
     g.add(pistol);
     g.userData = { legL: legL, legR: legR, torso: torso, head: head, armL: armL, armR: armR, pistol: pistol, walkPhase: 0 };
@@ -459,17 +542,34 @@
   };
 
   // ------------------------------------------------------------ cars
-  // Procedural car from boxes + cylinders: body, cabin, dark glass, 4 wheels,
-  // headlights and taillights. Returns {group, wheels[], body}.
+  // Procedural car from boxes + cylinders: body, glass cabin with real
+  // windshield / side / rear windows, grille, plates, 4 wheels with rims.
+  // Returns {group, wheels[], body}.
   W.makeCar = function (color, opts) {
     var o = opts || {};
     var g = new THREE.Group();
     var len = o.length || 4.4, wid = o.width || 1.9;
     var body = box(len, 0.62, wid, color, 0, 0.55, 0);
     g.add(body);
-    var cabin = box(len * 0.52, 0.55, wid * 0.86, 0x14181f, -len * 0.05, 1.12, 0);
+    // Cabin in body colour; glass sits proud of it so the car reads as
+    // having windows instead of one dark slab.
+    var cabin = box(len * 0.52, 0.55, wid * 0.86, color, -len * 0.05, 1.12, 0);
     g.add(cabin);
-    var roof = box(len * 0.5, 0.08, wid * 0.8, color, -len * 0.05, 1.42, 0);
+    var glassMat = mat(0x9fd4e8, { transparent: true, opacity: 0.78, emissive: 0x2a4a5a, ei: 0.5 });
+    var shield = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.46, wid * 0.78), glassMat);
+    shield.position.set(len * 0.2, 1.12, 0); shield.rotation.z = -0.32; g.add(shield);
+    [-1, 1].forEach(function (s) {
+      var side = new THREE.Mesh(new THREE.BoxGeometry(len * 0.38, 0.38, 0.05), glassMat);
+      side.position.set(-len * 0.05, 1.16, s * (wid * 0.44)); g.add(side);
+    });
+    var rear = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.4, wid * 0.7), glassMat);
+    rear.position.set(-len * 0.3, 1.12, 0); g.add(rear);
+    // Two-tone roof: a third of traffic cars get a contrasting roof —
+    // unless the caller opts out (the Scarlet Arrow and police cars keep
+    // their own roof colour).
+    var twoTone = o.twoTone === undefined ? Math.random() < 0.3 : !!o.twoTone;
+    var roofColor = twoTone ? PH.pick([0x222831, 0xf2f2f2, 0x1a1a1a]) : color;
+    var roof = box(len * 0.5, 0.08, wid * 0.8, roofColor, -len * 0.05, 1.42, 0);
     g.add(roof);
     // Headlights / taillights.
     var hl = mat(0xfff2b0, { emissive: 0xffedb0, ei: 0.9 });
@@ -479,9 +579,20 @@
       var t = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.3), mat(0xff2a2a, { emissive: 0xcc0000, ei: 0.8 }));
       t.position.set(-len / 2, 0.6, s * 0.6); g.add(t);
     });
+    // Grille: dark slot + two chrome slats between the headlights.
+    g.add(box(0.06, 0.28, wid * 0.55, 0x14141a, len / 2 + 0.01, 0.55, 0));
+    g.add(box(0.03, 0.05, wid * 0.5, 0xcccccc, len / 2 + 0.05, 0.48, 0));
+    g.add(box(0.03, 0.05, wid * 0.5, 0xcccccc, len / 2 + 0.05, 0.62, 0));
+    // Licence plates, front and rear, with a dark registration stripe.
+    g.add(box(0.04, 0.22, 0.62, 0xf2f2f2, len / 2 + 0.03, 0.3, 0));
+    g.add(box(0.02, 0.07, 0.5, 0x2244aa, len / 2 + 0.06, 0.3, 0));
+    g.add(box(0.04, 0.22, 0.62, 0xf2f2f2, -len / 2 - 0.03, 0.3, 0));
+    g.add(box(0.02, 0.07, 0.5, 0x2244aa, -len / 2 - 0.06, 0.3, 0));
     if (o.sport) {
       g.add(box(0.5, 0.08, wid * 0.9, 0x222222, -len / 2 + 0.1, 1.0, 0)); // spoiler
       g.add(box(len * 0.3, 0.1, wid * 0.5, 0x222222, len * 0.2, 0.28, 0));
+      // Hood stripe down the centre of a sports car.
+      g.add(box(len * 0.42, 0.03, 0.34, 0x222831, len * 0.22, 0.87, 0));
     }
     // Bumpers + side mirrors so cars read as cars from behind and the side.
     g.add(box(0.22, 0.22, wid * 0.96, 0x222831, len / 2 - 0.05, 0.42, 0));
@@ -494,15 +605,17 @@
       var w = cyl(0.36, 0.36, 0.26, 0x181818, p[0], 0.36, p[1], 12);
       w.rotation.x = Math.PI / 2;
       g.add(w); wheels.push(w);
-      var hub = cyl(0.18, 0.18, 0.28, 0xbbbbbb, p[0], 0.36, p[1], 8);
+      var hub = cyl(0.24, 0.24, 0.28, 0xd8d8d8, p[0], 0.36, p[1], 10);
       hub.rotation.x = Math.PI / 2; g.add(hub);
+      var cap = cyl(0.09, 0.09, 0.3, 0x222222, p[0], 0.36, p[1], 8);
+      cap.rotation.x = Math.PI / 2; g.add(cap);
     });
     g.userData = { wheels: wheels, body: body, length: len };
     return g;
   };
 
   W.makePoliceCar = function () {
-    var g = W.makeCar(0xf2f2f2, { length: 4.5 });
+    var g = W.makeCar(0xf2f2f2, { length: 4.5, twoTone: false });
     // Black-and-white doors + light bar.
     g.add(box(1.6, 0.5, 1.92, 0x1a1a22, -0.2, 0.62, 0));
     var bar = box(1.1, 0.16, 0.5, 0x222222, -0.2, 1.55, 0);

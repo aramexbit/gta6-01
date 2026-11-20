@@ -6,6 +6,7 @@
   'use strict';
   var PH = window.PH;
   var sim = PH.sim;
+  var W = PH.world;
 
   var canvas = document.getElementById('game-canvas');
   var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
@@ -15,7 +16,7 @@
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 1.35;
 
   var scene = new THREE.Scene();
   var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2000);
@@ -149,7 +150,7 @@
       el['mission-title'].textContent = m.title;
       el['mission-timer'].textContent = '⏱ ' + fmtClock(st.missionTimer);
       el['mission-stage'].textContent = 'STAGE ' + si.cur + '/' + si.total;
-      var obj = m.objective;
+      var obj = sim.shotObjective || m.objective;
       if (st.missionIndex === 3 && st.missionStage === 1) obj = 'Return Kira’s drop to the pier';
       if (st.missionIndex === 7 && st.missionStage === 1) obj = 'Lose the 3-star tail — stay unseen 22 s';
       if (st.missionIndex === 6) obj = 'Escape through checkpoint ' + (sim.checkpointIndex + 1) + ' of 3';
@@ -254,46 +255,87 @@
     mm.clearRect(0, 0, S, S);
     mm.save();
     mm.beginPath(); mm.arc(C, C, C - 2, 0, Math.PI * 2); mm.clip();
-    // Land base, then city blocks as filled rectangles (roads are the gaps
-    // between them) — a real street map, not a grid of lines.
-    mm.fillStyle = '#2a2140'; mm.fillRect(0, 0, S, S);
-    mm.fillStyle = '#1d6f8e'; mm.fillRect(C + 150 * scale, 0, S, S); // sea
-    mm.fillStyle = '#e8c98f'; mm.fillRect(C + 150 * scale - 12, 0, 12, S); // sand
+    // A real coastal street map: sea everywhere first, land on top of it,
+    // then sand, district-coloured blocks, asphalt roads with dashed
+    // centre lines, the pier, and live icons — not a schematic grid.
+    mm.fillStyle = '#1d6f8e'; mm.fillRect(0, 0, S, S); // sea
+    mm.strokeStyle = 'rgba(255,255,255,0.35)'; mm.lineWidth = 1;
+    for (var wv = 0; wv < 5; wv++) {
+      mm.beginPath();
+      mm.arc(C + 185 * scale, C + (wv * 60 - 120) * scale, 13, 0.3, Math.PI - 0.3);
+      mm.stroke();
+    }
+    mm.fillStyle = '#3a2f5a'; mm.fillRect(0, 0, C + 150 * scale, S); // land
+    mm.fillStyle = '#e8c98f'; mm.fillRect(C + 150 * scale, 0, 46 * scale, S); // sand
+    // City blocks coloured by district: pastel deco east, terracotta
+    // south-west, glass blue downtown, lavender elsewhere.
     var streets = PH.CITY.streets;
-    mm.fillStyle = '#5a4f8e'; // blocks — lighter than the base so streets read
     for (var i = 0; i < streets.length - 1; i++) {
       for (var j = 0; j < streets.length - 1; j++) {
         var bx = C + (streets[i] + 5) * scale, by = C + (streets[j] + 5) * scale;
         var bw = (streets[i + 1] - streets[i] - 10) * scale;
+        var d = W.districtOf((streets[i] + streets[i + 1]) / 2, (streets[j] + streets[j + 1]) / 2);
+        mm.fillStyle = d === 'ocean' ? '#ffb3c1' : d === 'havana' ? '#c96f3f' : d === 'downtown' ? '#5a9ec4' : '#8a7fd0';
         mm.fillRect(bx, by, bw, bw);
       }
     }
-    // Roads: pale lines over the block field, plus the pier into the sea.
-    mm.strokeStyle = 'rgba(255,255,255,0.55)'; mm.lineWidth = 2.5;
+    // Roads: dark asphalt bands with dashed yellow centre lines.
     streets.forEach(function (s) {
+      mm.strokeStyle = '#2e2e38'; mm.lineWidth = 9 * scale + 3;
       mm.beginPath(); mm.moveTo(C + s * scale, 0); mm.lineTo(C + s * scale, S); mm.stroke();
       mm.beginPath(); mm.moveTo(0, C + s * scale); mm.lineTo(S, C + s * scale); mm.stroke();
+      mm.strokeStyle = 'rgba(232,195,60,0.85)'; mm.lineWidth = 1;
+      mm.setLineDash([4, 4]);
+      mm.beginPath(); mm.moveTo(C + s * scale, 0); mm.lineTo(C + s * scale, S); mm.stroke();
+      mm.beginPath(); mm.moveTo(0, C + s * scale); mm.lineTo(S, C + s * scale); mm.stroke();
+      mm.setLineDash([]);
     });
-    mm.strokeStyle = '#8a6238'; mm.lineWidth = 3;
+    // The wooden pier into the sea.
+    mm.strokeStyle = '#8a6238'; mm.lineWidth = 4;
     mm.beginPath(); mm.moveTo(C + 196 * scale, C); mm.lineTo(C + 262 * scale, C); mm.stroke();
+    // District labels.
+    mm.fillStyle = 'rgba(255,255,255,0.8)'; mm.font = 'bold 7px sans-serif'; mm.textAlign = 'center';
+    mm.fillText('DOWNTOWN', C, C - 8);
+    mm.fillText('LITTLE HAVANA', C - 36, C + 40);
+    mm.fillText('OCEAN DRIVE', C + 44, C - 8);
     // North marker.
-    mm.fillStyle = '#ffc93c'; mm.font = 'bold 11px sans-serif'; mm.textAlign = 'center';
+    mm.fillStyle = '#ffc93c'; mm.font = 'bold 11px sans-serif';
     mm.fillText('N', C, 13);
-    // Beacon (mission target) with pulse ring.
+    // Mission pin: a yellow diamond with a pulsing white ring.
     var m = PH.currentMission();
     if (m && sim.beacon && sim.beacon.visible) {
       var bx2 = C + sim.beaconPos.x * scale, by2 = C + sim.beaconPos.z * scale;
+      mm.save();
+      mm.translate(bx2, by2); mm.rotate(Math.PI / 4);
       mm.fillStyle = '#ffc93c';
-      mm.beginPath(); mm.arc(bx2, by2, 5, 0, Math.PI * 2); mm.fill();
+      mm.fillRect(-4, -4, 8, 8);
+      mm.strokeStyle = '#fff'; mm.lineWidth = 1.5; mm.strokeRect(-4, -4, 8, 8);
+      mm.restore();
       mm.strokeStyle = '#fff'; mm.lineWidth = 1.5;
-      mm.beginPath(); mm.arc(bx2, by2, 8 + Math.sin(sim.elapsed * 4) * 2, 0, Math.PI * 2); mm.stroke();
+      mm.beginPath(); mm.arc(bx2, by2, 9 + Math.sin(sim.elapsed * 4) * 2, 0, Math.PI * 2); mm.stroke();
     }
-    // Police dots (blue cars, red heli) and the player arrow.
+    // Police icons: blue cars (rotated body + white roof) and the red heli
+    // (circle + rotor cross). Foot patrol is a smaller blue square.
     sim.police.forEach(function (cop) {
       if (cop.dead) return;
-      mm.fillStyle = cop.kind === 'heli' ? '#ff5a5a' : '#5a8aff';
-      mm.beginPath(); mm.arc(C + cop.x * scale, C + cop.z * scale, 3, 0, Math.PI * 2); mm.fill();
+      var cx = C + cop.x * scale, cy = C + cop.z * scale;
+      if (cop.kind === 'heli') {
+        mm.fillStyle = '#ff5a5a';
+        mm.beginPath(); mm.arc(cx, cy, 4, 0, Math.PI * 2); mm.fill();
+        mm.strokeStyle = '#fff'; mm.lineWidth = 1;
+        mm.beginPath(); mm.moveTo(cx - 6, cy); mm.lineTo(cx + 6, cy); mm.moveTo(cx, cy - 6); mm.lineTo(cx, cy + 6); mm.stroke();
+      } else if (cop.kind === 'foot') {
+        mm.fillStyle = '#5a8aff';
+        mm.fillRect(cx - 2, cy - 2, 4, 4);
+      } else {
+        mm.save(); mm.translate(cx, cy); mm.rotate(cop.heading || 0);
+        mm.fillStyle = '#3a6fd9';
+        mm.fillRect(-2.5, -4, 5, 8);
+        mm.fillStyle = '#fff'; mm.fillRect(-2.5, -4, 5, 2);
+        mm.restore();
+      }
     });
+    // The player arrow.
     var px = C + sim.player.x * scale, py = C + sim.player.z * scale;
     mm.save();
     mm.translate(px, py); mm.rotate(sim.player.heading);
@@ -492,7 +534,7 @@
       sim.peds.forEach(function (p) { p.x = 195; p.z = 135; p.g.position.set(195, 0, 135); });
     },
     enterArrow: function () {
-      sim.teleport(sim.arrowCar.x - 2, sim.arrowCar.z);
+      PH.debug.teleport(sim.arrowCar.x - 2, sim.arrowCar.z);
       return sim.enterExitCar();
     },
     snapHeli: function (alt) {
@@ -561,6 +603,10 @@
           ped.g.position.set(ped.x, 0, ped.z);
         }
       });
+      // No palm trunk down the middle of the chase frame: shift the palms
+      // standing on the z = 40 sightline east of the Arrow to the south
+      // sidewalk, where they frame the road instead of splitting it.
+      sim.clearPalmCorridor(115, 170, 35, 45, 56);
       // Roadblock parked across the road ahead.
       var rb = sim.spawnPoliceCar(160, 40);
       rb.heading = Math.PI; rb.g.rotation.y = Math.PI; rb.roadblock = true; rb.tactic = 'ROADBLOCK';
@@ -579,67 +625,70 @@
       return { money: PH.state.money, wanted: PH.state.wanted, police: sim.police.length };
     },
     stageStreet: function () {
-      // Mateo on foot on the north sidewalk of the z = 40 road, eight metres
-      // from the Scarlet Arrow: the camera is close (dist 5.5) and slid to
-      // his right (side 3), so he stands at the right third instead of
-      // blocking the middle — the Arrow and its yellow beacon column fill
-      // the centre-left, palms and the beach and low sun beyond. The
-      // camera sits at (120.5, 41), east of the (108, 28) deco block and
-      // clear of both palm rows, so no building or trunk fills the lens.
-      // The default pitch (-0.12) stays: pitching the camera up pulled the
-      // near palm fronds across the top of the frame.
+      // M7 THREE GATES, northbound chase up the Ocean Drive grid street
+      // (x = 80): the Arrow rolls at ~90 km/h past deco fronts and glass
+      // towers, two police cars flanking ahead-left and ahead-right, a
+      // third dead ahead, a roadblock across the street, traffic in the
+      // lane, the heli spotlighting from above. A different chase from
+      // shot 1 (east into the sun on the z = 40 road) and a busier frame
+      // than the old on-foot version of this shot.
       PH.feed.length = 0; // init already logged M1 once; no duplicate line
-      PH.startMission(0);
-      PH.state.money = 12800;
-      PH.state.missionTimer = 45; // 00:45 on the job clock
-      sim.shotCamDist = 6.5; // close: Mateo at the right third, Arrow big
-      sim.shotCamSide = 3; // toward his right: he slides right in frame
-      sim.player.x = 126; sim.player.z = 44; sim.player.heading = Math.PI / 2;
-      sim.player.camYaw = Math.PI / 2; // looking east: road, palms, sand, sea
-      sim.mateo.position.set(126, 0, 44); sim.mateo.rotation.y = Math.PI / 2;
+      PH.startMission(6);
+      PH.state.money = 39600; // start + M1..M6 rewards
+      PH.state.respect = 340; // 100 + 6 finished jobs x 40
+      PH.state.health = 82; PH.state.armour = 70; PH.state.carHealth = 91;
+      PH.state.missionTimer = 73; // 01:13 on the job clock
+      PH.state.heatArmed = true;
+      sim.playerCarData.x = 80; sim.playerCarData.z = 60;
+      sim.playerCarData.heading = Math.PI; // north, up the grid street
+      sim.playerCarData.speed = 25; // ~90 km/h rolling; headless drag bleeds it slowly
+      sim.playerCarData.g.position.set(80, 0, 60);
+      sim.playerCarData.g.rotation.y = Math.PI;
+      sim.player.x = 80; sim.player.z = 60; sim.player.heading = Math.PI;
+      PH.state.inCar = true; sim.mateo.visible = false;
       PH.debug.clearPoliceFar();
-      PH.setWanted(0);
-      // Ambient traffic wanders the grid: clear any car that drifted into
-      // the hero area (within 26 m of the Arrow) to the far west end of
-      // this road, so no random car parks on Mateo or crowds the Arrow.
-      // This runs BEFORE the staged traffic below, so those stay put.
-      sim.traffic.forEach(function (car) {
-        if (PH.dist2d(car.x, car.z, 128, 40) < 26) {
-          car.x = PH.rand(45, 75); car.z = 40; car.heading = Math.PI / 2;
-          car.g.position.set(car.x, 0, car.z); car.g.rotation.y = car.heading;
-        }
-      });
-      // Crowd on the sidewalks around the Arrow and the beacon — nobody
-      // between the camera and the car, nobody standing on the road. The
-      // green car that used to be staged at (140, 40) is gone: from this
-      // camera it always landed right behind Mateo's shoulder.
-      sim.spawnPed(118, 50); sim.spawnPed(126, 50); sim.spawnPed(132, 46);
-      sim.spawnPed(134, 34); sim.spawnPed(124, 33); sim.spawnPed(140, 47);
-      sim.spawnPed(118, 33); sim.spawnPed(146, 44);
-      sim.spawnTrafficCar(120, 20, 0, 0xd83a2e);
-      sim.spawnTrafficCar(120, 62, Math.PI, 0x2e7fd8);
-      sim.spawnTrafficCar(120, 85, 0, 0xf2c230);
-      PH.sayKira('Mateo, the Scarlet Arrow is parked on Ocean Drive, keys in the sun visor. Take it. No witnesses, no heat.', 8);
-      return { peds: sim.peds.length, traffic: sim.traffic.length };
+      PH.setWanted(3); // spawns the heli on the next update
+      // Flanking pursuit: ahead-left and ahead-right slots, plus one dead
+      // ahead, all at the player's speed so the formation holds (same slot
+      // mechanic as stageChase — see the slot branch in updatePolice).
+      var c1 = sim.spawnPoliceCar(72, 46); c1.heading = Math.PI; c1.slot = { a: 14, s: -8 }; c1.speed = 25;
+      var c2 = sim.spawnPoliceCar(88, 46); c2.heading = Math.PI; c2.slot = { a: 14, s: 8 }; c2.speed = 25;
+      var c3 = sim.spawnPoliceCar(80, 38); c3.heading = Math.PI; c3.slot = { a: 22, s: 0 }; c3.speed = 25;
+      // Roadblock parked across the street ahead.
+      var rb = sim.spawnPoliceCar(80, 16);
+      rb.heading = Math.PI / 2; rb.g.rotation.y = Math.PI / 2; rb.roadblock = true; rb.tactic = 'ROADBLOCK';
+      // Traffic in the lane ahead, northbound and southbound.
+      sim.spawnTrafficCar(80, 30, Math.PI, 0xf2c230);
+      sim.spawnTrafficCar(84, 4, Math.PI, 0x2e7fd8);
+      sim.spawnTrafficCar(76, 48, 0, 0x37b268);
+      sim.spawnTrafficCar(80, -8, Math.PI, 0xe8e8e8);
+      // Peds on the sidewalks flanking the street.
+      sim.spawnPed(72.5, 52); sim.spawnPed(87.5, 44); sim.spawnPed(72.5, 36);
+      sim.spawnPed(87.5, 28); sim.spawnPed(72.5, 24); sim.spawnPed(87.5, 58);
+      PH.sayKira('Three gates, one route — do not stop, Mateo. SBPD is already on your tail.', 8);
+      sim.keys['w'] = true; // rolling: speed holds for the shot
+      return { money: PH.state.money, wanted: PH.state.wanted, police: sim.police.length };
     },
     stageMission: function () {
-      // Mission 3 cross-town drop, restaged on Ocean Drive: Mateo on foot
-      // on the north sidewalk of the z = 40 road at (126, 44), aiming EAST
-      // into the low sun — no building stands ahead of him on this
-      // sightline (the deco blocks end at x = 117, the boardwalk and sand
-      // open up past x = 150), so the frame is road, police, beacon and
-      // sea instead of flat orange slabs. He stands on the sidewalk on
-      // purpose: the third pass put him at (126, 40) and he clipped
-      // INSIDE the parked Arrow (its footprint is x 125.7–130.3), so his
-      // legs vanished into the car. With the camera 7.5 m back and 5 m to
-      // his right it sits at (118.5, 39), east of every building footprint
-      // and north of the (108, 28) block's south face. He reads in
-      // three-quarter view at the right third with the pistol in his right
-      // hand visible, the Arrow parked at his front-right; two pursuit
-      // cars close in from ~19 m, the roadblock auto-spawns at (140, 40)
-      // — the spawn clamps x to 140, so it sits 14 m ahead, parked across
-      // the road — the heli holds station above the beacon, and the beacon
-      // column stands on the sand at (152, 44) with the sea behind it.
+      // Mission 3 cross-town drop, staged on Ocean Drive with the panel
+      // text FIXED to match the beacon: the mission's own objective says
+      // "Little Havana", but this shot's beacon stands on Ocean Drive, so
+      // the panel is overridden to "Ocean Drive beacon" (see shotObjective
+      // below) instead of moving the beacon to a district the camera
+      // cannot see. Mateo stands on the north sidewalk of the z = 40 road
+      // at (126, 44), aiming EAST into the low sun — no building stands
+      // ahead of him on this sightline (the deco blocks end at x = 117,
+      // the boardwalk and sand open up past x = 150), so the frame is
+      // road, police, beacon and sea instead of flat orange slabs. The
+      // camera is PINNED south-west of him at (118, 2.6, 58), looking
+      // north-east: a front three-quarter aim shot, so his face, his
+      // aiming arms and the bright pistol read in profile instead of
+      // vanishing behind his back (the v6.0 shot hid the pistol — the
+      // camera sat dead behind him). Two pursuit cars close in from
+      // ~19 m, the roadblock auto-spawns at (140, 40) — the spawn clamps
+      // x to 140, so it sits 14 m ahead, parked across the road — the heli
+      // holds station above the beacon, and the beacon column stands on
+      // the Ocean Drive sidewalk at (146, 44) with the sea behind it.
       // Headless dt is clamped at 0.1 s and the frame rate varies run to
       // run, so the cops close anywhere from ~1 m (slow run) to ~9 m
       // (fast run) before the shutter: spawned at ~19 m they end up
@@ -648,32 +697,45 @@
       PH.state.money = 19500; // start + M1 + M2 rewards
       PH.state.respect = 180;
       PH.state.missionTimer = 94; // 01:34 on the job clock
-      sim.player.x = 126; sim.player.z = 44; sim.player.heading = Math.PI / 2;
+      sim.player.x = 126; sim.player.z = 44; sim.player.heading = Math.PI / 2 - 0.15;
       sim.player.camYaw = Math.PI / 2; // looking east: road, palms, sand, sea
       sim.player.camPitch = 0.25; // lift the view: the heli must read in frame
-      sim.shotCamDist = 7.5; // pull the aim camera back: Mateo + street, not just his back
-      sim.shotCamSide = 5; // toward his right: three-quarter aim, pistol visible
-      sim.mateo.position.set(126, 0, 44); sim.mateo.rotation.y = Math.PI / 2;
+      // Fixed camera: south-west of Mateo, closer in than v6.0 (9 m, not
+      // 16 m) and LOW (1.4 m), looking slightly UP at the street — Mateo
+      // at the left third in three-quarter aim, big enough that the bright
+      // pistol reads in profile; police, roadblock, beacon and heli all
+      // beyond him in the same frame; the low angle drops the heli clear
+      // of the money panel (it used to sit on top of it) and the sea and
+      // low sun fill the right.
+      sim.shotCam = { pos: [122, 1.4, 52], look: [136, 4.5, 40] };
+      // The beacon is on Ocean Drive in this shot, not Little Havana:
+      // override the panel objective so text and beacon agree.
+      sim.shotObjective = 'Deliver the package to the Ocean Drive beacon';
+      sim.mateo.position.set(126, 0, 44); sim.mateo.rotation.y = Math.PI / 2 - 0.15;
       PH.state.aiming = true;
       PH.debug.clearPoliceFar();
       PH.setWanted(3);
       // Two pursuit cars on the road ahead, facing Mateo (headlights and
       // light bars toward the camera). Spawned at ~19 m: they close 1–9 m
       // before the shutter depending on the headless frame rate, so they
-      // end up 10–19 m out — tight, but not on top of him.
+      // end up 10–19 m out — tight, but not on top of him. p2 sits on the
+      // north sidewalk so it does not hide the beacon column.
       var p1 = sim.spawnPoliceCar(144, 37); p1.heading = -Math.PI / 2;
-      var p2 = sim.spawnPoliceCar(145, 43); p2.heading = -Math.PI / 2;
-      // The drop beacon, moved onto the sand for the shot: the yellow
-      // column stands against the sea, 12 m past the roadblock so the
-      // parked car does not hide its base.
-      sim.setBeacon(152, 44);
+      var p2 = sim.spawnPoliceCar(142, 47); p2.heading = -Math.PI / 2;
+      // The drop beacon on the Ocean Drive sidewalk at the beach end: the
+      // yellow column stands against the sea, 6 m past the roadblock so
+      // the parked car does not hide its base.
+      sim.setBeacon(146, 44);
+      // No palm trunk down the middle of this frame: shift every palm in
+      // the camera wedge (x 115–170, z 30–62) north onto the sand strip.
+      sim.clearPalmCorridor(115, 170, 30, 62, 24);
       // Peds on the sidewalks flanking the road — none closer than 12 m
       // to the camera (the first pass parked one 6 m from the lens and it
       // filled the frame edge), none of them on the road or on Mateo, and
       // none of them in his line of fire: the fourth pass parked a ped
       // 6 m ahead of him and it stood exactly where his aiming arm and
       // pistol point, hiding both.
-      sim.spawnPed(142, 46); sim.spawnPed(148, 46); sim.spawnPed(154, 46);
+      sim.spawnPed(136, 46); sim.spawnPed(150, 46); sim.spawnPed(156, 46);
       sim.spawnPed(132, 34); sim.spawnPed(140, 34); sim.spawnPed(150, 34);
       // Ambient traffic wanders the grid: clear any car that drifted into
       // the hero area (within 26 m of Mateo) to the far west end of this

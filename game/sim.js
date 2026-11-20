@@ -141,6 +141,8 @@
     sim.courierNearTimer = 0;
     sim.checkpointIndex = 0;
     PH.state.heatArmed = false;
+    sim.shotObjective = null; // shot staging may override the panel text
+    sim.shotCam = null; // shot staging may pin the camera for one frame
     PH.sayKira(m.brief, 8);
     PH.pushFeed(m.title + ' — ' + m.objective);
     sim.setBeacon(m.beacon.x, m.beacon.z);
@@ -160,6 +162,17 @@
   };
 
   sim.hideBeacon = function () { if (sim.beacon) sim.beacon.visible = false; };
+
+  // Move every palm standing inside a camera sightline rectangle to a
+  // single line outside it (used by shot staging): palms are scene props,
+  // shifting a few of them for a shot keeps the boulevard without letting
+  // a trunk split the middle of the frame.
+  sim.clearPalmCorridor = function (x0, x1, z0, z1, toZ) {
+    (W.palms || []).forEach(function (palm) {
+      var px = palm.position.x, pz = palm.position.z;
+      if (px >= x0 && px <= x1 && pz >= z0 && pz <= z1) palm.position.z = toZ;
+    });
+  };
 
   // Police unit names: callsign + number, like a real dispatch board.
   // The HUD lists each live unit with its distance and tactic badge.
@@ -272,7 +285,7 @@
     scene.add(sim.mateo);
 
     // The Scarlet Arrow — the player's car, parked on Ocean Drive.
-    var arrow = W.makeCar(0xe85a17, { sport: true, length: 4.6 });
+    var arrow = W.makeCar(0xe85a17, { sport: true, length: 4.6, twoTone: false });
     arrow.position.set(128, 0, 40);
     arrow.rotation.y = Math.PI / 2;
     scene.add(arrow);
@@ -502,6 +515,13 @@
   sim.updateCamera = function (dt, camera) {
     var p = sim.player;
     var st = PH.state;
+    if (sim.shotCam) {
+      // Pinned shot camera (debug staging only): snap, do not lerp, so the
+      // frame is exactly the composed one when the shutter fires.
+      camera.position.set(sim.shotCam.pos[0], sim.shotCam.pos[1], sim.shotCam.pos[2]);
+      camera.lookAt(sim.shotCam.look[0], sim.shotCam.look[1], sim.shotCam.look[2]);
+      return;
+    }
     if (st.inCar && sim.playerCarData) {
       var car = sim.playerCarData;
       var back = 11, up = 5;

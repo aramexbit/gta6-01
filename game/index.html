@@ -21,8 +21,8 @@
   #money-panel .money { color: #7dff9a; font-size: 22px; font-weight: bold; }
   #money-panel .stars { color: #ffd23c; font-size: 20px; letter-spacing: 2px; margin-top: 2px; }
   #money-panel .wanted-label { font-size: 11px; color: #ffb0b0; letter-spacing: 2px; }
-  #police-panel { top: 130px; left: 14px; width: 250px; font-size: 12px; }
-  #police-panel .p-title { color: #ff8a7a; font-weight: bold; letter-spacing: 1px; font-size: 12px; margin-bottom: 4px; }
+  #police-panel { top: 130px; left: 14px; width: 282px; font-size: 12px; }
+  #police-panel .p-title { color: #ff8a7a; font-weight: bold; letter-spacing: 1px; font-size: 12px; margin-bottom: 4px; white-space: nowrap; }
   #police-panel .feed-line { margin-top: 3px; line-height: 1.3; color: #e8e0ff; }
   #speed-panel { bottom: 14px; right: 14px; text-align: right; min-width: 170px; }
   #speed-panel .speed { font-size: 30px; font-weight: bold; color: #fff; }
@@ -45,11 +45,64 @@
   #radio-panel .r-name { color: #ff7ab8; font-weight: bold; letter-spacing: 1px; }
   #controls-bar { bottom: 0; left: 50%; transform: translateX(-50%); font-size: 11px; color: #d8d0ff; background: rgba(12,8,30,.55); padding: 4px 14px; border-radius: 8px 8px 0 0; white-space: nowrap; }
   #toast { top: 44%; left: 50%; transform: translate(-50%, -50%); font-size: 26px; font-weight: bold; color: #ffc93c; display: none; letter-spacing: 2px; }
+  /* Dense HUD v6 — mission timer/stage/NEXT, dispatch rows with tactic
+     badges, weapon wheel, vitals (health/armour/respect), location label,
+     car card, dialogue portrait. All values come from live sim state. */
+  #mission-panel .m-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; font-size: 12px; }
+  #mission-panel .m-timer { color: #7dff9a; font-weight: bold; font-variant-numeric: tabular-nums; }
+  #mission-panel .m-stage { color: #ffc93c; font-weight: bold; letter-spacing: 1px; }
+  #mission-panel .m-next { font-size: 12px; color: #9fd4ff; margin-top: 5px; border-top: 1px solid rgba(255,255,255,.14); padding-top: 4px; }
+  #mission-panel .m-next b { color: #ffc93c; letter-spacing: 1px; }
+  #money-panel .air-line { font-size: 11px; font-weight: bold; letter-spacing: 1px; color: #ff9a7a; margin-top: 3px; }
+  #police-panel .p-head { display: flex; justify-content: space-between; align-items: baseline; }
+  #police-panel .p-count { color: #ffd23c; font-weight: bold; font-size: 12px; }
+  #police-panel .p-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; line-height: 1.25; }
+  #police-panel .p-name { color: #fff; font-weight: bold; min-width: 64px; white-space: nowrap; }
+  #police-panel .p-dist { color: #bfe8ff; margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #police-panel .badge { font-size: 10px; font-weight: bold; letter-spacing: 1px; padding: 2px 6px; border-radius: 4px; color: #fff; white-space: nowrap; }
+  #police-panel .badge-RAMMING { background: #d92b2b; }
+  #police-panel .badge-PURSUIT { background: #2b6fd9; }
+  #police-panel .badge-SPOTLIGHT { background: #e8a100; color: #241a00; }
+  #police-panel .badge-ROADBLOCK { background: #e8c33c; color: #241a00; }
+  #police-panel .badge-FIRING { background: #b02020; }
+  #police-panel .badge-PATROL { background: #5a6a7a; }
+  #police-panel .badge-RESPONDING { background: #7a5ad9; }
+  #police-panel .feed-line { opacity: .75; font-size: 11px; }
+  #loc-panel { bottom: 296px; left: 14px; width: 196px; padding: 6px 10px; }
+  #loc-panel .loc-area { color: #ffc93c; font-weight: bold; font-size: 14px; letter-spacing: 2px; }
+  #loc-panel .loc-sub { font-size: 11px; color: #d8d0ff; margin-top: 1px; }
+  #vitals-panel { bottom: 196px; left: 14px; width: 196px; padding: 8px 10px; font-size: 11px; }
+  #vitals-panel .bar-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  #vitals-panel .bar-row:first-child { margin-top: 0; }
+  #vitals-panel .bar-row span.lbl { width: 52px; color: #ffe9d0; letter-spacing: 1px; font-weight: bold; }
+  #vitals-panel .bar { flex: 1; height: 8px; background: rgba(255,255,255,.18); border-radius: 4px; overflow: hidden; }
+  #vitals-panel .bar > div { height: 100%; }
+  #vitals-panel .bar-row span.num { width: 26px; text-align: right; font-variant-numeric: tabular-nums; }
+  #health-bar2 > div { background: #37e07a; }
+  #armour-bar > div { background: #4a9de8; }
+  #respect-bar > div { background: #c96df5; }
+  #vitals-panel .rank-line { margin-top: 5px; color: #ffd23c; font-weight: bold; letter-spacing: 1px; font-size: 11px; }
+  #weapon-panel { bottom: 158px; right: 14px; padding: 8px 10px; }
+  #weapon-panel .w-title { font-size: 10px; letter-spacing: 2px; color: #ffb060; font-weight: bold; margin-bottom: 5px; text-align: right; }
+  #weapon-panel .w-slots { display: flex; gap: 6px; }
+  #weapon-panel .w-slot { width: 64px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.22); border-radius: 8px; padding: 5px 4px; text-align: center; }
+  #weapon-panel .w-slot.active { border-color: #ffc93c; background: rgba(255,201,60,.16); box-shadow: 0 0 0 1px #ffc93c; }
+  #weapon-panel .w-slot.locked { opacity: .45; }
+  #weapon-panel .w-key { font-size: 10px; color: #9fd4ff; }
+  #weapon-panel .w-icon { font-size: 17px; line-height: 1.2; }
+  #weapon-panel .w-name { font-size: 10px; font-weight: bold; letter-spacing: 1px; margin-top: 1px; }
+  #weapon-panel .w-ammo { font-size: 12px; color: #ffe08a; font-weight: bold; font-variant-numeric: tabular-nums; }
+  #dialogue .d-portrait { float: left; width: 64px; height: 64px; border-radius: 8px; margin: 2px 10px 2px 0; border: 2px solid rgba(255,154,213,.6); background: #241a3a; }
+  #dialogue .d-role { color: #9fd4ff; font-weight: normal; font-size: 11px; letter-spacing: 1px; }
+  #speed-panel .car-name { color: #4ae0c8; font-weight: bold; font-size: 14px; letter-spacing: 1px; }
+  #speed-panel .car-cond { font-size: 11px; color: #d8d0ff; margin-top: 2px; }
+  #speed-panel .radio-line { font-size: 11px; color: #ff9ad5; margin-top: 5px; border-top: 1px solid rgba(255,255,255,.14); padding-top: 4px; }
   /* Start / pause screens */
-  .screen { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: linear-gradient(180deg, rgba(43,30,99,.55), rgba(184,58,110,.45) 55%, rgba(255,154,77,.55)); }
+  .screen { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: linear-gradient(180deg, rgba(43,30,99,.38), rgba(184,58,110,.30) 55%, rgba(255,154,77,.38)); }
   .screen h1 { font-size: 64px; letter-spacing: 6px; color: #ffd23c; text-shadow: 0 4px 0 #c65a28, 0 8px 24px rgba(0,0,0,.6); }
   .screen h2 { font-size: 20px; letter-spacing: 8px; color: #fff; margin-top: 4px; }
   .screen p { max-width: 560px; margin-top: 16px; font-size: 15px; line-height: 1.6; color: #ffe9d0; }
+  .screen p.tagline { margin-top: 10px; font-size: 13px; font-weight: bold; letter-spacing: 4px; color: #ffc93c; }
   .screen .credits { font-size: 12px; color: #d8c8ff; margin-top: 10px; }
   .big-btn { pointer-events: auto; margin-top: 26px; font-size: 20px; font-weight: bold; letter-spacing: 2px; color: #2a1030; background: #ffc93c; border: none; border-radius: 12px; padding: 14px 44px; cursor: pointer; box-shadow: 0 6px 0 #b87a10, 0 10px 24px rgba(0,0,0,.5); }
   .big-btn:hover { background: #ffd95e; }
@@ -66,14 +119,17 @@
 
 <div id="mission-panel" class="hud panel">
   <div class="m-title" id="mission-title">PIER HEAT</div>
+  <div class="m-meta"><span class="m-timer" id="mission-timer">⏱ 00:00</span><span class="m-stage" id="mission-stage">STAGE 1/1</span></div>
   <div class="m-obj" id="mission-objective">Loading Sunset Bay…</div>
   <div class="m-prog"><div id="mission-progress"></div></div>
+  <div class="m-next" id="mission-next"></div>
 </div>
 
 <div id="money-panel" class="hud panel">
-  <div class="money" id="money">$250</div>
+  <div class="money" id="money">$12,800</div>
   <div class="stars" id="stars">☆☆☆☆☆</div>
   <div class="wanted-label" id="wanted-label">WANTED 0</div>
+  <div class="air-line" id="air-line"></div>
 </div>
 
 <div id="radio-panel" class="hud panel">
@@ -82,8 +138,20 @@
 </div>
 
 <div id="police-panel" class="hud panel">
-  <div class="p-title">📻 SUNSET BAY PD — DISPATCH</div>
+  <div class="p-head"><span class="p-title">📻 SBPD — DISPATCH</span><span class="p-count" id="police-count">0 UNITS</span></div>
   <div id="police-feed"></div>
+</div>
+
+<div id="loc-panel" class="hud panel">
+  <div class="loc-area" id="loc-area">SUNSET BAY</div>
+  <div class="loc-sub" id="loc-sub">Downtown grid · golden hour</div>
+</div>
+
+<div id="vitals-panel" class="hud panel">
+  <div class="bar-row"><span class="lbl">HEALTH</span><div class="bar" id="health-bar2"><div style="width:100%"></div></div><span class="num" id="health-num2">100</span></div>
+  <div class="bar-row"><span class="lbl">ARMOUR</span><div class="bar" id="armour-bar"><div style="width:60%"></div></div><span class="num" id="armour-num">60</span></div>
+  <div class="bar-row"><span class="lbl">RESPECT</span><div class="bar" id="respect-bar"><div style="width:20%"></div></div><span class="num" id="respect-num">100</span></div>
+  <div class="rank-line" id="rank-line">DOCK HAND · 100 / 250 RP</div>
 </div>
 
 <div id="minimap-wrap" class="hud">
@@ -92,19 +160,23 @@
 </div>
 
 <div id="dialogue" class="hud panel">
-  <div class="d-name" id="dialogue-name">KIRA — radio</div>
+  <canvas id="dialogue-portrait" class="d-portrait" width="64" height="64"></canvas>
+  <div class="d-name"><span id="dialogue-name">KIRA</span> <span class="d-role" id="dialogue-role">— radio · fixer</span></div>
   <div class="d-text" id="dialogue-text"></div>
 </div>
 
-<div id="ammo-panel" class="hud panel">
-  <div class="ammo" id="ammo">🔫 Pistol — 48</div>
-  <div class="items" id="items">EMP ×1 &nbsp; SMOKE ×1</div>
+<div id="weapon-panel" class="hud panel">
+  <div class="w-title">WEAPONS — 1 PISTOL READY</div>
+  <div class="w-slots" id="weapon-slots"></div>
 </div>
 
 <div id="speed-panel" class="hud panel">
+  <div class="car-name" id="car-name">ON FOOT</div>
   <div class="speed"><span id="speed">0</span> <small>km/h</small></div>
+  <div class="car-cond" id="car-cond"></div>
   <div class="bar-row"><span>HP</span><div class="bar" id="health-bar"><div style="width:100%"></div></div><span id="health-num">100</span></div>
   <div class="bar-row"><span>CAR</span><div class="bar" id="car-bar"><div style="width:100%"></div></div><span id="car-num">100</span></div>
+  <div class="radio-line" id="radio-line">♪ Nightwave 98.3 — Running Red</div>
 </div>
 
 <div id="controls-bar" class="hud">WASD move / drive &nbsp;·&nbsp; Mouse look &nbsp;·&nbsp; E enter car &nbsp;·&nbsp; F shoot &nbsp;·&nbsp; Shift boost &nbsp;·&nbsp; Space drift &nbsp;·&nbsp; R radio &nbsp;·&nbsp; P pause</div>
@@ -113,6 +185,7 @@
 <div id="start-screen" class="screen">
   <h1>PIER HEAT</h1>
   <h2>SUNSET BAY</h2>
+  <p class="tagline">8 JOBS · 5-STAR HEAT · ONE GOLDEN HOUR</p>
   <p>You are <b>Mateo Vega</b>, 28, getaway driver. Eight jobs for Kira across a golden-hour
   coastal city — steal the Scarlet Arrow, run the pier, lose the tail. Crimes only count
   when someone sees them. No witnesses, no stars.</p>

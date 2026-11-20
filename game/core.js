@@ -48,10 +48,17 @@
     started: false,
     paused: false,
     over: false,
-    money: 250,
+    money: 12800,   // Mateo is an established getaway driver: the wallet
+                     // already holds real job money, and mission rewards
+                     // add to it — the HUD number is never faked.
     wanted: 0,
     health: 100,
-    ammo: 48,
+    armour: 60,     // absorbs damage before health does (see damagePlayer)
+    respect: 100,   // street standing; +40 per finished job, ranks the crew
+    weapon: 'pistol', // current weapon shown in the wheel
+    smgOwned: false,  // locked wheel slots: no SMG / rifle yet
+    rifleOwned: false,
+    ammo: 48,       // pistol rounds — the wheel reads this live
     emp: 1,
     smoke: 1,
     missionIndex: 0,      // 0..7, 8 = all done (free roam)
@@ -88,6 +95,8 @@
         kills: PH.state.kills,
         carsStolen: PH.state.carsStolen,
         timePlayed: PH.state.timePlayed,
+        respect: PH.state.respect,
+        armour: PH.state.armour,
       }));
     } catch (e) { /* storage unavailable: game still plays */ }
   };
@@ -107,6 +116,8 @@
     PH.state.kills = save.kills || 0;
     PH.state.carsStolen = save.carsStolen || 0;
     PH.state.timePlayed = save.timePlayed || 0;
+    PH.state.respect = typeof save.respect === 'number' ? save.respect : PH.state.respect;
+    PH.state.armour = typeof save.armour === 'number' ? PH.clamp(save.armour, 0, 100) : PH.state.armour;
   };
 
   // ------------------------------------------------------------ witness rule
@@ -157,6 +168,38 @@
     PH.state.quietSeconds = 0;
     if (PH.state.wanted !== before && PH.onWantedChange) PH.onWantedChange(PH.state.wanted, before);
     return PH.state.wanted;
+  };
+
+  // Damage routing: armour soaks the hit first, health only takes the rest.
+  // Returns how much health was actually lost (0 when armour held it all).
+  PH.damagePlayer = function (amount) {
+    var st = PH.state;
+    var soaked = Math.min(st.armour, amount);
+    st.armour = PH.clamp(st.armour - soaked, 0, 100);
+    var toHealth = amount - soaked;
+    st.health = PH.clamp(st.health - toHealth, 0, 100);
+    return toHealth;
+  };
+
+  // Street rank from respect points — shown beside the respect bar.
+  PH.respectTitle = function (r) {
+    if (r >= 500) return 'SHOT CALLER';
+    if (r >= 250) return 'FIXER';
+    if (r >= 100) return 'DOCK HAND';
+    return 'ROOKIE';
+  };
+
+  // Where the player is, from real coordinates — the location label reads this.
+  PH.locationName = function (x, z) {
+    if (x >= 200 && Math.abs(z) < 12) return { area: 'THE PIER', sub: 'Sunset Bay · end of the boardwalk' };
+    if (x >= 196) return { area: 'THE SEA', sub: 'Sunset Bay · open water' };
+    if (x > 150) return { area: 'OCEAN BEACH', sub: 'Sunset Bay · sand and palms' };
+    if (x > 80) return { area: 'OCEAN DRIVE', sub: 'Sunset Bay · pastel deco row' };
+    if (z > 60 && x < 40) return { area: 'LITTLE HAVANA', sub: 'Sunset Bay · terracotta corner' };
+    if (Math.abs(x) <= 40 && Math.abs(z) <= 40) return { area: 'DOWNTOWN', sub: 'Sunset Bay · glass towers' };
+    if (z < -60 && x > 100) return { area: 'THE MARINA', sub: 'Sunset Bay · moored boats' };
+    if (z < -60) return { area: 'NORTH BAY', sub: 'Sunset Bay · quiet streets' };
+    return { area: 'SUNSET BAY', sub: 'Downtown grid · golden hour' };
   };
 
   // Distance to the nearest living police unit, or Infinity when none.

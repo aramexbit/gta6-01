@@ -260,8 +260,9 @@
         b.castShadow = true; b.receiveShadow = true;
         scene.add(b);
         W.buildings.push(b);
-        // Roof box / parapet and a glowing sign for deco blocks.
-        var roof = box(w * 0.7, 0.8, d * 0.7, 0x444455, bx + ox, h + 0.4, bz + oz);
+        // Roof box / parapet in a pastel accent (not flat grey) and a glowing
+        // sign for deco blocks, so rooftops vary from the street too.
+        var roof = box(w * 0.7, 0.8, d * 0.7, PH.pick([0x444455, 0x7a5a8a, 0x4a7a8a, 0x8a6a5a]), bx + ox, h + 0.4, bz + oz);
         scene.add(roof);
         if (district === 'ocean' && Math.random() < 0.6) {
           var sign = box(w * 0.6, 1.1, 0.3, PH.pick([0xff5a8a, 0x37e0c0, 0xffc93c]), bx + ox, h - 0.6, bz + oz + d / 2 + 0.2,
@@ -317,8 +318,9 @@
 
   W.buildStreetProps = function (scene) {
     W.palms = [];
-    // Palm rows along Ocean Drive and the beach walk.
-    for (var z = -140; z <= 140; z += 20) {
+    // Palm rows along Ocean Drive and the beach walk, closer together now
+    // (every 14 m) so the coast road reads as a palm-lined boulevard.
+    for (var z = -140; z <= 140; z += 14) {
       [146, 128].forEach(function (x) {
         var p = W.makePalm();
         p.position.set(x + PH.rand(-1, 1), 0, z + PH.rand(-2, 2));
@@ -350,8 +352,8 @@
         }
       }
     });
-    // Beach umbrellas and towels.
-    for (var u = 0; u < 8; u++) {
+    // Beach umbrellas and towels — twelve now, so the sand reads busy.
+    for (var u = 0; u < 12; u++) {
       var ux = PH.rand(158, 188), uz = PH.rand(-120, 120);
       var pole = cyl(0.06, 0.06, 2.4, 0xeeeeee, ux, 1.2, uz, 6);
       scene.add(pole);
@@ -410,11 +412,16 @@
     }
     var armL = arm(-1), armR = arm(1);
     g.add(armL); g.add(armR);
-    // Small pistol, hidden unless aiming / shooting.
+    // Pistol, hidden unless aiming / shooting. Hero scale (about 2x true
+    // size) in bright steel with a dark grip: from the aim camera behind
+    // Mateo a true-scale dark pistol vanishes behind his torso — this one
+    // sticks out past his hands and reads as a gun at a glance, even at
+    // thumbnail size, and the bright barrel separates from both the
+    // orange jacket and the dark asphalt.
     var pistol = new THREE.Group();
-    pistol.add(box(0.06, 0.12, 0.34, 0x1c1c22, 0, 0, 0.1));
-    pistol.add(box(0.05, 0.14, 0.08, 0x1c1c22, 0, -0.1, -0.02));
-    pistol.position.set(0.12, 1.28, 0.35);
+    pistol.add(box(0.11, 0.2, 0.6, 0x9a9aa8, 0, 0, 0.16));
+    pistol.add(box(0.09, 0.26, 0.13, 0x4a4a58, 0, -0.14, -0.03));
+    pistol.position.set(0.17, 1.3, 0.58);
     pistol.visible = false;
     g.add(pistol);
     g.userData = { legL: legL, legR: legR, torso: torso, head: head, armL: armL, armR: armR, pistol: pistol, walkPhase: 0 };
@@ -476,6 +483,12 @@
       g.add(box(0.5, 0.08, wid * 0.9, 0x222222, -len / 2 + 0.1, 1.0, 0)); // spoiler
       g.add(box(len * 0.3, 0.1, wid * 0.5, 0x222222, len * 0.2, 0.28, 0));
     }
+    // Bumpers + side mirrors so cars read as cars from behind and the side.
+    g.add(box(0.22, 0.22, wid * 0.96, 0x222831, len / 2 - 0.05, 0.42, 0));
+    g.add(box(0.22, 0.22, wid * 0.96, 0x222831, -len / 2 + 0.05, 0.42, 0));
+    [-1, 1].forEach(function (s) {
+      g.add(box(0.16, 0.1, 0.14, 0x222222, len * 0.14, 1.05, s * (wid / 2 + 0.06)));
+    });
     var wheels = [];
     [[len * 0.32, wid / 2], [len * 0.32, -wid / 2], [-len * 0.32, wid / 2], [-len * 0.32, -wid / 2]].forEach(function (p) {
       var w = cyl(0.36, 0.36, 0.26, 0x181818, p[0], 0.36, p[1], 12);
@@ -522,7 +535,17 @@
     g.add(skidL); g.add(skidR);
     var spot = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), mat(0xfff2b0, { emissive: 0xffedb0, ei: 2 }));
     spot.position.set(1.6, -0.5, 0); g.add(spot);
+    // Spotlight cone: narrow at the belly, wide on the street below, so the
+    // air unit reads as "searching" even from far away. Tilted toward the
+    // player each frame by the sim (heli-local +z faces the player).
+    // 13 m tall: the heli flies at 13 m, so the cone just reaches the road.
+    // Narrow (4.5 m) and faint: a wide cone reads as a pink kite in the sky.
+    var cone = new THREE.Mesh(new THREE.ConeGeometry(4.5, 13, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.15, side: THREE.DoubleSide, depthWrite: false }));
+    cone.position.set(0, -6.5, 0);
+    g.add(cone);
     g.userData.rotor = rotor;
+    g.userData.spotCone = cone;
     return g;
   };
 
@@ -568,7 +591,7 @@
   W.makeBeacon = function () {
     var g = new THREE.Group();
     var cylMesh = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 7, 20, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xffc93c, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
+      new THREE.MeshBasicMaterial({ color: 0xffc93c, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
     cylMesh.position.y = 3.5;
     g.add(cylMesh);
     var ring = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.16, 8, 32),

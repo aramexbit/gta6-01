@@ -32,56 +32,74 @@
 
   // ------------------------------------------------------------ missions
   // Each mission: title, Kira briefing, objective text, beacon, reward.
+  // Rewards are real job money: they land in the wallet on completion and
+  // are the only way the HUD money grows (besides the starting $12,800).
   PH.MISSIONS = [
     {
       title: 'M1 — THE SCARLET ARROW',
       brief: 'Mateo, the Scarlet Arrow is parked on Ocean Drive, keys in the sun visor. Take it. No witnesses, no heat.',
       objective: 'Steal the Scarlet Arrow on Ocean Drive',
-      beacon: { x: 128, z: 40 }, reward: 500,
+      beacon: { x: 128, z: 40 }, reward: 2500,
     },
     {
       title: 'M2 — PIER RUN',
       brief: 'Drive the Arrow to the safehouse at the end of the pier. Cops will wake up once you are clear — lose them or outrun them.',
       objective: 'Drive to the pier safehouse — escape the heat',
-      beacon: { x: 252, z: 0 }, reward: 800,
+      beacon: { x: 252, z: 0 }, reward: 4200,
     },
     {
       title: 'M3 — CROSS-TOWN DROP',
       brief: 'Package in the trunk. Take it to the Little Havana corner, quiet streets if you can. No shooting unless you have to.',
       objective: 'Deliver the package to Little Havana',
-      beacon: { x: -100, z: 100 }, reward: 800,
+      beacon: { x: -100, z: 100 }, reward: 4500,
     },
     {
       title: 'M4 — KIRA’S DROP',
       brief: 'I left a bag under the Downtown tower steps. Grab it, then bring it back to the pier. Same rules: witnesses mean stars.',
       objective: 'Pick up Kira’s drop, then return to the pier',
-      beacon: { x: -20, z: -20 }, reward: 900,
+      beacon: { x: -20, z: -20 }, reward: 5000,
     },
     {
       title: 'M5 — TAIL THE COURIER',
       brief: 'A courier car is running the coast road. Get on its bumper and stay close for three seconds — do not ram it, just hold it.',
       objective: 'Tail the courier car — stay within 8 m for 3 s',
-      beacon: { x: 100, z: -80 }, reward: 1200,
+      beacon: { x: 100, z: -80 }, reward: 6800,
     },
     {
       title: 'M6 — EYES ON THE MARINA',
       brief: 'Park at the marina overlook and watch the gate for ten seconds. Nobody can know you are there.',
       objective: 'Watch the marina gate from the beacon for 10 s',
-      beacon: { x: 150, z: -60 }, reward: 700,
+      beacon: { x: 150, z: -60 }, reward: 3800,
     },
     {
       title: 'M7 — THREE GATES',
       brief: 'Three checkpoints, one route, no stopping. The city will try to stop you. Do not let it.',
       objective: 'Escape through 3 checkpoints',
-      beacon: { x: -120, z: -120 }, reward: 1500,
+      beacon: { x: -120, z: -120 }, reward: 8400,
     },
     {
       title: 'M8 — THE LAST TIDE',
       brief: 'Final run, Mateo. Reach the marina, then shake a three-star tail and vanish. After tonight, Sunset Bay is ours.',
       objective: 'Reach the marina, then lose a 3-star tail',
-      beacon: { x: 160, z: -40 }, reward: 3000,
+      beacon: { x: 160, z: -40 }, reward: 15000,
     },
   ];
+
+  // How many stages each mission has (HUD "STAGE x/y") and which stage the
+  // player is on right now — all derived from live mission state.
+  PH.MISSION_STAGES = [1, 2, 1, 2, 1, 1, 3, 2];
+  PH.missionStageInfo = function () {
+    var i = PH.state.missionIndex;
+    if (i >= PH.MISSIONS.length) return { cur: 8, total: 8 };
+    var total = PH.MISSION_STAGES[i] || 1;
+    var cur = PH.state.missionStage + 1;
+    if (i === 1) cur = PH.state.heatArmed ? 2 : 1;      // heat on = stage 2
+    if (i === 6) cur = sim.checkpointIndex + 1;          // checkpoint 1..3
+    return { cur: PH.clamp(cur, 1, total), total: total };
+  };
+
+  // Traffic car names — the speed panel shows the car Mateo is driving.
+  PH.TRAFFIC_CAR_NAMES = ['COASTAL GT', 'BAY RUNNER', 'PALM CRUISER', 'SURF SEDAN', 'CORAL COUPE', 'DUNE BUGGY', 'MARINA VAN', 'TIDE TAXI'];
 
   PH.currentMission = function () {
     return PH.MISSIONS[PH.state.missionIndex] || null;
@@ -91,6 +109,8 @@
     var m = PH.currentMission();
     if (!m) return;
     PH.state.money += m.reward;
+    PH.state.respect += 40;   // street standing grows with every finished job
+    PH.state.armour = PH.clamp(PH.state.armour + 15, 0, 100); // Kira restocks the vest
     PH.pushFeed('Mission complete: ' + m.title + ' +' + PH.fmtMoney(m.reward));
     PH.sayKira('Clean work, Mateo. ' + PH.fmtMoney(m.reward) + ' in your pocket. ' +
       (PH.state.missionIndex + 1 < PH.MISSIONS.length ? 'Next job is on the board.' : 'That is the whole chain. Sunset Bay is yours.'), 7);
@@ -141,12 +161,22 @@
 
   sim.hideBeacon = function () { if (sim.beacon) sim.beacon.visible = false; };
 
+  // Police unit names: callsign + number, like a real dispatch board.
+  // The HUD lists each live unit with its distance and tactic badge.
+  sim.unitSeq = 0;
+  sim.nextUnitName = function () {
+    sim.unitSeq++;
+    var words = ['TIDE', 'CORAL', 'PIER', 'GULL', 'REEF', 'SURF', 'PALM', 'DUNE', 'BAY', 'SALT'];
+    var w = words[(sim.unitSeq - 1) % words.length];
+    return w + '-' + (10 + sim.unitSeq); // short callsign: PALM-17, TIDE-11
+  };
+
   sim.spawnTrafficCar = function (x, z, heading, color) {
     var g = W.makeCar(color || PH.pick(W.PALETTE.carColors), { sport: Math.random() < 0.25 });
     g.position.set(x, 0, z);
     g.rotation.y = heading;
     sim.scene.add(g);
-    var car = { g: g, x: x, z: z, heading: heading, speed: PH.rand(7, 11), color: color, isPolice: false, stolen: false, targetStreet: null, dir: 1 };
+    var car = { g: g, x: x, z: z, heading: heading, speed: PH.rand(7, 11), color: color, isPolice: false, stolen: false, targetStreet: null, dir: 1, name: PH.pick(PH.TRAFFIC_CAR_NAMES) };
     sim.traffic.push(car);
     return car;
   };
@@ -168,7 +198,7 @@
     g.add(cap);
     g.position.set(x, 0, z);
     sim.scene.add(g);
-    var cop = { g: g, x: x, z: z, heading: 0, speed: 0, kind: 'foot', dead: false, lockT: 0, car: null };
+    var cop = { g: g, x: x, z: z, heading: 0, speed: 0, kind: 'foot', dead: false, lockT: 0, car: null, name: sim.nextUnitName(), tactic: 'PATROL', prevD: Infinity };
     sim.police.push(cop);
     return cop;
   };
@@ -177,7 +207,7 @@
     var g = W.makePoliceCar();
     g.position.set(x, 0, z);
     sim.scene.add(g);
-    var cop = { g: g, x: x, z: z, heading: 0, speed: 0, kind: 'car', dead: false, lockT: 0, car: g };
+    var cop = { g: g, x: x, z: z, heading: 0, speed: 0, kind: 'car', dead: false, lockT: 0, car: g, name: sim.nextUnitName(), tactic: 'PATROL', prevD: Infinity, roadblock: false };
     sim.police.push(cop);
     return cop;
   };
@@ -204,12 +234,24 @@
 
   sim.spawnHeli = function () {
     if (sim.heli) return sim.heli;
+    // Spawn right at its station — ahead of the player, in the camera's
+    // view — instead of 40 m off to the side where it reads as absent.
+    var hx = sim.player.x + Math.sin(sim.player.heading) * 24;
+    var hz = sim.player.z + Math.cos(sim.player.heading) * 24;
     var g = W.makeHelicopter();
-    g.position.set(sim.player.x + 40, 32, sim.player.z - 40);
+    g.position.set(hx, 13, hz);
     sim.scene.add(g);
-    var h = { g: g, x: g.position.x, z: g.position.z, heading: 0, speed: 0, kind: 'heli', dead: false, lockT: 0, car: null };
+    var h = { g: g, x: g.position.x, z: g.position.z, heading: 0, speed: 0, kind: 'heli', dead: false, lockT: 0, car: null, name: 'AIR-1', tactic: 'SPOTLIGHT', prevD: Infinity };
     sim.police.push(h);
     sim.heli = h;
+    // Spotlight pool on the ground under the helicopter — the cone of light
+    // the player sees sweeping the street while the air unit is on station.
+    var pool = new THREE.Mesh(new THREE.CircleGeometry(9, 24),
+      new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.3, depthWrite: false }));
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(sim.player.x, 0.06, sim.player.z);
+    sim.scene.add(pool);
+    h.spotPool = pool;
     PH.pushFeed('Air unit overhead — helicopter on station');
     return h;
   };
@@ -235,22 +277,23 @@
     arrow.rotation.y = Math.PI / 2;
     scene.add(arrow);
     sim.playerCar = arrow;
-    sim.playerCarData = { g: arrow, x: 128, z: 40, heading: Math.PI / 2, speed: 0, color: 0xe85a17, isPolice: false, stolen: false, isArrow: true };
+    sim.playerCarData = { g: arrow, x: 128, z: 40, heading: Math.PI / 2, speed: 0, color: 0xe85a17, isPolice: false, stolen: false, isArrow: true, name: 'SCARLET ARROW' };
     sim.arrowCar = sim.playerCarData;
 
-    // Traffic: 14 cars cruising the grid.
+    // Traffic: 22 cars cruising the grid, so every frame has cars in view.
     var streets = PH.CITY.streets;
-    for (var i = 0; i < 14; i++) {
+    for (var i = 0; i < 22; i++) {
       var horizontal = Math.random() < 0.5;
       var s = PH.pick(streets);
       var t = PH.rand(-120, 120);
       var heading = horizontal ? (Math.random() < 0.5 ? 0 : Math.PI) : (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
       sim.spawnTrafficCar(horizontal ? t : s, horizontal ? s : t, heading);
     }
-    // Pedestrians: 26 on sidewalks and the beach walk.
-    for (var p = 0; p < 26; p++) {
+    // Pedestrians: 40 on sidewalks and the beach walk, varied shirts so the
+    // crowd reads as people, not clones. Ten of them stroll the beach.
+    for (var p = 0; p < 40; p++) {
       var px, pz;
-      if (p < 6) { px = PH.rand(152, 190); pz = PH.rand(-130, 130); }
+      if (p < 10) { px = PH.rand(152, 190); pz = PH.rand(-130, 130); }
       else { px = PH.pick(streets) + PH.pick([-7.5, 7.5]); pz = PH.rand(-130, 130); }
       sim.spawnPed(PH.clamp(px, -140, 195), PH.clamp(pz, -140, 140));
     }
@@ -467,12 +510,27 @@
       camera.position.x = PH.lerp(camera.position.x, tx, 1 - Math.pow(0.001, dt));
       camera.position.y = PH.lerp(camera.position.y, up, 1 - Math.pow(0.001, dt));
       camera.position.z = PH.lerp(camera.position.z, tz, 1 - Math.pow(0.001, dt));
-      camera.lookAt(car.x + Math.sin(car.heading) * 6, 1.4, car.z + Math.cos(car.heading) * 6);
+      camera.lookAt(car.x + Math.sin(car.heading) * 6, 2.2, car.z + Math.cos(car.heading) * 6);
     } else {
       var yaw = st.aiming ? p.heading : p.camYaw;
-      var dist = st.aiming ? 4.2 : 6.5;
-      var cx = p.x - Math.sin(yaw) * dist;
-      var cz = p.z - Math.cos(yaw) * dist;
+      // shotCamDist / shotCamSide are debug-only overrides (set by shot
+      // staging; gameplay uses 4.2/6.5 and 0). Dist pulls the camera back;
+      // side shifts it toward the subject's right (local +x) while the
+      // lookAt stays put. Measured on the v6.0 shots: side +4 at dist 8
+      // puts the subject ~7 degrees RIGHT of centre in three-quarter view
+      // (the camera sees the subject's right flank — an aiming Mateo shows
+      // the pistol in his right hand instead of hiding it behind his
+      // back). Negative side mirrors it. The subject and the background
+      // move together under this offset, so it frames a subject, it does
+      // not separate a subject from what is behind him. WARNING: a large
+      // side offset moves the camera sideways off the road — on Ocean
+      // Drive a side of +5 at dist 7.5 puts the lens inside the (108, 28)
+      // deco block's footprint and a flat wall fills the frame. Keep the
+      // staged camera east of x = 118 there, or north of z = 38.
+      var dist = sim.shotCamDist || (st.aiming ? 4.2 : 6.5);
+      var side = sim.shotCamSide || 0;
+      var cx = p.x - Math.sin(yaw) * dist + Math.cos(yaw) * side;
+      var cz = p.z - Math.cos(yaw) * dist - Math.sin(yaw) * side;
       var cy = 2.6 - p.camPitch * 4;
       camera.position.x = PH.lerp(camera.position.x, cx, 1 - Math.pow(0.0005, dt));
       camera.position.y = PH.lerp(camera.position.y, cy, 1 - Math.pow(0.0005, dt));
@@ -573,7 +631,10 @@
     }
     if (st.wanted >= 3 && !sim.heli) sim.spawnHeli();
     if (st.wanted < 3 && sim.heli) {
-      sim.heli.g.visible = false; sim.heli.dead = true; sim.heli = null;
+      if (sim.heli.spotPool) { sim.scene.remove(sim.heli.spotPool); sim.heli.spotPool = null; }
+      sim.heli.g.visible = false; sim.heli.dead = true;
+      sim.police = sim.police.filter(function (c) { return c !== sim.heli; });
+      sim.heli = null;
     }
     // Remove far, dead or idle patrol when wanted is 0 (keep 2 patrol cars).
     sim.police = sim.police.filter(function (cop) {
@@ -584,6 +645,18 @@
     sim.police.forEach(function (cop) {
       if (cop.dead) return;
       var d = PH.dist2d(p.x, p.z, cop.x, cop.z);
+      // Live tactic for the dispatch board — from real distance and role:
+      // close car cops ram, mid-range chase, far ones respond; the heli
+      // spotlights until it locks on and fires; roadblocks hold their line.
+      if (cop.kind === 'foot') cop.tactic = st.wanted >= 1 ? 'PURSUIT' : 'PATROL';
+      else if (cop.kind === 'car') {
+        cop.tactic = cop.roadblock ? 'ROADBLOCK'
+          : st.wanted >= 2 ? (d < 12 ? 'RAMMING' : (d < 60 ? 'PURSUIT' : 'RESPONDING'))
+          : 'PATROL';
+      } else if (cop.kind === 'heli') {
+        cop.tactic = (cop.lockT > 4 && st.wanted >= 3) ? 'FIRING' : 'SPOTLIGHT';
+      }
+      cop.prevD = d;
       if (cop.kind === 'foot') {
         if (st.wanted >= 1) {
           var target = Math.atan2(p.x - cop.x, p.z - cop.z);
@@ -592,7 +665,7 @@
           cop.x += Math.sin(cop.heading) * cop.speed * dt;
           cop.z += Math.cos(cop.heading) * cop.speed * dt;
           if (d < 1.6) { // busted
-            st.health -= 30 * dt;
+            PH.damagePlayer(30 * dt); // armour soaks first, then health
             PH.pushFeed('Officer grabbing Mateo!');
             if (st.health <= 0) PH.onBusted && PH.onBusted();
           }
@@ -611,10 +684,29 @@
         var on = Math.sin(cop.g.userData.lightPhase) > 0;
         if (cop.g.userData.lightRed) cop.g.userData.lightRed.material.emissiveIntensity = on ? 2.5 : 0.2;
         if (cop.g.userData.lightBlue) cop.g.userData.lightBlue.material.emissiveIntensity = on ? 0.2 : 2.5;
+        if (cop.roadblock) {
+          // A roadblock holds its line across the road: lights flashing,
+          // car parked. It does not chase — that is the point of it.
+          cop.g.position.set(cop.x, 0, cop.z);
+          cop.g.rotation.y = cop.heading;
+          return;
+        }
         if (st.wanted >= 2) {
-          var target2 = Math.atan2(p.x - cop.x, p.z - cop.z);
+          // Slot pursuit: a cop with a slot holds a formation point beside
+          // or ahead of the player (flanking) instead of piling onto the
+          // player's bumper; slot-less cops chase the player directly.
+          var tx = p.x, tz = p.z, tSpeed = d > 12 ? 24 : 12;
+          if (cop.slot) {
+            var fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+            var rx = -Math.cos(p.heading), rz = Math.sin(p.heading);
+            tx = p.x + fx * cop.slot.a + rx * cop.slot.s;
+            tz = p.z + fz * cop.slot.a + rz * cop.slot.s;
+            var slotD = PH.dist2d(cop.x, cop.z, tx, tz);
+            tSpeed = slotD > 6 ? 24 : (st.inCar && sim.playerCarData ? Math.abs(sim.playerCarData.speed) : 12);
+          }
+          var target2 = Math.atan2(tx - cop.x, tz - cop.z);
           cop.heading = PH.angleLerp(cop.heading, target2, 1 - Math.pow(0.005, dt));
-          cop.speed = PH.lerp(cop.speed, d > 12 ? 24 : 12, dt);
+          cop.speed = PH.lerp(cop.speed, tSpeed, dt);
           cop.x = PH.clamp(cop.x + Math.sin(cop.heading) * cop.speed * dt, -145, 205);
           cop.z = PH.clamp(cop.z + Math.cos(cop.heading) * cop.speed * dt, -145, 145);
           if (d < 3 && st.inCar) {
@@ -632,6 +724,8 @@
             rb.heading = p.heading + Math.PI / 2;
             rb.g.rotation.y = rb.heading;
             rb.speed = 0;
+            rb.roadblock = true;   // holds the line; dispatch shows ROADBLOCK
+            rb.tactic = 'ROADBLOCK';
             PH.pushFeed('Roadblock ahead — find another street');
           }
         } else {
@@ -646,14 +740,23 @@
         (cop.g.userData.wheels || []).forEach(function (w) { w.rotation.z += cop.speed * dt * 2; });
       } else if (cop.kind === 'heli') {
         cop.lockT += dt;
-        var hx = p.x + 18, hz = p.z - 18;
-        cop.x = PH.lerp(cop.x, hx, dt * 0.5);
-        cop.z = PH.lerp(cop.z, hz, dt * 0.5);
-        cop.g.position.set(cop.x, 32 + Math.sin(sim.elapsed * 1.4) * 2, cop.z);
+        // Hover AHEAD of the player (in the camera's view, above the road)
+        // instead of behind, so the helicopter and its spotlight read in frame.
+        // Altitude 13 m and 24 m ahead keeps it inside the chase camera's
+        // top edge (the camera pitches down ~10 degrees).
+        var hx = p.x + Math.sin(p.heading) * 24, hz = p.z + Math.cos(p.heading) * 24;
+        cop.x = PH.lerp(cop.x, hx, dt * 2.5);
+        cop.z = PH.lerp(cop.z, hz, dt * 2.5);
+        cop.g.position.set(cop.x, 13 + Math.sin(sim.elapsed * 1.4) * 1, cop.z);
         cop.g.rotation.y = Math.atan2(p.x - cop.x, p.z - cop.z);
         if (cop.g.userData.rotor) cop.g.userData.rotor.rotation.y += dt * 30;
+        // Spotlight cone tilts toward the player (heli-local +z faces the
+        // player; 24 m ahead and 13 m up is ~1.0 rad off vertical) and the
+        // ground pool sits on the player.
+        if (cop.g.userData.spotCone) cop.g.userData.spotCone.rotation.x = -1.0;
+        if (cop.spotPool) cop.spotPool.position.set(p.x, 0.06, p.z);
         if (cop.lockT > 4 && st.wanted >= 3) {
-          st.health -= 4 * dt;
+          PH.damagePlayer(4 * dt); // armour soaks first, then health
           PH.pushFeed('Helicopter firing!');
           if (st.health <= 0) PH.onBusted && PH.onBusted();
         }

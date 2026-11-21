@@ -4,106 +4,123 @@
 [![rank](https://make.fun/badge/gta6-01/aramexbit/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/aramexbit/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-An original open-world crime game for the make.fun `gta6-01` bounty. You are
-**Mateo Vega**, 28, a getaway driver in a burnt-orange bomber jacket, on the
-run from the **Bay City PD** through the sun-soaked coastal city of **Sunset
-Bay**. Steal the orange wedge coupe — the **Scarlet Arrow**, plate
-`SUN-8821` — lose the heat, and make the pier. Your handler **Kira** talks
-you through the job on the radio while **Nightwave 98.3** plays.
+An original open-world driving + on-foot game set in **Sunset Bay**, a
+coastal city at golden hour and in bright daylight. You are **Mateo Vega**,
+28, getaway driver in a burnt-orange bomber jacket. Your handler **Kira**
+is on the radio (Nightwave 98.3). The Bay City PD wants your car — the
+matte-orange wedge coupe **Scarlet Arrow** (plate `SUN-8821`) — so lose the
+heat, reach the pier, and hold the line.
 
-Everything in the game is original: the city, the story, the characters, the
-car, the map, the art and the music. It is not GTA and uses no GTA assets.
-Entered in the [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01).
+Everything is original: no Rockstar assets, no GTA mods, no downloads.
+The 3D world, the people, the cars and the music are all built in code;
+the only model file is a CC0 animated human (`game/vendor/mateo.glb`),
+loaded by a minimal GLB reader written for this game.
 
 ## Play
 
-Open `game/index.html` in a desktop browser (or run `node serve.ts` and open
-http://localhost:8080). Click **START ENGINE** to play.
-
 | Key | Action |
 | --- | --- |
-| W A S D / arrows | Drive the Scarlet Arrow / walk as Mateo |
-| F | Get in / out of the car |
+| W A S D / Arrows | Drive (accelerate, steer) |
 | Space | Brake |
-| Left mouse | Shoot (on foot) |
-| Shift | Run (on foot) |
-| P | Save progress (localStorage) |
-| M | Mute / unmute the radio |
+| Shift | Run on foot |
+| F | Enter / exit car |
+| Click | Shoot on foot |
+| P | Save (free play only) |
+| M | Mute |
+
+Save is stored in `localStorage` under `pierheat-save-v69` and loaded
+automatically on the next visit.
 
 ## The world
 
-- **Sunset Bay**: a beachfront avenue (Sunset Blvd) with a living beach —
-  umbrellas, towels, surfers, swimmers, a volleyball court, joggers, kids
-  building sandcastles, anglers on the wooden pier — and a gridded downtown
-  with 60+ original shopfronts (ARCADE, TACOS, RECORDS, DANCE HALL, HOTEL
-  OCEAN, CINEMA, BURGERS…) with real 3D windows, doors and glass shopfronts
-  that reflect the sky.
-- **Day mode**: saturated blue sky, drifting 3D clouds and moving cloud
-  shadows. **Shot 1** runs at golden hour: low warm sun, orange haze.
-- **Traffic**: colourful procedural cars with dark glass, door seams,
-  handles, mirrors, grilles, plates and wheels; police cruisers with
-  flashing light bars and a police helicopter with a searchlight.
-- **Crowds**: 180+ pedestrians on the sidewalks, the beach and the pier.
-  When a police chase starts (wanted level 1 or higher), nearby pedestrians
-  **run away from the chase** — beach-goers sprint for the water, shoppers
-  clear the sidewalks — with a proper running gait, not a stroll.
-- **Mateo Vega** is a real skinned GLB character model (`game/vendor/
-  mateo.glb`, loaded by a small hand-written GLB reader in `game/core.js`),
-  with his own idle / walk / run / aim / fire animations. Kira is the same
-  model re-outfitted in teal.
+- **Sunset Blvd** — the main north–south avenue, cross streets every
+  40 units, sidewalks, zebra crossings, street lamps, hydrants, benches and
+  traffic lights.
+- **Downtown** — a grid of pastel buildings with real 3D windows (about
+  22% lit warm), glass storefronts with chrome doors, striped awnings and
+  64 original shop signs, plus three landmark towers.
+- **The beach** — speckled sand, a living shore with foam lines, 12
+  umbrellas, towels, surfboards, a volleyball court, sandcastles,
+  swimmers, surfers, joggers, kids digging, fishers and selfie-takers.
+- **The pier** — a wooden pier at Z 40 with posts, rails, lamps, benches
+  and the red-coned `PIER BAIT` shack.
+- **The sky** — gradient sky dome, a glowing sun disc, drifting 3D clouds
+  (10 at sunset, 16 by day, plus 6 fixed hero clouds) with soft shadows
+  on the ground by day.
 
-## Sound — all synthesised, all original
+## Systems
 
-Every sound is generated live with the WebAudio API — no samples, no audio
-files, nothing downloaded:
+- **Driving + on foot** — 16 traffic cars on two-way routes, a 130-strong
+  city crowd plus 12 pier walkers and ~38 beach NPCs with 9 activities.
+- **Wanted** — 1–5 stars (see `game/WANTED.md`): patrol cruisers, chase,
+  roadblocks in the dispatch board, a police helicopter with a long
+  searchlight beam, and crowds that flee when the heat is on.
+- **Missions + story** — 3 stages (Meet Kira → Lose the Heat →
+  Hold the Line) with objectives, a progress bar, a timer and a pulsing
+  diamond on the round minimap.
+- **Combat** — pistol / SMG / rifle slots, muzzle flash with a warm point
+  light, and aiming police officers.
+- **HUD** — objective panel, wanted stars + cash, dispatch board, weapon
+  slots, health/armor bars, round minimap with roads, sea, sand, pier,
+  objective diamond, police dots and a rotating player arrow, speedometer
+  and radio readout.
+- **Sound** — fully synthesised WebAudio: Nightwave 98.3 synthwave radio
+  (96 BPM, Am–F–C–G), waves, siren, engine and gunshots. Audio starts only
+  after a click or button press.
 
-- **Nightwave 98.3**: a gentle 96 BPM synthwave loop (detuned-saw pads,
-  triangle bass, sine kick, noise hats and snare) that starts after your
-  first click or key press (browser autoplay policy). Mute it with the HUD
-  button or the M key.
-- **Effects**: gunshots (filtered noise burst + falling square wave), the
-  two-tone police siren, the engine hum (sawtooth through a low-pass
-  filter, pitch following speed), and a slow surf swell on the beach
-  (filtered noise, gently rising and falling). In headless / screenshot mode the game
-  stays silent and reports zero console errors.
+## Screenshots
 
-## Screenshots (v6.8)
+Four staged shots, seeded for determinism (`?shot=N&seed=1`):
 
-All four are real renders of the game itself, 1280×720, taken with
-`?shot=N&seed=1`:
-
-1. `1-chase.jpg` — **cover**: golden-hour car chase on Sunset Blvd. Three
-   wanted stars, minimap with police markers and the pier objective,
-   traffic, beach-goers fleeing the chase, the police helicopter overhead
-   at the top-right, and the Scarlet Arrow big in frame.
-2. `2-onfoot.jpg` — Mateo Vega on foot on the shopfront sidewalk,
-   third-person, with pedestrians, traffic and the HUD (health / armor /
-   ammo / minimap).
-3. `3-mission.jpg` — the pier job: Mateo meets Kira on the pier and the two
-   face each other, in-engine dialogue, the police helicopter big overhead,
-   the beach alive behind them.
-4. `4-combat.jpg` — open-street shootout, five wanted stars, Mateo firing
-   from beside the Scarlet Arrow with the muzzle flash bright, police cars
-   and officers ahead, the helicopter overhead, minimap showing the police.
+1. `1-chase.jpg` — sunset chase, 3 stars, heli overhead.
+2. `2-onfoot.jpg` — daylight, Mateo facing the camera.
+3. `3-mission.jpg` — daylight, Mateo meets Kira on the pier.
+4. `4-combat.jpg` — sunset shootout, 5 stars, muzzle flash held.
 
 ## Build
 
-`main.ts` hands the entry in: it copies `game/` and `screenshots/` to
-`/output` (or `$MAKEFUN_OUTPUT_DIR`) and writes `/output/dossier.json`
-with the vendored make.fun library. Check it with:
-
 ```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+node serve.ts            # play at http://localhost:8080/
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts   # build dossier.json
 ```
+
+## Known deviations from the brief (v7.2 rev 2)
+
+- **Shot 2 heli height:** the brief stages the heli at Y 10, but at Y 10
+  its rotor is clipped by the top frame edge. It is staged at Y 7.5 so the
+  heli is whole in frame, which the brief also requires.
+- **Clouds:** rendered with an unlit material (always white) instead of a
+  lit standard material, which rendered pitch black on its shaded side.
+- **Side windows:** buildings also carry windows on their flanks, so a
+  flank seen from the street does not read as a blank wall.
+- **Mateo scale (rev 3):** the ~69x armature scale is kept, not baked
+  out — baking it broke the model twice (animation tracks overwrite bone
+  translations; the mesh node has a zero translation). Height is measured
+  from the skeleton, and the bind matrix is captured after world matrices
+  are computed. See `game/MATEO-MODEL.md`.
+- **Shot 2 / 4 foreground (rev 3):** foreground walkers and props were
+  sitting centre-frame and blocking Mateo; they are now on the frame
+  edges.
+- **Crowd near the lens (rev 5):** in staged shots, city walkers within
+  14 units of the camera are pushed 40 units along their lane, so a
+  passer-by cannot walk in front of the lens before the screenshot.
+  Foreground walkers in shot 2 sit 9–13 units out instead of 3–6.
 
 ## Files
 
-- `game/index.html` — page + HUD (objective, wanted stars, health/armor,
-  minimap, ammo, speed, radio, dialogue)
-- `game/core.js` — seeded random, canvas textures, GLB loader, HUD, minimap
-- `game/world.js` — city, beach, pier, sky, clouds, shopfronts
-- `game/sim.js` — cars, crowds, beach activities, police, helicopter, Mateo
-- `game/audio.js` — Nightwave 98.3 radio + synthesised sound effects
-- `game/main.js` — boot, shot staging, game loop, input, save/load
-- `game/vendor/three.min.js` — vendored Three.js (minified loader)
-- `game/vendor/mateo.glb` — the Mateo character model
+- `game/index.html` — page + HUD markup and styles, loads the scripts.
+- `game/core.js` — seeded RNG, canvas textures, minimal GLB reader,
+  retinting, HUD setters, round minimap painter.
+- `game/world.js` — Sunset Bay: sky, light, ground, sea, roads,
+  buildings, street props, palms, beach, pier, clouds.
+- `game/sim.js` — procedural people + poses, hero/traffic/police cars,
+  traffic, crowds, police, helicopter, Mateo wrapper, muzzle flash.
+- `game/audio.js` — WebAudio synth engine (radio, waves, siren, engine,
+  gunshots).
+- `game/main.js` — boot, input, save/load, 4 staged shots, free-play loop.
+- `game/MATEO-MODEL.md` — the Mateo model, loader and retint notes.
+- `game/WANTED.md` — the wanted system.
+- `game/vendor/three.min.js` — Three.js global build (untouched).
+- `game/vendor/mateo.glb` — CC0 animated human model (untouched).
+- `main.ts` — dossier builder. `serve.ts` — local static server.
+- `shots.json` — the 4 screenshot definitions.

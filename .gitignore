@@ -18,3 +18,5 @@ out/
 # v7.0 rev 2 — flash toned down, helis reframed, speedometer KM/H fixed
 # v7.0 restage — dense four-corner HUD, deeper matte hero paint, longer heli beam, sun disc in both modes
 # v7.0 restage — foreground props moved to the frame edges, clouds lowered and enlarged
+# v7.2 — build output stays out of the repo
+# v7.2 rev 2 — capture scripts live in /tmp, never committed

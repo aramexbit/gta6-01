@@ -1,466 +1,474 @@
-// PIER HEAT — Sunset Bay v7.1
-// core.js — shared foundation: seeded random, canvas textures, the small
-// hand-written GLB loader for the Mateo character model, HUD helpers and
-// the 2D minimap painter. Everything here is original code for this entry.
+// PIER HEAT — Sunset Bay v7.2
+// core.js — shared foundation: seeded RNG, canvas textures, minimal GLB
+// reader, model retinting, HUD setters and the 2D round minimap painter.
+// Plain script (no modules). Everything lives on window.PH.
 (function () {
   'use strict';
   var PH = window.PH = window.PH || {};
-  PH.VERSION = '7.1';
-
-  // ---------- tiny DOM helper ----------
-  PH.el = function (id) { return document.getElementById(id); };
+  PH.VERSION = '7.2';
+  PH.GAME = 'PIER HEAT — Sunset Bay';
 
   // ---------- seeded random (mulberry32) ----------
-  PH.setSeed = function (seed) {
-    var s = (seed >>> 0) || 1;
-    PH.rng = function () {
-      s |= 0; s = (s + 0x6D2B79F5) | 0;
-      var t = Math.imul(s ^ (s >>> 15), 1 | s);
+  PH.mulberry32 = function (seed) {
+    var a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   };
-  PH.setSeed(1);
-  PH.rand = function (a, b) { return a + PH.rng() * (b - a); };
+  PH.R = PH.mulberry32(1);
+  PH.seed = function (s) { PH.R = PH.mulberry32(s >>> 0 || 1); };
+  PH.rand = function (a, b) { return a + PH.R() * (b - a); };
   PH.randInt = function (a, b) { return Math.floor(PH.rand(a, b + 1)); };
-  PH.pick = function (arr) { return arr[Math.floor(PH.rng() * arr.length)]; };
-  PH.chance = function (p) { return PH.rng() < p; };
+  PH.pick = function (arr) { return arr[Math.floor(PH.R() * arr.length)]; };
+  PH.clamp = function (v, a, b) { return v < a ? a : (v > b ? b : v); };
+  PH.lerp = function (a, b, t) { return a + (b - a) * t; };
 
   // ---------- canvas textures ----------
-  PH.makeCanvasTexture = function (w, h, draw) {
+  PH.canvasTex = function (w, h, draw) {
     var c = document.createElement('canvas');
     c.width = w; c.height = h;
     draw(c.getContext('2d'), w, h);
-    var tex = new THREE.CanvasTexture(c);
-    if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
-    return tex;
+    var t = new THREE.CanvasTexture(c);
+    t.anisotropy = 4;
+    return t;
   };
 
-  // Shop-front sign: bold original store name on a coloured board.
-  PH.signTexture = function (name, bg, fg) {
-    return PH.makeCanvasTexture(512, 128, function (g, w, h) {
+  // Shop sign: bold text on a coloured board with a frame.
+  PH.signTexture = function (text, bg, fg) {
+    return PH.canvasTex(512, 128, function (g, w, h) {
       g.fillStyle = bg; g.fillRect(0, 0, w, h);
-      g.fillStyle = 'rgba(255,255,255,0.16)';
-      g.fillRect(0, 0, w, 10); g.fillRect(0, h - 10, w, 10);
-      g.strokeStyle = fg; g.lineWidth = 6; g.strokeRect(6, 6, w - 12, h - 12);
-      g.fillStyle = fg;
-      g.font = '900 62px Arial Black, Arial, sans-serif';
+      g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 10;
+      g.strokeRect(8, 8, w - 16, h - 16);
+      g.fillStyle = fg || '#ffffff';
+      g.font = '900 62px Arial, sans-serif';
       g.textAlign = 'center'; g.textBaseline = 'middle';
-      var label = name;
-      var size = 62;
-      while (g.measureText(label).width > w - 40 && size > 26) {
-        size -= 4; g.font = '900 ' + size + 'px Arial Black, Arial, sans-serif';
-      }
+      g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 6; g.shadowOffsetY = 3;
+      var label = text.length > 14 ? text : text;
+      var size = text.length > 12 ? 44 : (text.length > 8 ? 54 : 62);
+      g.font = '900 ' + size + 'px Arial, sans-serif';
       g.fillText(label, w / 2, h / 2 + 2);
     });
   };
 
-  // Licence plate texture.
+  // Licence plate.
   PH.plateTexture = function (text) {
-    return PH.makeCanvasTexture(256, 64, function (g, w, h) {
-      g.fillStyle = '#f4f6f2'; g.fillRect(0, 0, w, h);
-      g.strokeStyle = '#1d4f9c'; g.lineWidth = 6; g.strokeRect(3, 3, w - 6, h - 6);
-      g.fillStyle = '#1d4f9c'; g.font = '700 13px Arial, sans-serif';
-      g.textAlign = 'center'; g.fillText('SUNSET BAY', w / 2, 16);
-      g.fillStyle = '#14181d'; g.font = '900 34px Arial Black, Arial, sans-serif';
-      g.fillText(text, w / 2, 48);
+    return PH.canvasTex(256, 64, function (g, w, h) {
+      g.fillStyle = '#f4f1e4'; g.fillRect(0, 0, w, h);
+      g.strokeStyle = '#1a2a44'; g.lineWidth = 6; g.strokeRect(3, 3, w - 6, h - 6);
+      g.fillStyle = '#1a2a44';
+      g.font = '900 34px Arial, sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, w / 2, h / 2 + 1);
     });
   };
 
-  // Soft radial glow / muzzle-flash star texture.
-  PH.flashTexture = function () {
-    return PH.makeCanvasTexture(128, 128, function (g, w, h) {
-      var grad = g.createRadialGradient(64, 64, 2, 64, 64, 62);
-      grad.addColorStop(0, 'rgba(255,255,230,1)');
-      grad.addColorStop(0.25, 'rgba(255,200,60,0.95)');
-      grad.addColorStop(0.6, 'rgba(255,120,20,0.55)');
-      grad.addColorStop(1, 'rgba(255,80,0,0)');
-      g.fillStyle = grad; g.fillRect(0, 0, w, h);
-      g.fillStyle = 'rgba(255,255,220,0.95)';
+  // Soft radial glow (muzzle flash star / light halo).
+  PH.glowTexture = function () {
+    return PH.canvasTex(128, 128, function (g, w, h) {
+      var r = g.createRadialGradient(64, 64, 2, 64, 64, 62);
+      r.addColorStop(0, 'rgba(255,255,240,1)');
+      r.addColorStop(0.18, 'rgba(255,210,100,0.95)');
+      r.addColorStop(0.45, 'rgba(255,150,50,0.35)');
+      r.addColorStop(1, 'rgba(255,140,0,0)');
+      g.fillStyle = r; g.fillRect(0, 0, w, h);
+      // short star spikes (a muzzle flash, not a sun)
+      g.fillStyle = 'rgba(255,240,180,0.95)';
       g.beginPath();
-      g.moveTo(64, 4); g.lineTo(72, 56); g.lineTo(124, 64); g.lineTo(72, 72);
-      g.lineTo(64, 124); g.lineTo(56, 72); g.lineTo(4, 64); g.lineTo(56, 56);
+      g.moveTo(64, 34); g.lineTo(68, 60); g.lineTo(94, 64); g.lineTo(68, 68);
+      g.lineTo(64, 94); g.lineTo(60, 68); g.lineTo(34, 64); g.lineTo(60, 60);
       g.closePath(); g.fill();
     });
   };
 
-  // ---------- minimal GLB loader (glTF 2.0, no textures) ----------
-  // Reads the binary container, builds BufferGeometry per primitive, wires
-  // the skin into a THREE.Skeleton and rebuilds the animation clips so the
-  // model's own walk / run / idle / aim / fire takes drive the bones.
-  PH.loadMateo = function (url) {
-    return fetch(url).then(function (res) {
-      if (!res.ok) throw new Error('mateo fetch HTTP ' + res.status);
+  // Sun disc with halo.
+  PH.sunTexture = function () {
+    return PH.canvasTex(256, 256, function (g, w, h) {
+      var r = g.createRadialGradient(128, 128, 4, 128, 128, 126);
+      r.addColorStop(0, 'rgba(255,250,220,1)');
+      r.addColorStop(0.28, 'rgba(255,214,120,0.95)');
+      r.addColorStop(0.55, 'rgba(255,150,60,0.45)');
+      r.addColorStop(1, 'rgba(255,120,40,0)');
+      g.fillStyle = r; g.fillRect(0, 0, w, h);
+    });
+  };
+
+  // Speckled sand.
+  PH.sandTexture = function () {
+    return PH.canvasTex(256, 256, function (g, w, h) {
+      g.fillStyle = '#e3c98f'; g.fillRect(0, 0, w, h);
+      for (var i = 0; i < 900; i++) {
+        var s = PH.R();
+        g.fillStyle = s < 0.5 ? 'rgba(190,150,90,0.5)' : 'rgba(255,235,190,0.5)';
+        g.fillRect(PH.R() * w, PH.R() * h, 2 + PH.R() * 3, 2 + PH.R() * 2);
+      }
+      g.fillStyle = 'rgba(255,255,255,0.25)';
+      for (var j = 0; j < 24; j++) g.fillRect(PH.R() * w, PH.R() * h, 20 + PH.R() * 40, 2);
+    });
+  };
+
+  // ---------- minimal GLB reader ----------
+  // Reads a binary glTF container (JSON chunk + BIN chunk), builds
+  // geometries from accessors, materials from base-color factors, the
+  // node hierarchy (TRS or matrix), skins with skeletons + inverse bind
+  // matrices, and rebuilds animation clips from the channels.
+  PH.loadGLB = function (url, onDone, onError) {
+    fetch(url).then(function (res) {
+      if (!res.ok) throw new Error('GLB fetch failed: ' + res.status);
       return res.arrayBuffer();
     }).then(function (buf) {
       var dv = new DataView(buf);
-      if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('not a GLB file');
+      var magic = dv.getUint32(0, true);
+      if (magic !== 0x46546C67) throw new Error('not a GLB file');
       var jsonLen = dv.getUint32(12, true);
       var json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen)));
-      var off = 20 + jsonLen;
-      var binLen = dv.getUint32(off, true);
-      var bin = new Uint8Array(buf, off + 8, binLen);
+      var binOff = 20 + jsonLen + 8;
+      var bin = new Uint8Array(buf, binOff);
+      var gltf = buildGLTF(json, bin);
+      onDone(gltf);
+    }).catch(function (err) { if (onError) onError(err); });
+  };
 
-      var COMP = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
-      var NCOMP = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
-
-      function accessorData(idx) {
-        var a = json.accessors[idx];
-        var bv = json.bufferViews[a.bufferView];
-        var start = (bv.byteOffset || 0) + (a.byteOffset || 0);
-        var count = NCOMP[a.type] * a.count;
-        var Arr = COMP[a.componentType];
-        var unit = Arr.BYTES_PER_ELEMENT * NCOMP[a.type];
-        if (!bv.byteStride || bv.byteStride === unit) {
-          return new Arr(bin.buffer, bin.byteOffset + start, count);
-        }
-        var out = new Arr(count);
-        for (var i = 0; i < a.count; i++) {
-          var src = new Arr(bin.buffer, bin.byteOffset + start + i * bv.byteStride, NCOMP[a.type]);
-          out.set(src, i * NCOMP[a.type]);
-        }
-        return out;
+  function accessorArray(json, bin, idx) {
+    var acc = json.accessors[idx];
+    var bv = json.bufferViews[acc.bufferView];
+    var compBytes = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }[acc.componentType];
+    var numComp = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }[acc.type];
+    var off = (bv.byteOffset || 0) + (acc.byteOffset || 0);
+    var stride = bv.byteStride || compBytes * numComp;
+    var out = new Float32Array(acc.count * numComp);
+    for (var i = 0; i < acc.count; i++) {
+      for (var c = 0; c < numComp; c++) {
+        var p = off + i * stride + c * compBytes;
+        var v;
+        if (acc.componentType === 5126) v = new DataView(bin.buffer, bin.byteOffset + p, 4).getFloat32(0, true);
+        else if (acc.componentType === 5123) v = new DataView(bin.buffer, bin.byteOffset + p, 2).getUint16(0, true);
+        else if (acc.componentType === 5125) v = new DataView(bin.buffer, bin.byteOffset + p, 4).getUint32(0, true);
+        else if (acc.componentType === 5121) v = bin[p];
+        else if (acc.componentType === 5122) v = new DataView(bin.buffer, bin.byteOffset + p, 2).getInt16(0, true);
+        else v = bin[p];
+        out[i * numComp + c] = v;
       }
+    }
+    return { data: out, count: acc.count, numComp: numComp, type: acc.type };
+  }
 
-      var mats = (json.materials || []).map(function (m) {
-        var pbr = m.pbrMetallicRoughness || {};
-        var c = pbr.baseColorFactor || [1, 1, 1, 1];
-        return new THREE.MeshStandardMaterial({
-          name: m.name || '',
-          color: new THREE.Color(c[0], c[1], c[2]),
-          roughness: (pbr.roughnessFactor != null ? pbr.roughnessFactor : 0.85),
-          metalness: (pbr.metallicFactor != null ? pbr.metallicFactor : 0.0),
-          transparent: c[3] < 1,
-          opacity: c[3]
-        });
+  function buildGLTF(json, bin) {
+    var materials = (json.materials || []).map(function (m) {
+      var pbr = m.pbrMetallicRoughness || {};
+      var col = pbr.baseColorFactor || [1, 1, 1, 1];
+      var mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(col[0], col[1], col[2]),
+        roughness: (pbr.metallicRoughnessTexture ? 0.7 : (pbr.roughnessFactor != null ? pbr.roughnessFactor : 0.8)),
+        metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 0.05
       });
+      mat.name = m.name || '';
+      mat.transparent = col[3] < 1;
+      mat.opacity = col[3];
+      return mat;
+    });
+    if (!materials.length) materials = [new THREE.MeshStandardMaterial({ color: 0xcccccc })];
 
-      var nodeObjs = [];
-      var skinned = [];
-      var ATTR = { POSITION: 'position', NORMAL: 'normal', TEXCOORD_0: 'uv', JOINTS_0: 'skinIndex', WEIGHTS_0: 'skinWeight' };
+    var nodeObjs = [];
+    var skins = [];
+    (json.skins || []).forEach(function (skin) {
+      var ibm = accessorArray(json, bin, skin.inverseBindMatrices).data;
+      skins.push({ joints: skin.joints, ibm: ibm, skeleton: skin.skeleton });
+    });
 
-      function buildNode(i) {
-        var n = json.nodes[i];
-        var o = new THREE.Object3D();
-        o.name = n.name || ('node' + i);
-        if (n.matrix) {
-          new THREE.Matrix4().fromArray(n.matrix).decompose(o.position, o.quaternion, o.scale);
-        } else {
-          if (n.translation) o.position.fromArray(n.translation);
-          if (n.rotation) o.quaternion.fromArray(n.rotation);
-          if (n.scale) o.scale.fromArray(n.scale);
-        }
-        nodeObjs[i] = o;
-        if (n.mesh != null) {
-          var meshDef = json.meshes[n.mesh];
-          meshDef.primitives.forEach(function (prim) {
-            var geo = new THREE.BufferGeometry();
-            Object.keys(prim.attributes).forEach(function (key) {
-              var acc = json.accessors[prim.attributes[key]];
-              var data = accessorData(prim.attributes[key]);
-              geo.setAttribute(ATTR[key] || key.toLowerCase(), new THREE.BufferAttribute(data, NCOMP[acc.type]));
-            });
-            if (prim.indices != null) geo.setIndex(new THREE.BufferAttribute(accessorData(prim.indices), 1));
-            var mat = mats[prim.material || 0];
-            var mesh = (n.skin != null)
-              ? new THREE.SkinnedMesh(geo, mat)
-              : new THREE.Mesh(geo, mat);
-            mesh.name = (meshDef.name || 'mesh') + '_' + (prim.material || 0);
-            mesh.castShadow = true;
-            o.add(mesh);
-            if (n.skin != null) skinned.push({ mesh: mesh, skinIndex: n.skin });
-          });
-        }
-        (n.children || []).forEach(function (c) { o.add(buildNode(c)); });
-        return o;
+    function buildNode(idx) {
+      var nd = json.nodes[idx];
+      var obj;
+      var isJoint = skins.some(function (s) { return s.joints.indexOf(idx) >= 0; });
+      if (isJoint) obj = new THREE.Bone();
+      else obj = new THREE.Object3D();
+      obj.name = nd.name || ('node' + idx);
+      if (nd.matrix) {
+        var m = new THREE.Matrix4().fromArray(nd.matrix);
+        m.decompose(obj.position, obj.quaternion, obj.scale);
+      } else {
+        if (nd.translation) obj.position.fromArray(nd.translation);
+        if (nd.rotation) obj.quaternion.fromArray(nd.rotation);
+        if (nd.scale) obj.scale.fromArray(nd.scale);
       }
-
-      var group = new THREE.Group();
-      group.name = 'MateoRoot';
-      (json.scenes[0].nodes || []).forEach(function (rootIdx) { group.add(buildNode(rootIdx)); });
-
-      // The file's armature root carries a large uniform scale (about
-      // 69x): the bone translations are tiny in its local space while the
-      // mesh vertices are already full-size, so a stock skin bind would
-      // pivot every limb about the mesh origin (arms out like wings).
-      // Bake the root scale into the bone translations and drop it from
-      // the root, so bones and mesh share one space. The file's inverse
-      // bind matrices stay valid because no bone world matrix changes.
-      var rootScale = 1;
-      (json.scenes[0].nodes || []).forEach(function (rootIdx) {
-        var rn = json.nodes[rootIdx];
-        if (rn.scale && rn.scale[0] === rn.scale[1] && rn.scale[1] === rn.scale[2] && rn.scale[0] !== 1) {
-          rootScale = rn.scale[0];
-        }
-      });
-      if (rootScale !== 1) {
-        group.traverse(function (o) {
-          if (o !== group) o.position.multiplyScalar(rootScale);
-        });
-        (json.scenes[0].nodes || []).forEach(function (rootIdx) {
-          nodeObjs[rootIdx].scale.set(1, 1, 1);
-        });
-      }
-      group.updateMatrixWorld(true);
-
-      // Wire skins: bones live in the node tree already, bind them here.
-      skinned.forEach(function (entry) {
-        var skin = json.skins[entry.skinIndex];
-        var bones = skin.joints.map(function (j) { return nodeObjs[j]; });
-        var ibm = accessorData(skin.inverseBindMatrices);
-        var inverses = [];
-        for (var i = 0; i < bones.length; i++) {
-          inverses.push(new THREE.Matrix4().fromArray(ibm, i * 16));
-        }
-        entry.mesh.bind(new THREE.Skeleton(bones, inverses));
-      });
-
-      // Rebuild animation clips from the file's own channels.
-      var clips = {};
-      (json.animations || []).forEach(function (anim, ai) {
-        var tracks = [];
-        anim.channels.forEach(function (ch) {
-          var sampler = anim.samplers[ch.sampler];
-          var nodeName = (json.nodes[ch.target.node] || {}).name;
-          if (!nodeName) return;
-          var times = accessorData(sampler.input);
-          var values = accessorData(sampler.output);
-          // glTF names the paths translation / rotation / scale; three.js
-          // binds them as position / quaternion / scale.
-          var path = ch.target.path === 'rotation' ? 'quaternion'
-            : (ch.target.path === 'translation' ? 'position' : ch.target.path);
-          var Track = (path === 'quaternion') ? THREE.QuaternionKeyframeTrack : THREE.VectorKeyframeTrack;
-          // Copy the keyframe values out of the shared GLB buffer; position
-          // keys also need the baked root scale (see above) to stay in
-          // mesh units.
-          var vals = new Float32Array(values);
-          if (path === 'position' && rootScale !== 1) {
-            for (var vi = 0; vi < vals.length; vi++) vals[vi] *= rootScale;
+      nodeObjs[idx] = obj;
+      if (nd.mesh != null) {
+        var meshDef = json.meshes[nd.mesh];
+        meshDef.primitives.forEach(function (prim) {
+          var geo = new THREE.BufferGeometry();
+          var pos = accessorArray(json, bin, prim.attributes.POSITION);
+          geo.setAttribute('position', new THREE.BufferAttribute(pos.data, 3));
+          if (prim.attributes.NORMAL) {
+            var n = accessorArray(json, bin, prim.attributes.NORMAL);
+            geo.setAttribute('normal', new THREE.BufferAttribute(n.data, 3));
           }
-          tracks.push(new Track(nodeName + '.' + path, times, vals));
+          if (prim.attributes.TEXCOORD_0) {
+            var uv = accessorArray(json, bin, prim.attributes.TEXCOORD_0);
+            geo.setAttribute('uv', new THREE.BufferAttribute(uv.data, 2));
+          }
+          if (prim.attributes.JOINTS_0) {
+            var j = accessorArray(json, bin, prim.attributes.JOINTS_0);
+            // joints may be ubyte/ushort: keep as float attribute via Uint16
+            var jarr = new Uint16Array(j.data.length);
+            for (var i = 0; i < j.data.length; i++) jarr[i] = j.data[i];
+            geo.setAttribute('skinIndex', new THREE.BufferAttribute(jarr, 4));
+          }
+          if (prim.attributes.WEIGHTS_0) {
+            var w = accessorArray(json, bin, prim.attributes.WEIGHTS_0);
+            geo.setAttribute('skinWeight', new THREE.BufferAttribute(w.data, 4));
+          }
+          if (prim.indices != null) {
+            var ia = accessorArray(json, bin, prim.indices);
+            geo.setIndex(new THREE.BufferAttribute(new Uint32Array(ia.data), 1));
+          }
+          var mat = materials[prim.material != null ? prim.material : 0];
+          var mesh;
+          if (nd.skin != null) {
+            mesh = new THREE.SkinnedMesh(geo, mat);
+            mesh.userData.skinIndex = nd.skin;
+          } else {
+            mesh = new THREE.Mesh(geo, mat);
+          }
+          mesh.name = (meshDef.name || 'mesh') + '_' + idx;
+          obj.add(mesh);
         });
-        if (tracks.length) {
-          var clip = new THREE.AnimationClip(anim.name || ('anim' + ai), -1, tracks);
-          clips[clip.name] = clip;
-        }
-      });
+      }
+      (nd.children || []).forEach(function (ci) { obj.add(buildNode(ci)); });
+      return obj;
+    }
 
-      return { group: group, clips: clips, nodeObjs: nodeObjs };
-    });
-  };
+    var scene = new THREE.Group();
+    scene.name = 'glb-root';
+    var roots = json.scenes && json.scenes[0] ? json.scenes[0].nodes : [];
+    roots.forEach(function (ri) { scene.add(buildNode(ri)); });
 
-  // Recolour a loaded Mateo copy (used for the handler Kira: same body, new outfit).
-  PH.retint = function (group, map) {
-    group.traverse(function (o) {
-      if (o.isMesh || o.isSkinnedMesh) {
-        var m = o.material;
-        if (m && m.name && map[m.name]) {
-          var clone = m.clone();
-          clone.color.setHex(map[m.name]);
-          o.material = clone;
+    // Update world matrices BEFORE binding: bind() freezes the mesh's
+    // matrixWorld as the bind matrix, and at build time it is still
+    // identity. (Rev 3: the bind matrix was identity, so the skinning
+    // used mesh-space vertices against armature-scaled bones.)
+    scene.updateMatrixWorld(true);
+
+    // Bind skins. The bind matrix MUST be identity for this file, not
+    // the mesh's world matrix: the file's inverse bind matrices already
+    // map mesh-local vertices into joint space (they carry the 1/69
+    // armature factor), so passing the bind-time world matrix (69.18x)
+    // would inflate every vertex 69x. With an identity bind matrix, and
+    // bindMode 'attached' (bindMatrixInverse = current world inverse),
+    // the shader reduces to the glTF formula jointWorld x IBM x vertex.
+    // (Rev 4: the 69.18 bind matrix was the giant-feet bug — the head
+    // vertex landed at world y=117 instead of y=3.)
+    scene.traverse(function (o) {
+      if (o.isSkinnedMesh && o.userData.skinIndex != null) {
+        var sk = skins[o.userData.skinIndex];
+        var bones = sk.joints.map(function (ji) { return nodeObjs[ji]; });
+        var ibms = [];
+        for (var i = 0; i < sk.joints.length; i++) {
+          ibms.push(new THREE.Matrix4().fromArray(sk.ibm, i * 16));
         }
+        var skeleton = new THREE.Skeleton(bones, ibms);
+        o.bind(skeleton, new THREE.Matrix4());
+        o.userData.skeleton = skeleton;
       }
     });
+
+    // Animations.
+    var clips = (json.animations || []).map(function (anim) {
+      var tracks = [];
+      anim.channels.forEach(function (ch) {
+        var sampler = anim.samplers[ch.sampler];
+        var times = accessorArray(json, bin, sampler.input).data;
+        var vals = accessorArray(json, bin, sampler.output);
+        var node = nodeObjs[ch.target.node];
+        if (!node) return;
+        var path = ch.target.path;
+        var name = node.name;
+        if (path === 'translation') tracks.push(new THREE.VectorKeyframeTrack(name + '.position', times, vals.data));
+        else if (path === 'rotation') tracks.push(new THREE.QuaternionKeyframeTrack(name + '.quaternion', times, vals.data));
+        else if (path === 'scale') tracks.push(new THREE.VectorKeyframeTrack(name + '.scale', times, vals.data));
+      });
+      return new THREE.AnimationClip(anim.name || 'clip', -1, tracks);
+    });
+
+    return { scene: scene, clips: clips, nodes: nodeObjs, json: json };
+  }
+
+  // ---------- retint ----------
+  // Recolour named materials on a loaded model (e.g. jacket orange).
+  PH.retint = function (root, map) {
+    root.traverse(function (o) {
+      if (!o.material) return;
+      var mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(function (m) {
+        if (m && m.name && map[m.name] != null) {
+          m.color = new THREE.Color(map[m.name]);
+          if (m.name === 'MateoJacket') { m.roughness = 0.85; m.metalness = 0.0; }
+        }
+      });
+    });
   };
 
-  // ---------- HUD ----------
+  // ---------- HUD setters ----------
+  function el(id) { return document.getElementById(id); }
+  function setText(id, v) { var n = el(id); if (n) n.textContent = v; }
+  function setBar(id, pct) { var n = el(id); if (n) n.style.width = PH.clamp(pct, 0, 100) + '%'; }
+
   PH.hud = {
-    setObjective: function (title, text) {
-      var t = PH.el('objTitle'), x = PH.el('objText');
-      if (t) t.textContent = title;
-      if (x) x.textContent = text;
+    setObjective: function (o) {
+      if (!o) return;
+      setText('obj-title', o.title || '');
+      setText('obj-stage', o.stage || '');
+      setBar('obj-bar', o.progress != null ? o.progress : 0);
+      setText('obj-timer', o.timer || '');
+      setText('obj-text', o.text || '');
+      setText('obj-next', o.next || '');
     },
     setWanted: function (n) {
-      var s = PH.el('stars');
-      if (!s) return;
-      var out = '';
-      for (var i = 1; i <= 5; i++) out += (i <= n) ? '★' : '<span class="off">★</span>';
-      s.innerHTML = out;
-    },
-    setVitals: function (hp, armor) {
-      var h = PH.el('hpFill'), a = PH.el('arFill');
-      if (h) h.style.width = Math.max(0, Math.min(100, hp)) + '%';
-      if (a) a.style.width = Math.max(0, Math.min(100, armor)) + '%';
-      var hv = PH.el('hpVal'), av = PH.el('arVal');
-      if (hv) hv.textContent = Math.round(hp);
-      if (av) av.textContent = Math.round(armor);
-    },
-    setAmmo: function (n) {
-      var e = PH.el('ammoPistol');
-      if (e) e.textContent = n + '/12';
-      var old = PH.el('ammo');
-      if (old) old.textContent = n;
-    },
-    setSpeed: function (kmh) { var e = PH.el('speed'); if (e) e.textContent = Math.round(kmh); },
-    // v7.0 restage — dense four-corner HUD.
-    setMission: function (stage, pct, timer, next) {
-      var s = PH.el('objStage'), f = PH.el('objProgFill'), t = PH.el('objTimer'), n = PH.el('objNext');
-      if (s) s.textContent = stage || '';
-      if (f) f.style.width = Math.max(0, Math.min(100, pct || 0)) + '%';
-      if (t) {
-        if (timer) { t.textContent = timer; t.style.display = 'block'; }
-        else t.style.display = 'none';
+      var stars = el('stars'); if (!stars) return;
+      var kids = stars.children;
+      for (var i = 0; i < kids.length; i++) {
+        kids[i].classList.toggle('lit', i < n);
       }
-      if (n) n.textContent = next || '';
+      var w = el('wanted-panel');
+      if (w) w.classList.toggle('hot', n >= 3);
     },
-    setCash: function (n) {
-      var e = PH.el('cash');
-      if (e) e.textContent = '$' + Number(n || 0).toLocaleString('en-US');
+    setMoney: function (v) { setText('money', '$' + v.toLocaleString('en-US')); },
+    setHealth: function (v) { setBar('health-bar', v); setText('health-num', Math.round(v)); },
+    setArmor: function (v) { setBar('armor-bar', v); setText('armor-num', Math.round(v)); },
+    setAmmo: function (cur, max) { setText('ammo-pistol', cur + '/' + max); },
+    setSpeed: function (kmh) { setText('speed-num', Math.round(kmh)); },
+    setCar: function (s) { setText('car-status', s); },
+    setRadio: function (s) { setText('radio-text', s); },
+    setDispatch: function (rows) {
+      var box = el('dispatch-rows'); if (!box) return;
+      var panel = el('dispatch-panel');
+      if (!rows || !rows.length) { if (panel) panel.style.display = 'none'; box.innerHTML = ''; return; }
+      if (panel) panel.style.display = 'block';
+      box.innerHTML = rows.map(function (r) {
+        return '<div class="drow"><span class="chip">' + r.tactic + '</span>' +
+          '<span class="dunit">' + r.unit + '</span>' +
+          '<span class="drole">' + r.role + '</span>' +
+          '<span class="ddist">' + r.dist + 'm</span></div>';
+      }).join('');
     },
-    setDispatch: function (units) {
-      var panel = PH.el('dispatch'), rows = PH.el('dispatchRows');
-      if (!panel || !rows) return;
-      if (!units || !units.length) { panel.style.display = 'none'; rows.innerHTML = ''; return; }
-      var html = '';
-      units.forEach(function (u) {
-        html += '<div class="drow"><span class="chip">' + u.chip + '</span>' +
-          '<span class="dname">' + u.name + ' — ' + u.role + '</span>' +
-          '<span class="ddist">' + u.dist + '</span></div>';
-      });
-      rows.innerHTML = html;
-      panel.style.display = 'block';
-    },
-    setWeapons: function (sel, ammo) {
-      var names = ['fists', 'pistol', 'smg', 'rifle'];
-      for (var i = 0; i < 4; i++) {
-        var slot = PH.el('wslot' + i);
-        if (slot) {
-          if (i === sel) slot.classList.add('sel');
-          else slot.classList.remove('sel');
-        }
-      }
-      if (!ammo) return;
-      var map = { pistol: 'ammoPistol', smg: 'ammoSmg', rifle: 'ammoRifle' };
-      Object.keys(map).forEach(function (k) {
-        var e = PH.el(map[k]);
-        if (e && ammo[k] != null) e.textContent = ammo[k];
+    setWeapon: function (active) {
+      var slots = document.querySelectorAll('.wslot');
+      slots.forEach(function (s) {
+        s.classList.toggle('active', s.getAttribute('data-slot') === active);
       });
     },
-    setCarStatus: function (text) {
-      var e = PH.el('carline');
-      if (e) e.textContent = text || '';
-    },
-    setRadioStation: function (text) {
-      var e = PH.el('radioText');
-      if (e) e.textContent = text || '';
-    },
-    dialog: function (who, line) {
-      var d = PH.el('dialog');
-      if (!d) return;
-      PH.el('dlgWho').textContent = who;
-      PH.el('dlgLine').textContent = line;
-      // Portrait box: Kira teal K, Mateo orange M. No faces, ever — the
-      // letter on a gradient is the whole portrait.
-      var p = PH.el('dlgPortrait');
-      if (p) {
-        var isMateo = /^MATEO/i.test(who || '');
-        p.textContent = isMateo ? 'M' : 'K';
-        p.className = 'portrait ' + (isMateo ? 'm' : 'k');
-      }
+    setDialog: function (who, name, text) {
+      var d = el('dialog'); if (!d) return;
+      if (!text) { d.style.display = 'none'; return; }
       d.style.display = 'flex';
+      var p = el('dialog-portrait');
+      if (p) { p.textContent = who === 'kira' ? 'K' : 'M'; p.className = 'portrait ' + who; }
+      setText('dialog-name', name);
+      setText('dialog-text', text);
     },
-    hideDialog: function () { var d = PH.el('dialog'); if (d) d.style.display = 'none'; },
-    toast: function (msg, ms) {
-      var t = PH.el('toast');
-      if (!t) return;
-      t.textContent = msg;
-      t.style.display = 'block';
-      clearTimeout(t._timer);
-      t._timer = setTimeout(function () { t.style.display = 'none'; }, ms || 2600);
-    },
-    setRadio: function (muted) {
-      var b = PH.el('muteBtn');
-      if (b) b.textContent = muted ? 'UNMUTE' : 'MUTE';
+    toast: function (msg) {
+      var t = el('toast'); if (!t) return;
+      t.textContent = msg; t.style.opacity = '1';
+      clearTimeout(t._tm);
+      t._tm = setTimeout(function () { t.style.opacity = '0'; }, 2600);
     }
   };
 
-  // ---------- minimap ----------
-  // data: { bounds:{x0,x1,z0,z1}, roads:[{x0,z0,x1,z1,w}], player:{x,z,heading},
-  //         police:[{x,z}], objective:{x,z}, wanted, time }
-  PH.drawMinimap = function (canvas, data) {
-    var ctx = canvas.getContext('2d');
+  // ---------- minimap (round 2D canvas) ----------
+  PH.drawMinimap = function (canvas, st) {
+    if (!canvas) return;
+    var g = canvas.getContext('2d');
     var W = canvas.width, H = canvas.height;
-    var b = data.bounds;
-    function px(x) { return (x - b.x0) / (b.x1 - b.x0) * W; }
-    function pz(z) { return (z - b.z0) / (b.z1 - b.z0) * H; }
-    // base: dark street-map ground — the city reads as streets, not as
-    // a grid of building facades. Water west, sand strip, then blocks
-    // clearly lighter than the ground, so the blocks read as blocks.
-    ctx.fillStyle = '#0a141d'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#0d3b52'; ctx.fillRect(0, 0, px(-102), H);
-    ctx.fillStyle = '#8a744e'; ctx.fillRect(px(-102), 0, px(-28) - px(-102), H);
-    ctx.fillStyle = '#26394d';
-    for (var gx = -10; gx < 160; gx += 40) {
-      for (var gz = -160; gz < 160; gz += 40) {
-        ctx.fillRect(px(gx + 4), pz(gz + 4), px(gx + 36) - px(gx + 4), pz(gz + 36) - pz(gz + 4));
+    var cx = W / 2, cy = H / 2, R = W / 2 - 4;
+    // world bounds mapped into the circle
+    var x0 = -110, x1 = 120, z0 = -130, z1 = 130;
+    function mx(x) { return cx + ((x - (x0 + x1) / 2) / ((x1 - x0) / 2)) * R; }
+    function mz(z) { return cy + ((z - (z0 + z1) / 2) / ((z1 - z0) / 2)) * R; }
+    g.clearRect(0, 0, W, H);
+    g.save();
+    g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.clip();
+    // base
+    g.fillStyle = '#101826'; g.fillRect(0, 0, W, H);
+    // sea (west)
+    g.fillStyle = '#123a5c'; g.fillRect(0, 0, mx(-102), H);
+    // sand strip
+    g.fillStyle = '#c9a86a'; g.fillRect(mx(-102), 0, mx(-28) - mx(-102), H);
+    // city blocks (40-unit grid) slightly lighter than base
+    g.fillStyle = '#232f45';
+    for (var gx = -20; gx <= 160; gx += 40) {
+      for (var gz = -160; gz <= 120; gz += 40) {
+        g.fillRect(mx(gx), mz(gz), mx(gx + 32) - mx(gx), mz(gz + 32) - mz(gz));
       }
     }
-    // Fine 20-unit street grid: thin, faint lines so the map reads as a
-    // real street grid, not just a few thick bars.
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
-    var gx2, gz2;
-    for (gx2 = -100; gx2 <= 120; gx2 += 20) {
-      ctx.beginPath(); ctx.moveTo(px(gx2), 0); ctx.lineTo(px(gx2), H); ctx.stroke();
+    // fine 20-unit grid lines
+    g.strokeStyle = 'rgba(255,255,255,0.08)'; g.lineWidth = 1;
+    for (var i = -100; i <= 160; i += 20) {
+      g.beginPath(); g.moveTo(mx(i), 0); g.lineTo(mx(i), H); g.stroke();
+      g.beginPath(); g.moveTo(0, mz(i)); g.lineTo(W, mz(i)); g.stroke();
     }
-    for (gz2 = -120; gz2 <= 120; gz2 += 20) {
-      ctx.beginPath(); ctx.moveTo(0, pz(gz2)); ctx.lineTo(W, pz(gz2)); ctx.stroke();
+    // roads: dark casing then bright core
+    function road(xa, za, xb, zb, wdt) {
+      g.strokeStyle = '#05070c'; g.lineWidth = wdt + 3;
+      g.beginPath(); g.moveTo(mx(xa), mz(za)); g.lineTo(mx(xb), mz(zb)); g.stroke();
+      g.strokeStyle = '#8fa3bd'; g.lineWidth = wdt;
+      g.beginPath(); g.moveTo(mx(xa), mz(za)); g.lineTo(mx(xb), mz(zb)); g.stroke();
     }
-    // roads: thin, bright lines on the dark ground, each drawn over a
-    // darker casing so the edge stays crisp.
-    ctx.lineCap = 'round';
-    (data.roads || []).forEach(function (r) {
-      var lw = Math.max(2, (r.w || 8) / (b.x1 - b.x0) * W * 0.22);
-      ctx.strokeStyle = '#05090d'; ctx.lineWidth = lw + 1;
-      ctx.beginPath(); ctx.moveTo(px(r.x0), pz(r.z0)); ctx.lineTo(px(r.x1), pz(r.z1)); ctx.stroke();
-      ctx.strokeStyle = '#f7fafc'; ctx.lineWidth = lw;
-      ctx.beginPath(); ctx.moveTo(px(r.x0), pz(r.z0)); ctx.lineTo(px(r.x1), pz(r.z1)); ctx.stroke();
-    });
-    // Sunset Blvd centre line in yellow so the main avenue stands out.
-    ctx.strokeStyle = '#ffd23e'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(px(-20), pz(b.z0)); ctx.lineTo(px(-20), pz(b.z1)); ctx.stroke();
+    [-120, -80, -40, 0, 40, 80, 120].forEach(function (z) { road(-9, z, 170, z, 3); });
+    road(-20, -170, -20, 170, 4);
+    // Sunset Blvd centre line (yellow)
+    g.strokeStyle = '#e8c832'; g.lineWidth = 1.4; g.setLineDash([6, 5]);
+    g.beginPath(); g.moveTo(mx(-20), mz(-170)); g.lineTo(mx(-20), mz(170)); g.stroke();
+    g.setLineDash([]);
     // pier
-    ctx.fillStyle = '#8a6b45'; ctx.fillRect(px(-84), pz(36), px(-28) - px(-84), pz(44) - pz(36));
-    // objective marker: big yellow diamond + pulsing ring.
-    if (data.objective) {
-      var ox = px(data.objective.x), oy = pz(data.objective.z);
-      var pulse = 5 + 3 * Math.sin((data.time || 0) * 4);
-      ctx.strokeStyle = '#ffd23e'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(ox, oy, 12 + pulse, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = '#ffd23e';
-      ctx.strokeStyle = '#20100a'; ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(ox, oy - 11); ctx.lineTo(ox + 10, oy); ctx.lineTo(ox, oy + 11); ctx.lineTo(ox - 10, oy);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
+    g.fillStyle = '#8a6a42';
+    g.fillRect(mx(-88), mz(35.5), mx(-28) - mx(-88), mz(44.5) - mz(35.5));
+    // objective diamond + pulsing ring
+    if (st && st.objective) {
+      var ox = mx(st.objective.x), oy = mz(st.objective.z);
+      var pulse = 1 + 0.25 * Math.sin((st.time || 0) * 3);
+      g.strokeStyle = 'rgba(255,210,60,0.9)'; g.lineWidth = 2;
+      g.beginPath(); g.arc(ox, oy, 11 * pulse, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#ffd23c';
+      g.beginPath();
+      g.moveTo(ox, oy - 9); g.lineTo(ox + 9, oy); g.lineTo(ox, oy + 9); g.lineTo(ox - 9, oy);
+      g.closePath(); g.fill();
+      g.strokeStyle = '#7a5b00'; g.lineWidth = 1.5; g.stroke();
     }
-    // police dots (flash when wanted): big, with a white ring.
-    var flash = (data.wanted > 0) && (Math.floor((data.time || 0) * 3) % 2 === 0);
-    (data.police || []).forEach(function (p) {
-      ctx.fillStyle = flash ? '#ff4d4d' : '#4aa8ff';
-      ctx.beginPath(); ctx.arc(px(p.x), pz(p.z), 7, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(px(p.x), pz(p.z), 7, 0, Math.PI * 2); ctx.stroke();
-    });
-    // player arrow: big orange arrow with a white outline.
-    if (data.player) {
-      var cx = px(data.player.x), cy = pz(data.player.z);
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(-data.player.heading + Math.PI);
-      ctx.fillStyle = '#ff7a1a';
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(0, -14); ctx.lineTo(10, 11); ctx.lineTo(0, 6); ctx.lineTo(-10, 11);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.restore();
+    // police dots (blue, flashing red when wanted)
+    if (st && st.police) {
+      st.police.forEach(function (p, i) {
+        var blink = st.wanted > 0 && (Math.floor((st.time || 0) * 2 + i) % 2 === 0);
+        g.fillStyle = blink ? '#ff3b30' : '#3b82f6';
+        g.beginPath(); g.arc(mx(p.x), mz(p.z), 4.5, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = '#fff'; g.lineWidth = 1.2; g.stroke();
+      });
     }
-    // north arrow + frame label, centred: the minimap is round now, so
-    // corner labels would be clipped by the circular mask.
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.moveTo(W / 2, 5); ctx.lineTo(W / 2 - 6, 14); ctx.lineTo(W / 2 + 6, 14); ctx.closePath(); ctx.fill();
-    ctx.font = '900 13px Arial, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('N', W / 2, 27);
-    ctx.font = '700 11px Arial, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.fillText('SUNSET BAY', W / 2, H - 16);
+    // player arrow (big orange, white frame, rotates with heading)
+    if (st && st.player) {
+      var px = mx(st.player.x), py = mz(st.player.z);
+      var hd = st.player.heading || 0;
+      g.save();
+      g.translate(px, py); g.rotate(hd);
+      g.fillStyle = '#ff7a1a';
+      g.strokeStyle = '#fff'; g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(0, -11); g.lineTo(8, 8); g.lineTo(0, 4); g.lineTo(-8, 8);
+      g.closePath(); g.fill(); g.stroke();
+      g.restore();
+    }
+    g.restore();
+    // ring border
+    g.strokeStyle = '#ffffff'; g.lineWidth = 3;
+    g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.stroke();
+    // north arrow + N, top centre
+    g.fillStyle = '#fff'; g.font = 'bold 13px Arial';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.beginPath();
+    g.moveTo(cx, 12); g.lineTo(cx + 5, 22); g.lineTo(cx - 5, 22); g.closePath(); g.fill();
+    g.fillText('N', cx, 30);
+    // label
+    g.fillStyle = 'rgba(255,255,255,0.85)'; g.font = 'bold 11px Arial';
+    g.fillText('SUNSET BAY', cx, H - 12);
   };
 })();

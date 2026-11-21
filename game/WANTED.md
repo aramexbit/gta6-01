@@ -1,55 +1,48 @@
-# WANTED — the Bay City PD response system
+# Wanted system — Bay City PD (v7.2)
 
-Sunset Bay's wanted system runs on **witnesses**, not on a timer alone.
-A crime only matters if someone sees it.
+## Stars 1–5
+The wanted level is shown as five stars in the top-right HUD panel, next to
+the cash balance and the `BAY CITY PD` label. Lit stars are gold; unlit
+stars are dim. At 3 stars or more the wanted panel gets a red glow.
 
-## Stars
+## How it rises
+- In free play, the wanted level rises while a police cruiser is within
+  18 units of the hero car (about +0.2 stars per second, up to 5).
+- The staged shots set fixed levels: shot 1 (chase) is 3 stars, shot 4
+  (combat) is 5 stars, shots 2 and 3 (on foot / mission) are 0 stars.
 
-| Stars | Response |
-| --- | --- |
-| 1 | A patrol car is dispatched; officers on foot take notice. |
-| 2 | Two patrol cars; the dispatch board starts naming tactics. |
-| 3 | The police helicopter **AIR-1** joins, circling with its searchlight. |
-| 4 | Patrol cars flank and attempt PIT manoeuvres; roadblocks appear. |
-| 5 | Full response: flanking, PIT, roadblocks and the helicopter together. |
+## How it falls
+- In free play, the wanted level falls (about −0.08 stars per second) while
+  no police cruiser is within 18 units. Lose the heat by breaking line of
+  sight and distance — reach the pier marker to complete the stage.
 
-## How stars rise
+## Police response
+- **Patrol:** 3 Bay City PD cruisers (white body, black doors,
+  `BAY CITY PD` door stickers, red/blue roof light bar flashing
+  alternately, plates PD-104, PD-111, PD-118) and 3 officers on foot
+  (dark-blue uniform + cap, aiming pose).
+- **Chase:** cruisers close on the Scarlet Arrow; the dispatch board (right
+  side, under the wanted panel) lists live units with a red tactic chip
+  (`PURSUIT` / `RAMMING` / `SPOTLIGHT`), the unit name, its role and its
+  distance in metres.
+- **Helicopter:** the police heli orbits the hero in free play (radius
+  ~26, height ~34, gentle bob) with a long translucent searchlight cone
+  that reaches the ground. In the staged shots it is frozen at the staged
+  position. Its rotor spins at all times.
+- **Crowd panic:** while wanted is active, city pedestrians within 26 units
+  of the threat run away from it at 4.4 units/s; beach NPCs on land within
+  45 units run west toward the sea/pier at 4.6 units/s. Swimmers and surfers
+  stay in the water. Once the threat passes, NPCs walk back to their home
+  spots.
 
-- **Carjacking** (pressing E to take a car) in front of a pedestrian or an
-  officer: +1 star.
-- **Shooting** near witnesses: +1 star per incident.
-- **Hitting a pedestrian or a patrol car** while driving: +1 star.
-- The dispatch board lists each responding unit with its distance and its
-  tactic: **PIT** (ram the rear quarter), **FLANK** (pull alongside),
-  **BLOCK** (hold a roadblock), **SPOT** (the helicopter).
+## Siren
+The siren (800 Hz sine wobbled ±160 Hz by a 0.9 Hz square LFO) starts when
+the wanted level reaches 2 stars in free play, and stops when it drops
+below 2. While the siren is on, the radio bus is ducked to 45% so the
+siren stays readable over Nightwave 98.3; it returns to full volume when
+the siren stops.
 
-## How stars fall
-
-If **no police unit is within 40 metres for 22 seconds**, the level drops
-by one star. Hiding in the Little Havana market alleys, the beach car park
-or the pier works — as long as AIR-1's searchlight is not on you.
-
-## The helicopter
-
-AIR-1 appears at 3 stars and above. It circles the player at about 16 m,
-its main rotor spinning, POLICE lettering on both flanks, and a searchlight
-cone that paints a bright pool on the street below. Outrunning it on the
-ground is not enough; breaking line of sight under the market roofs or the
-pier is what shakes it.
-
-## Mission heat
-
-Missions raise the heat by design: M2 "Three Gates" starts at 3 stars and
-climbs to 5 in the market firefight. Finishing a stage while wanted pays
-extra Respect.
-
-## LOSING AIR-1
-
-The helicopter cannot be shot down. Lose it by breaking line of sight in
-the night market or the parking structure — once it loses the visual, the
-heat decays at the normal rate again.
-
-## DISPATCH BOARD ACCURACY
-
-The board only lists units that are actually on the road: unplaced units
-never appear, so the distances it shows are always real.
+## Staged levels (fixed per shot)
+Shot 1 (chase) is 3 stars, shot 4 (combat) is 5 stars, shots 2 and 3
+(on foot / mission) are 0 stars. The dispatch board distances in shots 1
+and 4 are the staged values for those scenes, not live measurements.

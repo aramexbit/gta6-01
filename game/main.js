@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.4
+// PIER HEAT — Sunset Bay v7.6
 // main.js — boot, input, save/load, the 4 staged shots, the free-play
 // loop and the minimap update. Wires the procedural Mateo/Kira
 // (mateo.js), the boat chase (boats.js), the street race (races.js)
@@ -6,6 +6,11 @@
 // v7.4: shot 3 stages Mateo AT THE HELM of the speedboat on the water
 // (police boats + heli in pursuit), and shot 1 runs both rivals big
 // and close beside the hero.
+// v7.6: shot 3's beach foreground gains the dead man on the sand — a
+// lying figure in dark clothes with dark-red blood pools around it,
+// stylized low-poly, the crime-scene detail the beach mission opens
+// on. Car + character design changes live in herocar.js, mateo.js,
+// portraits.js, sim.js and boats.js (white + teal hero boat).
 (function () {
   'use strict';
   var PH = window.PH;
@@ -136,6 +141,47 @@
     var bag = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.3),
       new THREE.MeshStandardMaterial({ color: 0xff6ab0, roughness: 0.9 }));
     bag.position.set(-107, 0.3, 49.5); bag.rotation.y = 0.5; g.add(bag);
+    // v7.6 — the dead man on the sand (pengguna 21 Nov 21:18 WIB):
+    // the figure lying here is NOT sunbathing, it is a BODY. A lying
+    // figure in dark clothes, head toward the water, with dark-red
+    // blood pools on the sand around the torso and head, a blood trail
+    // along the body and a stain on the chest — stylized flat discs in
+    // the game's low-poly language, not photorealistic, but unmistakable
+    // as a beach crime scene. Dark clothes (grey/black) so the figure
+    // reads as a body, never as another sunbather.
+    // v7.6 rev 2: render pass 1 put the body at (-102, 45.5) — crammed
+    // into the bottom-right corner, half under the speedometer HUD,
+    // and the pools were oversized (one big red splat). Moved 1.5 left
+    // so the whole body clears the HUD, pools shrunk to read as pools.
+    // v7.6 rev 3: pass 2 hid the body BEHIND the Kira dialog panel —
+    // the (-103.5, 45.0) spot projects to (752, 561), inside the dialog
+    // rect. The spot is now (-103.5, 43): camera projection puts the
+    // body at screen (825, 471)-(876, 526), clear of every HUD panel
+    // (dialog, minimap, speedometer) and ~2 units from the sandcastle,
+    // so the body AND the blood read in the open sand.
+    var victim = PH.makePerson({ shirt: 0x3a3a3a, pants: 0x2a2a2a, skin: 0xd8b89a });
+    victim.group.position.set(-103.5, 0, 43.0);
+    victim.group.rotation.y = 0.9;
+    victim.setPose('lying', 0, 5);
+    g.add(victim.group);
+    var bloodMat = new THREE.MeshStandardMaterial({ color: 0x7a0e0e, roughness: 0.9 });
+    function bloodPool(x, z, r, sx, sz, rz) {
+      var p = new THREE.Mesh(new THREE.CircleGeometry(r, 14), bloodMat);
+      p.rotation.x = -Math.PI / 2; p.rotation.z = rz || 0;
+      p.scale.set(sx || 1, sz || 1, 1);
+      p.position.set(x, 0.06, z);
+      g.add(p);
+    }
+    bloodPool(-104.3, 42.35, 0.55);            // main pool, by the torso
+    bloodPool(-103.5, 43.3, 0.35);             // second pool, by the legs
+    bloodPool(-105.0, 41.9, 0.25);             // small pool, by the head
+    bloodPool(-104.0, 42.6, 0.5, 1.5, 0.7, 0.9); // smeared trail along the body
+    // blood stain on the chest: a flat dark-red patch on top of the
+    // lying torso, so the wound reads even at a glance
+    var stain = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 0.5), bloodMat);
+    stain.rotation.x = -Math.PI / 2; stain.rotation.z = 0.9;
+    stain.position.set(-104.3, 0.12, 42.35);
+    g.add(stain);
     scene.add(g);
     return g;
   }

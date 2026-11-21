@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.4
+// PIER HEAT — Sunset Bay v7.6
 // boats.js — boat chase on the water: a player speedboat, police boats
 // that hunt it, a fading foam wake behind every boat, and a heli over
 // the sea. Waves are a few summed sines; the same height function is
@@ -7,6 +7,15 @@
 // v7.4: the hero boat carries a helm wheel at the driver's stand, and
 // stageShot puts Mateo ON the boat — the boat job is played on the
 // water now, not talked about from the pier.
+// v7.6 (tambahan scope pengguna 21 Nov 21:18 WIB): the hero boat's
+// hull was orange (0xff7a1a) — the SAME orange as Mateo's jacket,
+// life vest and cap — so man and boat melted into one orange-yellow
+// mass in shot 3 and the boat did not read as a boat at a glance.
+// The hull is now WHITE with a TEAL stripe and a dark interior
+// (dark deck, dark-slate seats): white + teal against orange means
+// Mateo pops off the boat in one second, and the boat reads as a
+// boat from across the bay. Police boats keep their white hull +
+// blue stripe; only the hero boat's colours change, no system logic.
 // Plain script; uses window.PH.
 (function () {
   'use strict';
@@ -28,9 +37,12 @@
 
   // Speedboat hull: a tapered wedge (extruded side profile) + deck,
   // windshield, bench seats and an outboard motor on the transom.
+  // v7.6: hero hull WHITE (was orange) with a TEAL side stripe and a
+  // teal waterline band, dark deck + dark-slate seats — the boat is
+  // the opposite of Mateo's orange, so he stands out on it.
   PH.makeBoat = function (opts) {
     opts = opts || {};
-    var hullColor = opts.hull != null ? opts.hull : 0xff7a1a;
+    var hullColor = opts.hull != null ? opts.hull : 0xf2f2f2;
     var police = !!opts.police;
     if (police) hullColor = 0xf2f2f2;
     var g = new THREE.Group();
@@ -42,10 +54,23 @@
     hullGeo.translate(0, 0, -0.85);
     var hull = new THREE.Mesh(hullGeo, std(hullColor, 0.45, 0.15));
     hull.castShadow = true; g.add(hull);
-    // white stripe along the hull side
-    var stripe = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.14, 0.04), std(0xffffff, 0.5));
+    // side stripe: TEAL on the hero boat (was white-on-orange, invisible),
+    // white on the police boat (which already wears a blue stripe below).
+    // v7.6 rev 2: stripe + waterline thicker (render pass 1 showed the
+    // teal lines a touch thin at 15 units — the boat's paint must read
+    // as a design, not a pinstripe, from the pier camera)
+    var stripeColor = police ? 0xffffff : 0x0e8a8a;
+    var stripe = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.24, 0.04), std(stripeColor, 0.5));
     stripe.position.set(0, 0.55, 0.87); g.add(stripe);
     var stripe2 = stripe.clone(); stripe2.position.z = -0.87; g.add(stripe2);
+    // v7.6: a second, thinner teal waterline band low on the hero hull,
+    // so the white hull carries two teal lines and reads as a painted
+    // boat, not a blank white wedge
+    if (!police) {
+      var waterline = new THREE.Mesh(new THREE.BoxGeometry(5.0, 0.14, 0.04), std(0x0e8a8a, 0.5));
+      waterline.position.set(0, 0.28, 0.87); g.add(waterline);
+      var waterline2 = waterline.clone(); waterline2.position.z = -0.87; g.add(waterline2);
+    }
     // deck + cockpit rim
     var deck = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.12, 1.5), std(0x2a2f36, 0.8));
     deck.position.set(-0.1, 0.98, 0); g.add(deck);
@@ -71,11 +96,13 @@
     helm.rotation.y = Math.PI / 2; helm.rotation.x = -0.4;
     g.add(helm);
     g.userData.helm = helm;
-    // bench seats
+    // bench seats — v7.6: dark slate, not dark red, so the interior
+    // reads as a dark cockpit against the white hull (and never as
+    // another orange/red mass next to Mateo)
     [-0.6, -1.4].forEach(function (x) {
-      var seat = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.18, 1.3), std(0x8a2a2a, 0.85));
+      var seat = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.18, 1.3), std(0x2a3a4a, 0.85));
       seat.position.set(x, 1.1, 0); g.add(seat);
-      var back = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.5, 1.3), std(0x8a2a2a, 0.85));
+      var back = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.5, 1.3), std(0x2a3a4a, 0.85));
       back.position.set(x - 0.4, 1.3, 0); g.add(back);
     });
     // outboard motor on the transom
@@ -177,7 +204,7 @@
       g.add(bar);
       g.userData.lightRed = red; g.userData.lightBlue = blu;
     } else {
-      // hero boat: orange hull, white deck stripe, SUN-8821 plate on stern
+      // hero boat: white hull + teal stripes (v7.6), SUN-8821 plate on stern
       var plate = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.18),
         new THREE.MeshStandardMaterial({ map: PH.plateTexture('SUN-8821'), roughness: 0.5 }));
       plate.position.set(-2.66, 0.55, 0); plate.rotation.y = -Math.PI / 2; g.add(plate);
@@ -313,7 +340,7 @@
   // behind in a visible pursuit line instead of piling onto the stern).
   PH.BoatChase = function (scene) {
     this.scene = scene;
-    this.player = PH.makeBoat({ hull: 0xff7a1a });
+    this.player = PH.makeBoat({ hull: 0xf2f2f2 });
     this.player.position.set(-120, 0, 40);
     this.player.rotation.y = Math.PI / 2;
     scene.add(this.player);

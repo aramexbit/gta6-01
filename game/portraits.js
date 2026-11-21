@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.5
+// PIER HEAT — Sunset Bay v7.6
 // portraits.js — canvas-drawn face portraits for crew cards and the
 // dialog box. Each character is defined once as a small feature object
 // (skin, hair style + colour, jacket, extras) and rendered to an
@@ -10,6 +10,15 @@
 // not the same drawing in four jackets.
 // v7.5: no new faces — the portraits are untouched; the crew cards
 // they feed keep working exactly as before (see main.js crew config).
+// v7.6 (GTA VI video study — Trailer 2 + An Extended Look, see
+// gta6-video-refs-v76.md): faces get the same structure as the 3D
+// rig in mateo.js — a jaw and chin under the mouth, lips instead of
+// a line, a nose bridge, hair with highlight strands and volume, and
+// clothes that read as clothes: a zipper line down the jacket, a
+// collar, a gold chain for Mateo, a necklace for Kira, a work-shirt
+// pocket with a pen for Dario, a hoop earring for Lena. The four
+// cards must read as four different people at 48 px, not four
+// recolourings of one drawing.
 // Plain script; uses window.PH.
 (function () {
   'use strict';
@@ -20,22 +29,22 @@
     mateo: {
       skin: '#e0ac69', hair: '#2a1a12', hairStyle: 'short', jacket: '#ff7a1a',
       tee: '#f2f2f2', stubble: true, brows: 'flat', name: 'MATEO VEGA', role: 'DRIVER',
-      bg: ['#3a1a4a', '#c85a3a', '#ffb347'], accent: 'stubble'
+      bg: ['#3a1a4a', '#c85a3a', '#ffb347'], accent: 'stubble', lips: '#8a3a2a'
     },
     kira: {
       skin: '#f2c89b', hair: '#2a1a12', hairStyle: 'long', jacket: '#0e7a7a',
       tee: '#222831', stubble: false, brows: 'arched', name: 'KIRA', role: 'HANDLER',
-      bg: ['#0a2a4a', '#0e7a7a', '#7ad8c8'], accent: 'earring'
+      bg: ['#0a2a4a', '#0e7a7a', '#7ad8c8'], accent: 'earring', lips: '#a03a3a'
     },
     dario: {
       skin: '#c68642', hair: '#1a1a1a', hairStyle: 'buzz', jacket: '#2a6fd8',
       tee: '#f2f2f2', stubble: true, brows: 'flat', name: 'DARIO', role: 'MECHANIC',
-      bg: ['#1a1a2a', '#4a4a5a', '#8a8a9a'], accent: 'scar'
+      bg: ['#1a1a2a', '#4a4a5a', '#8a8a9a'], accent: 'scar', lips: '#7a3020'
     },
     lena: {
       skin: '#ffdbac', hair: '#8a6a3a', hairStyle: 'bob', jacket: '#8a5aff',
       tee: '#f2f2f2', stubble: false, brows: 'arched', name: 'LENA', role: 'WHEELWOMAN',
-      bg: ['#2a1a4a', '#8a5aff', '#ff9ad8'], accent: 'blush'
+      bg: ['#2a1a4a', '#8a5aff', '#ff9ad8'], accent: 'blush', lips: '#c04a5a'
     }
   };
 
@@ -59,17 +68,29 @@
     g.quadraticCurveTo(20 * s, 72 * s, 48 * s, 72 * s);
     g.quadraticCurveTo(76 * s, 72 * s, 88 * s, 96 * s);
     g.closePath(); g.fill();
+    // v7.6: the jacket is clothes now — a zipper line down the middle,
+    // a collar at the neck and a chest pocket flap, so the shoulders
+    // read as a bomber jacket instead of a coloured blob
+    g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 1.8 * s;
+    g.beginPath(); g.moveTo(48 * s, 74 * s); g.lineTo(48 * s, 96 * s); g.stroke();
+    g.fillStyle = 'rgba(0,0,0,0.3)';
+    g.beginPath(); g.moveTo(38 * s, 72 * s); g.lineTo(48 * s, 80 * s); g.lineTo(58 * s, 72 * s); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    g.fillRect(60 * s, 84 * s, 12 * s, 7 * s);
     // tee V at the collar
     g.fillStyle = def.tee;
     g.beginPath();
     g.moveTo(42 * s, 72 * s); g.lineTo(48 * s, 84 * s); g.lineTo(54 * s, 72 * s);
     g.closePath(); g.fill();
-    // neck
+    // neck + neck shadow under the jaw, so the head sits on the body
     g.fillStyle = def.skin;
     g.fillRect(43 * s, 60 * s, 10 * s, 14 * s);
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    g.fillRect(43 * s, 60 * s, 10 * s, 4 * s);
     // head
     g.beginPath(); g.ellipse(48 * s, 42 * s, 19 * s, 23 * s, 0, 0, Math.PI * 2); g.fill();
     // ears
+    g.fillStyle = def.skin;
     g.beginPath(); g.ellipse(29 * s, 44 * s, 3 * s, 5 * s, 0, 0, Math.PI * 2); g.fill();
     g.beginPath(); g.ellipse(67 * s, 44 * s, 3 * s, 5 * s, 0, 0, Math.PI * 2); g.fill();
     // hair by style
@@ -103,7 +124,15 @@
       g.beginPath();
       g.ellipse(48 * s, 30 * s, 19 * s, 13 * s, 0, Math.PI, 0); g.fill();
       g.fillRect(30 * s, 28 * s, 36 * s, 5 * s);
+      // v7.6: a swept quiff bump at the front hairline, like the 3D rig
+      g.beginPath();
+      g.ellipse(56 * s, 24 * s, 8 * s, 5 * s, -0.3, 0, Math.PI * 2); g.fill();
     }
+    // v7.6: hair highlight strands — two lighter arcs, so the hair
+    // has volume and a light direction instead of one flat fill
+    g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = 2 * s; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(36 * s, 22 * s); g.quadraticCurveTo(44 * s, 16 * s, 54 * s, 20 * s); g.stroke();
+    g.beginPath(); g.moveTo(38 * s, 28 * s); g.quadraticCurveTo(46 * s, 22 * s, 56 * s, 26 * s); g.stroke();
     // brows
     g.strokeStyle = '#14100c'; g.lineWidth = 2.2 * s; g.lineCap = 'round';
     g.beginPath();
@@ -123,11 +152,29 @@
       g.fillStyle = '#ffffff';
       g.beginPath(); g.arc((e[0] + 0.8) * s, (e[1] - 0.8) * s, 0.8 * s, 0, Math.PI * 2); g.fill();
     });
-    // nose + mouth
+    // nose: bridge line + tip, so the nose has a shape, not just a tick
     g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 1.6 * s;
-    g.beginPath(); g.moveTo(48 * s, 44 * s); g.lineTo(46 * s, 51 * s); g.lineTo(49 * s, 52 * s); g.stroke();
-    g.strokeStyle = '#5a2a1a'; g.lineWidth = 2 * s;
-    g.beginPath(); g.moveTo(43 * s, 57 * s); g.quadraticCurveTo(48 * s, 60 * s, 53 * s, 57 * s); g.stroke();
+    g.beginPath(); g.moveTo(48 * s, 43 * s); g.lineTo(47 * s, 50 * s); g.lineTo(49 * s, 52 * s); g.stroke();
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    g.beginPath(); g.ellipse(48 * s, 52 * s, 2.5 * s, 1.2 * s, 0, 0, Math.PI * 2); g.fill();
+    // v7.6: mouth with LIPS — a filled upper lip and a fuller lower
+    // lip in the character's lip colour, not a single dark line.
+    // v7.6 rev 2: a dark seam between the lips + a stronger lower-lip
+    // highlight, so the mouth reads as two lips at card size instead
+    // of one flat filled shape
+    g.fillStyle = def.lips || '#8a3a2a';
+    g.beginPath();
+    g.moveTo(42 * s, 57 * s); g.quadraticCurveTo(48 * s, 55 * s, 54 * s, 57 * s);
+    g.quadraticCurveTo(48 * s, 59.5 * s, 42 * s, 57 * s);
+    g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 1.1 * s;
+    g.beginPath(); g.moveTo(43 * s, 58.2 * s); g.quadraticCurveTo(48 * s, 59 * s, 53 * s, 58.2 * s); g.stroke();
+    g.fillStyle = 'rgba(255,255,255,0.35)';
+    g.beginPath(); g.ellipse(48 * s, 60 * s, 4 * s, 1.2 * s, 0, 0, Math.PI * 2); g.fill();
+    // v7.6: jaw + chin — a soft shadow under the lower lip and a chin
+    // curve, so the lower face has a jawline instead of ending at the mouth
+    g.strokeStyle = 'rgba(0,0,0,0.22)'; g.lineWidth = 1.4 * s;
+    g.beginPath(); g.moveTo(40 * s, 62 * s); g.quadraticCurveTo(48 * s, 65 * s, 56 * s, 62 * s); g.stroke();
     // stubble
     if (def.stubble) {
       g.fillStyle = 'rgba(42,26,18,0.35)';
@@ -138,13 +185,29 @@
     if (def.accent === 'scar') {
       g.strokeStyle = 'rgba(90,30,20,0.8)'; g.lineWidth = 1.6 * s;
       g.beginPath(); g.moveTo(34 * s, 40 * s); g.lineTo(38 * s, 48 * s); g.stroke();
+      // v7.6: Dario's work-shirt pocket + a pen in it, on the jacket
+      g.fillStyle = 'rgba(0,0,0,0.3)';
+      g.fillRect(22 * s, 86 * s, 10 * s, 8 * s);
+      g.fillStyle = '#ffd23c';
+      g.fillRect(29 * s, 82 * s, 2 * s, 6 * s);
     } else if (def.accent === 'blush') {
       g.fillStyle = 'rgba(255,120,140,0.4)';
       g.beginPath(); g.ellipse(36 * s, 50 * s, 4 * s, 2.5 * s, 0, 0, Math.PI * 2); g.fill();
       g.beginPath(); g.ellipse(60 * s, 50 * s, 4 * s, 2.5 * s, 0, 0, Math.PI * 2); g.fill();
+      // v7.6: Lena's gold hoop earring, bigger than a dot
+      g.strokeStyle = '#ffd23c'; g.lineWidth = 1.8 * s;
+      g.beginPath(); g.arc(67 * s, 50 * s, 3 * s, 0, Math.PI * 2); g.stroke();
     } else if (def.accent === 'earring') {
       g.fillStyle = '#ffd23c';
       g.beginPath(); g.arc(67 * s, 50 * s, 1.8 * s, 0, Math.PI * 2); g.fill();
+      // v7.6: Kira's thin gold necklace at the collar
+      g.strokeStyle = '#ffd23c'; g.lineWidth = 1.6 * s;
+      g.beginPath(); g.moveTo(40 * s, 74 * s); g.quadraticCurveTo(48 * s, 80 * s, 56 * s, 74 * s); g.stroke();
+    }
+    // v7.6: Mateo's gold chain at the collar, matching the 3D rig
+    if (def.accent === 'stubble') {
+      g.strokeStyle = '#ffd23c'; g.lineWidth = 2 * s;
+      g.beginPath(); g.moveTo(40 * s, 74 * s); g.quadraticCurveTo(48 * s, 79 * s, 56 * s, 74 * s); g.stroke();
     }
     // rim light on the sun side
     g.strokeStyle = 'rgba(255,210,120,0.7)'; g.lineWidth = 2 * s;

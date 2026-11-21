@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.5
+// PIER HEAT — Sunset Bay v7.6
 // herocar.js — the Scarlet Arrow's rear, built from how the real car
 // works (how-it-works-v75.md §5 + real-refs-v75.md §2).
 //
@@ -15,6 +15,29 @@
 // the door feeds the mid-engine's air. Black multi-spoke wheels with
 // low-profile tyres finish the stance.
 //
+// v7.6 (GTA VI video study — Trailer 2 + An Extended Look, see
+// gta6-video-refs-v76.md): the v7.5 tail still read as a dark blob
+// from the chase camera, because the round lamps sat alone on bare
+// orange paint in shade. Real modern sportscars wear a BLACK piano
+// tail panel across the whole stern with ONE full-width LED bar
+// glowing through it — the bar is the signature, the lamps its ends.
+// So the dome now carries a gloss-black tail panel, a segmented red
+// LED bar that hugs the dome's curve between the two round lamps
+// (five segments, each placed by domeX), and the round lamps are
+// bigger and brighter with larger glow sprites. The wheels go from
+// 7 spokes to 10 thin spokes on a larger rim (thinner tyre sidewall
+// = lower profile), with a silver brake disc and a red caliper behind
+// the spokes — the performance tell you see through a real wheel.
+// The nose gets the same language up front: a slim white LED bar
+// above the grille joining the two round DRLs. Paint is glossier
+// still (roughness down, metalness up) so the flanks mirror the sky.
+// v7.6 rev 2 (render pass 1, 21 Nov): the LED bar still read dim
+// from the chase camera and the spokes vanished in the wheels'
+// shadow, so the bar runs hotter (6.0) and taller, the lamps hotter
+// (5.0) with bigger glows, the piano panel a touch lighter
+// (0x16181e) so it catches sky light instead of going pitch black,
+// and the spokes are brighter silver-grey and wider.
+//
 // WHAT THIS FILE BUILDS, and how sim.js uses it:
 //   PH.heroPaint() — glossy clearcoat orange for the hero body.
 //   PH.buildHeroRear(bodyMat) — the curved stern: a dome shell, round
@@ -23,7 +46,7 @@
 //     surface by domeX(). sim.js skips its flat rear panel, tail bar,
 //     fog lamps, strut spoiler, tail handle, old bumper/diffuser and
 //     rear plate when this exists, and adds this group instead.
-//   PH.buildHeroWheel(x, z) — black 7-spoke wheel, low-profile tyre.
+//   PH.buildHeroWheel(x, z) — black 10-spoke wheel, low-profile tyre.
 //   PH.buildHeroIntake(side) — the side intake scoop behind the door.
 // Plain script; uses window.PH.
 (function () {
@@ -36,10 +59,13 @@
   // flanks mirror the sky and the sun instead of going matte orange.
   // (MeshPhysicalMaterial is used when the vendored three.js has it;
   // the fallback keeps the same colour on older builds.)
+  // v7.6: glossier still — roughness 0.22, metalness 0.65, clearcoat
+  // roughness 0.12 — so the flanks read as a dark mirror of the
+  // sunset, the way the trailer cars' paint does, not flat orange.
   PH.heroPaint = function () {
     var Mat = THREE.MeshPhysicalMaterial || THREE.MeshStandardMaterial;
-    var m = new Mat({ color: 0xd86008, roughness: 0.3, metalness: 0.55 });
-    if (m.clearcoat != null) { m.clearcoat = 1; m.clearcoatRoughness = 0.16; }
+    var m = new Mat({ color: 0xd86008, roughness: 0.22, metalness: 0.65 });
+    if (m.clearcoat != null) { m.clearcoat = 1; m.clearcoatRoughness = 0.12; }
     return m;
   };
 
@@ -94,6 +120,43 @@
       return -2.28 - 0.45 * Math.sqrt(q);
     }
 
+    // v7.6: gloss-black piano tail panel across the whole stern, on
+    // the dome's curve at lamp height. Real sportscars wear one dark
+    // panel that the tail lamps live in — it stops the lamps floating
+    // on bare orange paint in shade, and it is the dark ground the
+    // red LED bar glows against. Five thin slabs follow the curve.
+    var panelMat = new THREE.MeshStandardMaterial({ color: 0x16181e, roughness: 0.15, metalness: 0.6 });
+    [-0.6, -0.3, 0, 0.3, 0.6].forEach(function (z) {
+      var seg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.42, 0.34), panelMat);
+      seg.position.set(domeX(0.72, z) - 0.01, 0.72, z);
+      seg.rotation.y = -z * 0.35; // fan out to follow the dome's curve
+      g.add(seg);
+    });
+
+    // v7.6: the full-width LED bar — five red emissive segments on
+    // the black panel, each placed by domeX so the bar hugs the curve
+    // instead of floating straight across it. One glowing line from
+    // lamp to lamp: the tail's signature at dusk, the way the
+    // trailers' cars signal as a line, not as two dots.
+    var barMat = new THREE.MeshStandardMaterial({
+      color: 0xff2a20, emissive: 0xff2010, emissiveIntensity: 6.0, roughness: 0.2
+    });
+    [-0.44, -0.22, 0, 0.22, 0.44].forEach(function (z) {
+      var barSeg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.24), barMat);
+      barSeg.position.set(domeX(0.72, z) - 0.045, 0.72, z);
+      barSeg.rotation.y = -z * 0.35;
+      g.add(barSeg);
+    });
+    // a soft red glow wash behind the bar, so the whole panel reads
+    // as lit, not just the five segments
+    var barGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: PH.glowTexture(), transparent: true, opacity: 0.55,
+      color: 0xff3020, blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    barGlow.scale.set(2.2, 0.9, 1);
+    barGlow.position.set(domeX(0.72, 0) - 0.1, 0.72, 0);
+    g.add(barGlow);
+
     // Round LED tail lamps, one per side: a red ring (the LED halo) + a
     // bright red disc (the lamp) + a soft glow sprite, all tilted to
     // face rearward off the dome's curve. Two round lamps, not a bar —
@@ -103,27 +166,30 @@
     // away from the sunset, so it lives in shade). The rings and discs
     // are emissive enough to read as lit LEDs even in shade, and the
     // glow sprites are bigger, so the tail signals at dusk.
+    // v7.6: bigger still (ring 0.21, disc 0.18) and hotter (4.0), with
+    // 1.6-unit glow sprites — the lamps are the ENDS of the LED bar
+    // now, so they must outshine it, not hide beside it.
     var lampRingMat = new THREE.MeshStandardMaterial({
-      color: 0xff2a20, emissive: 0xff2010, emissiveIntensity: 2.8, roughness: 0.3
+      color: 0xff2a20, emissive: 0xff2010, emissiveIntensity: 5.0, roughness: 0.3
     });
     var lampDiscMat = new THREE.MeshStandardMaterial({
-      color: 0xff5040, emissive: 0xff3020, emissiveIntensity: 3.0, roughness: 0.2
+      color: 0xff5040, emissive: 0xff3020, emissiveIntensity: 5.0, roughness: 0.2
     });
     [-0.62, 0.62].forEach(function (z) {
       var lx = domeX(0.72, z) - 0.02;
-      var ring = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.035, 8, 20), lampRingMat);
+      var ring = new THREE.Mesh(new THREE.TorusGeometry(0.21, 0.045, 8, 20), lampRingMat);
       ring.rotation.y = Math.PI / 2; // torus faces -X, rearward
       ring.position.set(lx, 0.72, z);
       g.add(ring);
-      var disc = new THREE.Mesh(new THREE.CircleGeometry(0.14, 16), lampDiscMat);
+      var disc = new THREE.Mesh(new THREE.CircleGeometry(0.18, 16), lampDiscMat);
       disc.rotation.y = -Math.PI / 2;
       disc.position.set(lx - 0.02, 0.72, z);
       g.add(disc);
       var glow = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: PH.glowTexture(), transparent: true, opacity: 0.75,
+        map: PH.glowTexture(), transparent: true, opacity: 0.9,
         blending: THREE.AdditiveBlending, depthWrite: false
       }));
-      glow.scale.set(1.15, 1.15, 1);
+      glow.scale.set(1.9, 1.9, 1);
       glow.position.set(lx - 0.06, 0.72, z);
       g.add(glow);
       // small round reverse lamp tucked under each tail lamp
@@ -200,12 +266,15 @@
     // rear edge — the high stop lamp every fastback wears, so the car
     // signals from above as well as from its round lamps.
     var thirdBrake = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 1.1),
-      new THREE.MeshStandardMaterial({ color: 0xff2010, emissive: 0xff2010, emissiveIntensity: 2.6, roughness: 0.3 }));
+      new THREE.MeshStandardMaterial({ color: 0xff2010, emissive: 0xff2010, emissiveIntensity: 4.5, roughness: 0.3 }));
     thirdBrake.position.set(-2.68, 1.14, 0);
     thirdBrake.rotation.z = 0.12;
     g.add(thirdBrake);
     // Tail badge: SCARLET ARROW in small chrome letters across the
     // dome between the lamps — the name the crew calls the car.
+    // v7.6: the badge moves below the LED bar (y 0.52), since the bar
+    // now owns the lamp line — badge and bar no longer fight for the
+    // same strip of tail.
     var badgeTex = PH.canvasTex(256, 48, function (c, w, h) {
       c.clearRect(0, 0, w, h);
       c.fillStyle = '#e8e8f0';
@@ -215,7 +284,7 @@
     });
     var badge = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.16),
       new THREE.MeshBasicMaterial({ map: badgeTex, transparent: true, depthWrite: false }));
-    badge.position.set(domeX(0.72, 0) - 0.02, 0.72, 0);
+    badge.position.set(domeX(0.52, 0) - 0.02, 0.52, 0);
     badge.rotation.y = -Math.PI / 2;
     g.add(badge);
     // Diffuser fins: three vertical blades under the rear bumper that
@@ -241,9 +310,13 @@
     return g;
   };
 
-  // Black multi-spoke wheel: seven thin spokes on a dark rim, low-
-  // profile tyre, orange centre cap. Seven spokes read as a performance
-  // wheel at screenshot distance; five silver spokes read as a hubcap.
+  // Black multi-spoke wheel: ten thin spokes on a dark rim, low-
+  // profile tyre, orange centre cap. Ten spokes read as a performance
+  // wheel at screenshot distance; seven read as a hubcap, five as a
+  // steel wheel. A silver brake disc and a red caliper show through
+  // the spokes — the tell that this car stops as hard as it goes.
+  // v7.6: 7 -> 10 spokes, rim 0.22 -> 0.25 (thinner tyre sidewall),
+  // spokes brighter silver-grey, disc + caliper added.
   PH.buildHeroWheel = function (x, z) {
     var w = new THREE.Group();
     w.position.set(x, 0.36, z);
@@ -251,14 +324,30 @@
       new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.9 }));
     tyre.rotation.z = Math.PI / 2;
     w.add(tyre);
-    var rim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.26, 12),
-      new THREE.MeshStandardMaterial({ color: 0x1a1a1a, metalness: 0.8, roughness: 0.3 }));
+    // brake disc: a silver ring behind the spokes, with a drilled look
+    // from the darker inner hub — visible through the spoke gaps.
+    // v7.6 rev 3: metalness down (0.9 -> 0.6) — with no environment
+    // map, high-metal parts go black in shade; the disc must read
+    // silver from its diffuse colour, not from reflections
+    var disc = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.05, 14),
+      new THREE.MeshStandardMaterial({ color: 0xb8bcc4, metalness: 0.6, roughness: 0.3 }));
+    disc.rotation.z = Math.PI / 2;
+    w.add(disc);
+    // red brake caliper, tucked at the top of the disc
+    var caliper = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.08),
+      new THREE.MeshStandardMaterial({ color: 0xc81e1e, roughness: 0.4, metalness: 0.3 }));
+    caliper.position.set(0, 0.16, 0.1);
+    w.add(caliper);
+    var caliper2 = caliper.clone(); caliper2.position.z = -0.1;
+    w.add(caliper2);
+    var rim = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.26, 12),
+      new THREE.MeshStandardMaterial({ color: 0x3a3a40, metalness: 0.5, roughness: 0.4 }));
     rim.rotation.z = Math.PI / 2;
     w.add(rim);
-    for (var s = 0; s < 7; s++) {
-      var a = (s / 7) * Math.PI * 2;
-      var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.055, 0.05),
-        new THREE.MeshStandardMaterial({ color: 0x2a2a2a, metalness: 0.85, roughness: 0.3 }));
+    for (var s = 0; s < 10; s++) {
+      var a = (s / 10) * Math.PI * 2;
+      var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.05),
+        new THREE.MeshStandardMaterial({ color: 0xc8c8d0, metalness: 0.55, roughness: 0.4 }));
       spoke.position.set(Math.cos(a) * 0.04, Math.sin(a) * 0.04, 0.13);
       spoke.rotation.z = a;
       w.add(spoke);
@@ -283,7 +372,7 @@
     scoop.rotation.z = -0.12; // slanted, sweeping back toward the wheel
     g.add(scoop);
     var lip = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.05, 0.09),
-      new THREE.MeshStandardMaterial({ color: 0xd86008, roughness: 0.3, metalness: 0.55 }));
+      new THREE.MeshStandardMaterial({ color: 0xd86008, roughness: 0.22, metalness: 0.65 }));
     lip.position.set(-0.55, 0.97, side * 0.97);
     lip.rotation.z = -0.12;
     g.add(lip);
@@ -295,6 +384,9 @@
   // from either end), a wide mesh grille and a deeper front splitter
   // with winglets. A fastback's face is a low nose with round eyes —
   // the old rectangular headlight boxes read as a sedan's.
+  // v7.6: a slim white LED bar above the grille joins the two round
+  // DRLs — the front now wears the same full-width light line as the
+  // tail, so the car is one design from either end.
   PH.buildHeroFront = function (bodyMat) {
     var g = new THREE.Group();
     var meshMat = new THREE.MeshStandardMaterial({ map: PH.heroMeshTexture(), roughness: 0.6, metalness: 0.4 });
@@ -322,6 +414,18 @@
       winglet.position.set(2.2, 0.22, z);
       g.add(winglet);
     });
+    // v7.6: slim white LED bar above the grille, joining the DRLs
+    var frontBar = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.07, 1.5),
+      new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffe6a0, emissiveIntensity: 2.8, roughness: 0.2 }));
+    frontBar.position.set(2.33, 0.84, 0);
+    g.add(frontBar);
+    var frontBarGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: PH.glowTexture(), transparent: true, opacity: 0.3,
+      color: 0xffe6a0, blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    frontBarGlow.scale.set(1.8, 0.5, 1);
+    frontBarGlow.position.set(2.38, 0.84, 0);
+    g.add(frontBarGlow);
     // round LED daytime running lamps, one per side: a white ring
     // (the LED halo) + a bright lens + a soft glow, tilted to face
     // forward off the nose's curve — the car's eyes, matching the
@@ -371,7 +475,7 @@
     g.add(stalk);
     // housing: a small body-colour shell
     var housing = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.07),
-      new THREE.MeshStandardMaterial({ color: 0xd86008, roughness: 0.3, metalness: 0.55 }));
+      new THREE.MeshStandardMaterial({ color: 0xd86008, roughness: 0.22, metalness: 0.65 }));
     housing.position.set(0.95, 0.97, side * 1.08);
     g.add(housing);
     // glass face: sky-reflecting, on the mirror's rear face (the face

@@ -1,10 +1,12 @@
-// PIER HEAT — Sunset Bay v7.5 (Node 22, standard library only).
+// PIER HEAT — Sunset Bay v7.6 (Node 22, standard library only).
 // Copies game/ and screenshots/ from beside this file to the output
 // directory and writes /output/dossier.json with the vendored make.fun
-// library. v7.5 is fully procedural: the build refuses any binary model
+// library. v7.6 is fully procedural: the build refuses any binary model
 // file under game/ (the GLB that got v7.2 rejected must never come back)
 // AND refuses screenshots over the 256 KiB cap, so a bad capture fails
 // the build instead of the sealed gate.
+// v7.6 rev 2: render pass 1 drove small fixes (LED heat, spokes, chain,
+// blood pools, boat stripes) — no systems changed, versions unchanged.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in
 // for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
@@ -16,7 +18,7 @@ import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-const VERSION = '7.5';
+const VERSION = '7.6';
 
 mkdirSync(out, { recursive: true });
 // v7.4 gate: no binary model files may ship in game/ any more.

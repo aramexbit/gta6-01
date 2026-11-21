@@ -1,8 +1,22 @@
-// PIER HEAT — Sunset Bay v7.4
+// PIER HEAT — Sunset Bay v7.6
 // sim.js — everything that moves: procedural people + poses, cars (hero,
 // traffic, police), traffic system, city + beach crowds, police + heli,
 // and the muzzle flash. Mateo / Kira are built in mateo.js (primitives,
 // no model file). Plain script; uses window.PH.
+//
+// v7.6 (GTA VI video study — Trailer 2 + An Extended Look, see
+// gta6-video-refs-v76.md): the v7.5 crowd read as single-colour blocks
+// with two dot eyes, and the traffic read as identical boxes. Real
+// streets are varied: people have structured faces (eyes in white
+// sockets, a nose, lips, a chin), shoes on their feet, shirts with
+// collars, and different heights and builds; cars have sloped hoods
+// and trunks, bumpers, side skirts and chrome trim instead of one
+// box, and the street mixes sedans, SUVs, pickups, vans, wagons,
+// taxis AND a motorcycle. Police cruisers wear a push bar, a
+// spotlight and an antenna; officers wear a badge, a duty belt with
+// a holster and a shoulder radio. Nothing else in this file changes:
+// poses, traffic routes, crowd counts and police behaviour are the
+// v7.5 ones, untouched.
 (function () {
   'use strict';
   var PH = window.PH;
@@ -27,7 +41,13 @@
     return new THREE.MeshStandardMaterial({ color: color, roughness: rough == null ? 0.85 : rough });
   }
 
-  // ---- procedural person (~1.8 units), low-poly face, poseable limbs ----
+  // ---- procedural person (~1.8 units), structured low-poly face, poseable limbs ----
+  // v7.6: the v7.5 person was a single-colour capsule with two dot
+  // eyes and a mouth line. The new one has the same face structure
+  // as Mateo in mateo.js — white eyes with pupils and glints, brows,
+  // a wedged nose, lips, a chin, ears and a neck — plus shoes, a
+  // shirt collar, and a slightly randomised build (torso width), so
+  // the crowd is people, not clones in different shirts.
   PH.makePerson = function (opts) {
     opts = opts || {};
     var skin = opts.skin != null ? opts.skin : PH.pick(SKINS);
@@ -36,33 +56,85 @@
     var hair = opts.hair != null ? opts.hair : PH.pick(HAIRS);
     var scale = opts.scale || 1;
     var g = new THREE.Group();
-    var legL = new THREE.Group(); legL.position.set(-0.14, 0.85, 0);
-    var legR = new THREE.Group(); legR.position.set(0.14, 0.85, 0);
-    var legGeo = new THREE.BoxGeometry(0.22, 0.85, 0.24);
+    var legL = new THREE.Group(); legL.position.set(-0.12, 0.85, 0);
+    var legR = new THREE.Group(); legR.position.set(0.12, 0.85, 0);
+    var legGeo = new THREE.BoxGeometry(0.19, 0.85, 0.2);
     var lm = new THREE.Mesh(legGeo, mat(pants)); lm.position.y = -0.42; lm.castShadow = true;
     var rm = new THREE.Mesh(legGeo, mat(pants)); rm.position.y = -0.42; rm.castShadow = true;
     legL.add(lm); legR.add(rm);
-    var body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.5, 4, 8), mat(shirt));
-    body.position.y = 1.2; body.castShadow = true;
-    var headG = new THREE.Group(); headG.position.y = 1.68;
-    var head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 10), mat(skin));
-    head.castShadow = true; headG.add(head);
-    var hairM = new THREE.Mesh(new THREE.SphereGeometry(0.23, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(hair));
-    hairM.position.y = 0.03; headG.add(hairM);
-    // low-poly face: two dark eyes + mouth line on the front (+Z)
-    var eyeMat = new THREE.MeshBasicMaterial({ color: 0x14100c });
-    [-0.08, 0.08].forEach(function (ex) {
-      var eye = new THREE.Mesh(new THREE.SphereGeometry(0.028, 6, 6), eyeMat);
-      eye.position.set(ex, 0.02, 0.2); headG.add(eye);
+    // v7.6: shoes — dark uppers with a pale sole, toes pointing +Z.
+    // The v7.5 legs ended in bare trouser hems at the pavement.
+    [legL, legR].forEach(function (leg) {
+      var shoe = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.1, 0.32), mat(0x1a1a1a, 0.7));
+      shoe.position.set(0, -0.8, 0.05); leg.add(shoe);
+      var sole = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.04, 0.34), mat(0xd8d8d8, 0.6));
+      sole.position.set(0, -0.86, 0.05); leg.add(sole);
     });
-    var mouth = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.015, 0.01), eyeMat);
-    mouth.position.set(0, -0.09, 0.205); headG.add(mouth);
-    var armL = new THREE.Group(); armL.position.set(-0.38, 1.5, 0);
-    var armR = new THREE.Group(); armR.position.set(0.38, 1.5, 0);
-    var armGeo = new THREE.BoxGeometry(0.16, 0.7, 0.18);
+    var body = new THREE.Mesh(new THREE.CapsuleGeometry(0.27, 0.5, 4, 8), mat(shirt));
+    body.position.y = 1.2; body.castShadow = true;
+    // v7.6: build variation — some walkers are broader, some slimmer,
+    // so the crowd is not one torso stamped 130 times
+    body.scale.x = 0.9 + PH.R() * 0.25;
+    // v7.6: shirt collar + a chest pocket on half the crowd, so the
+    // shirt reads as clothing instead of a coloured capsule
+    var collar = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.06), mat(shirt, 0.9));
+    collar.position.set(0, 1.52, 0.26); g.add(collar);
+    if (PH.R() < 0.5) {
+      var pocket = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.12, 0.03), mat(shirt, 0.9));
+      pocket.position.set(-0.13, 1.3, 0.28); g.add(pocket);
+    }
+    var headG = new THREE.Group(); headG.position.y = 1.68;
+    // v7.6: a neck under the jaw — the head sits on the body now
+    var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 0.14, 8), mat(skin, 0.75));
+    neck.position.y = -0.24; headG.add(neck);
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 10), mat(skin));
+    head.castShadow = true; headG.add(head);
+    // v7.6: ears at the sides of the head
+    [-0.19, 0.19].forEach(function (ex) {
+      var ear = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 6), mat(skin, 0.75));
+      ear.position.set(ex, -0.02, 0); ear.scale.set(0.6, 1, 0.8); headG.add(ear);
+    });
+    var hairM = new THREE.Mesh(new THREE.SphereGeometry(0.21, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(hair));
+    hairM.position.y = 0.03; headG.add(hairM);
+    // v7.6: structured face — white eyes with dark pupils and glints,
+    // brows, a wedged nose with a tip, two-tone lips and a chin.
+    // The v7.5 face was two black dots + a mouth line on a ball.
+    var whiteMat = new THREE.MeshBasicMaterial({ color: 0xf8f8f0 });
+    var eyeMat = new THREE.MeshBasicMaterial({ color: 0x14100c });
+    [-0.075, 0.075].forEach(function (ex) {
+      var white = new THREE.Mesh(new THREE.SphereGeometry(0.042, 8, 6), whiteMat);
+      white.position.set(ex, 0.02, 0.18); white.scale.set(1, 0.75, 0.5); headG.add(white);
+      var eye = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 6), eyeMat);
+      eye.position.set(ex, 0.02, 0.21); headG.add(eye);
+      var glint = new THREE.Mesh(new THREE.SphereGeometry(0.009, 6, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      glint.position.set(ex + 0.011, 0.032, 0.225); headG.add(glint);
+      var brow = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.014), eyeMat);
+      brow.position.set(ex, 0.09, 0.19);
+      brow.rotation.z = ex < 0 ? 0.12 : -0.12;
+      headG.add(brow);
+    });
+    var nose = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.08, 0.05), mat(skin, 0.75));
+    nose.position.set(0, -0.04, 0.19); headG.add(nose);
+    var noseTip = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), mat(skin, 0.75));
+    noseTip.position.set(0, -0.075, 0.21); noseTip.scale.set(1.2, 0.8, 0.8); headG.add(noseTip);
+    var upperLip = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.018, 0.01), mat(0x8a3a2a, 0.7));
+    upperLip.position.set(0, -0.115, 0.19); headG.add(upperLip);
+    var lowerLip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.022, 0.01), mat(0xb05a44, 0.7));
+    lowerLip.position.set(0, -0.14, 0.19); headG.add(lowerLip);
+    var chin = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.05, 0.04), mat(skin, 0.8));
+    chin.position.set(0, -0.175, 0.17); headG.add(chin);
+    var armL = new THREE.Group(); armL.position.set(-0.34, 1.5, 0);
+    var armR = new THREE.Group(); armR.position.set(0.34, 1.5, 0);
+    var armGeo = new THREE.BoxGeometry(0.14, 0.7, 0.16);
     var al = new THREE.Mesh(armGeo, mat(shirt)); al.position.y = -0.35; al.castShadow = true;
     var ar = new THREE.Mesh(armGeo, mat(shirt)); ar.position.y = -0.35; ar.castShadow = true;
     armL.add(al); armR.add(ar);
+    // skin hands at the sleeve ends (v7.6: the v7.5 arms ended in shirt)
+    [armL, armR].forEach(function (arm) {
+      var hand = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), mat(skin, 0.75));
+      hand.position.y = -0.72; arm.add(hand);
+    });
     if (opts.hat) {
       var hat = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.26, 0.1, 10), mat(0x1a2a4a, 0.7));
       hat.position.y = 0.2; headG.add(hat);
@@ -71,59 +143,83 @@
     }
     if (opts.cap) {
       // baseball cap: dome + a brim sticking out over the face
-      var capDome = new THREE.Mesh(new THREE.SphereGeometry(0.23, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), mat(opts.capColor != null ? opts.capColor : 0xc81e1e, 0.8));
+      var capDome = new THREE.Mesh(new THREE.SphereGeometry(0.21, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), mat(opts.capColor != null ? opts.capColor : 0xc81e1e, 0.8));
       capDome.position.y = 0.04; headG.add(capDome);
-      var capBrim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.22), mat(opts.capColor != null ? opts.capColor : 0xc81e1e, 0.8));
-      capBrim.position.set(0, 0.12, 0.3); headG.add(capBrim);
+      var capBrim = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.03, 0.2), mat(opts.capColor != null ? opts.capColor : 0xc81e1e, 0.8));
+      capBrim.position.set(0, 0.12, 0.28); headG.add(capBrim);
       var capBtn = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), mat(0xf2f2f2, 0.6));
-      capBtn.position.y = 0.26; headG.add(capBtn);
+      capBtn.position.y = 0.24; headG.add(capBtn);
     }
     if (opts.helmet) {
       // white PD helmet: bright dome + a clear visor strip, so an
       // officer reads as police from across the street even at dusk
-      var helm = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(0xf2f2f2, 0.4));
+      var helm = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(0xf2f2f2, 0.4));
       helm.position.y = 0.04; headG.add(helm);
-      var visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.14, 0.04),
+      var visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.13, 0.04),
         new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.1, metalness: 0.5, transparent: true, opacity: 0.7 }));
-      visor.position.set(0, 0.04, 0.22); headG.add(visor);
-      var helmBadge = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.02),
+      visor.position.set(0, 0.04, 0.21); headG.add(visor);
+      var helmBadge = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.07, 0.02),
         new THREE.MeshStandardMaterial({ color: 0x2040a0, emissive: 0x2040a0, emissiveIntensity: 0.6 }));
-      helmBadge.position.set(0, 0.14, 0.25); headG.add(helmBadge);
+      helmBadge.position.set(0, 0.13, 0.24); headG.add(helmBadge);
     }
     if (opts.sunglasses) {
-      [-0.085, 0.085].forEach(function (ex) {
-        var lens = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.02),
+      [-0.08, 0.08].forEach(function (ex) {
+        var lens = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.07, 0.02),
           new THREE.MeshStandardMaterial({ color: 0x101010, roughness: 0.1, metalness: 0.7 }));
-        lens.position.set(ex, 0.02, 0.21); headG.add(lens);
+        lens.position.set(ex, 0.02, 0.2); headG.add(lens);
       });
-      var bridge = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.02, 0.02),
+      var bridge = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.02, 0.02),
         new THREE.MeshStandardMaterial({ color: 0x101010, roughness: 0.2, metalness: 0.7 }));
-      bridge.position.set(0, 0.02, 0.21); headG.add(bridge);
+      bridge.position.set(0, 0.02, 0.2); headG.add(bridge);
     }
     if (opts.vest) {
       // hi-vis vest: bright panel over the shirt + two silver bands
-      var vestF = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.1), mat(0xffc832, 0.7));
-      vestF.position.set(0, 1.22, 0.28); g.add(vestF);
-      var vestB = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.1), mat(0xffc832, 0.7));
-      vestB.position.set(0, 1.22, -0.28); g.add(vestB);
+      var vestF = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.55, 0.1), mat(0xffc832, 0.7));
+      vestF.position.set(0, 1.22, 0.26); g.add(vestF);
+      var vestB = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.55, 0.1), mat(0xffc832, 0.7));
+      vestB.position.set(0, 1.22, -0.26); g.add(vestB);
       [1.1, 1.35].forEach(function (y) {
-        var band = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.06, 0.12),
+        var band = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.06, 0.12),
           new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.8, roughness: 0.3 }));
-        band.position.set(0, y, 0.28); g.add(band);
+        band.position.set(0, y, 0.26); g.add(band);
       });
     }
     if (opts.jacket) {
       // open jacket: two dark panels over the shirt, collar up
-      [-0.2, 0.2].forEach(function (x) {
-        var panel = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.6, 0.08), mat(opts.jacketColor != null ? opts.jacketColor : 0x2a3a4a, 0.9));
-        panel.position.set(x, 1.22, 0.3); g.add(panel);
+      [-0.18, 0.18].forEach(function (x) {
+        var panel = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.6, 0.08), mat(opts.jacketColor != null ? opts.jacketColor : 0x2a3a4a, 0.9));
+        panel.position.set(x, 1.22, 0.28); g.add(panel);
       });
     }
     if (opts.backpack) {
-      var pack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.18), mat(opts.packColor != null ? opts.packColor : 0x8a2a3a, 0.9));
-      pack.position.set(0, 1.25, -0.36); g.add(pack);
-      var flap = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.2), mat(0x2a2a2a, 0.9));
-      flap.position.set(0, 1.48, -0.36); g.add(flap);
+      var pack = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.5, 0.18), mat(opts.packColor != null ? opts.packColor : 0x8a2a3a, 0.9));
+      pack.position.set(0, 1.25, -0.34); g.add(pack);
+      var flap = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.2), mat(0x2a2a2a, 0.9));
+      flap.position.set(0, 1.48, -0.34); g.add(flap);
+    }
+    // v7.6: police kit — a gold badge on the chest, a duty belt with
+    // a holster and a shoulder radio, so an officer is a uniformed
+    // cop, not a dark shirt with a helmet. (Set by PH.Police.)
+    if (opts.policeKit) {
+      var badge = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.02, 8),
+        new THREE.MeshStandardMaterial({ color: 0xffd23c, metalness: 0.95, roughness: 0.25 }));
+      badge.rotation.x = Math.PI / 2; badge.position.set(-0.12, 1.38, 0.32); g.add(badge);
+      var nameTape = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.05, 0.02),
+        new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.6 }));
+      nameTape.position.set(0.12, 1.38, 0.32); g.add(nameTape);
+      var dutyBelt = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.29, 0.09, 12), mat(0x141414, 0.7));
+      dutyBelt.position.y = 0.92; g.add(dutyBelt);
+      var holster = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 0.14), mat(0x141414, 0.7));
+      holster.position.set(0.28, 0.85, 0.05); g.add(holster);
+      var radio = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 0.05), mat(0x141414, 0.6));
+      radio.position.set(-0.2, 1.42, 0.3); g.add(radio);
+      var radioAntenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.18, 4), mat(0x141414, 0.6));
+      radioAntenna.position.set(-0.2, 1.56, 0.3); g.add(radioAntenna);
+      [-0.3, 0.3].forEach(function (x) {
+        var patch = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.16),
+          new THREE.MeshStandardMaterial({ color: 0x2040a0, roughness: 0.7 }));
+        patch.position.set(x, 1.42, 0); g.add(patch);
+      });
     }
     g.add(legL, legR, body, headG, armL, armR);
     g.scale.setScalar(scale);
@@ -200,17 +296,24 @@
   // ---- cars ----
   // Wheel with hub detail (v7.4): five spokes + a centre cap, so the
   // wheel reads as a wheel from the side instead of a flat dark disc.
+  // v7.6: six thinner spokes, a brighter rim and a visible brake disc
+  // behind them — traffic wheels stop reading as black dinner plates.
+  // v7.6 rev 2: traffic hubs and spokes brighter still (render pass 1
+  // showed the rivals' wheels as dark discs from the chase camera)
   function wheel(x, z, rim) {
     var w = new THREE.Group(); w.position.set(x, 0.36, z);
     var tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.26, 12), mat(0x141414, 0.9));
     tyre.rotation.z = Math.PI / 2; w.add(tyre);
+    var disc = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.05, 10),
+      new THREE.MeshStandardMaterial({ color: 0xa8acb4, metalness: 0.6, roughness: 0.35 }));
+    disc.rotation.z = Math.PI / 2; w.add(disc);
     var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.28, 10),
-      new THREE.MeshStandardMaterial({ color: rim ? 0xd8d8e0 : 0x888888, metalness: 0.9, roughness: 0.25 }));
+      new THREE.MeshStandardMaterial({ color: rim ? 0xd8d8e0 : 0xb8b8c0, metalness: 0.55, roughness: 0.4 }));
     hub.rotation.z = Math.PI / 2; w.add(hub);
-    for (var s = 0; s < 5; s++) {
-      var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.07, 0.05),
-        new THREE.MeshStandardMaterial({ color: rim ? 0xc0c0c8 : 0x666666, metalness: 0.85, roughness: 0.3 }));
-      var a = (s / 5) * Math.PI * 2;
+    for (var s = 0; s < 6; s++) {
+      var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.07, 0.05),
+        new THREE.MeshStandardMaterial({ color: rim ? 0xc8c8d0 : 0xa8a8b0, metalness: 0.55, roughness: 0.4 }));
+      var a = (s / 6) * Math.PI * 2;
       spoke.position.set(Math.cos(a) * 0.05, Math.sin(a) * 0.05, 0.14);
       spoke.rotation.z = a;
       w.add(spoke);
@@ -221,6 +324,52 @@
     cap.rotation.z = Math.PI / 2; w.add(cap);
     return w;
   }
+
+  // ---- motorcycle (v7.6): two wheels, a frame, a headlight and a
+  // seated rider in a helmet — the street's fastest silhouette, and
+  // the one the trailers never leave out of a traffic shot. The rider
+  // is a makePerson posed 'sit' once at build; Traffic moves the
+  // whole group like any car.
+  PH.makeBike = function (opts) {
+    opts = opts || {};
+    var g = new THREE.Group();
+    var color = opts.color != null ? opts.color : PH.pick([0xd83a2a, 0x2a6fd8, 0x1a1a1a, 0xffc832]);
+    var tyreMat = mat(0x141414, 0.9);
+    var wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.12, 12);
+    [-0.85, 0.85].forEach(function (z) {
+      var tyre = new THREE.Mesh(wheelGeo, tyreMat);
+      tyre.rotation.x = Math.PI / 2; tyre.position.set(0, 0.36, z); g.add(tyre);
+      var rim = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.14, 10),
+        new THREE.MeshStandardMaterial({ color: 0x9a9aa2, metalness: 0.9, roughness: 0.25 }));
+      rim.rotation.x = Math.PI / 2; rim.position.set(0, 0.36, z); g.add(rim);
+    });
+    var frame = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 1.5), mat(color, 0.4, 0.4));
+    frame.position.set(0, 0.62, 0); frame.rotation.x = 0.08; g.add(frame);
+    var tank = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.55), mat(color, 0.4, 0.4));
+    tank.position.set(0, 0.82, 0.35); g.add(tank);
+    var seat = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.6), mat(0x141414, 0.8));
+    seat.position.set(0, 0.82, -0.4); g.add(seat);
+    var bars = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.6, 6), mat(0x888888, 0.3, 0.9));
+    bars.rotation.z = Math.PI / 2; bars.position.set(0, 0.95, 0.78); g.add(bars);
+    var head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xffe6a0, emissive: 0xffd060, emissiveIntensity: 1.6 }));
+    head.position.set(0, 0.72, 0.95); g.add(head);
+    var tail = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.08, 0.05),
+      new THREE.MeshStandardMaterial({ color: 0xff2a20, emissive: 0xff2010, emissiveIntensity: 1.6 }));
+    tail.position.set(0, 0.72, -0.95); g.add(tail);
+    var exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.5, 8),
+      new THREE.MeshStandardMaterial({ color: 0xb8bcc4, metalness: 0.9, roughness: 0.3 }));
+    exhaust.rotation.x = Math.PI / 2; exhaust.position.set(0.16, 0.45, -0.6); g.add(exhaust);
+    // rider: seated, helmet on, hands on the bars (pose set once)
+    var rider = PH.makePerson({ shirt: PH.pick(SHIRTS), pants: 0x1a1a1a, helmet: false, cap: true, capColor: 0x1a1a1a });
+    rider.setPose('sit', 0, 5);
+    rider.group.position.set(0, 0.15, -0.25);
+    rider.group.rotation.y = 0;
+    g.add(rider.group);
+    g.userData.length = 2.2;
+    g.userData.rider = rider;
+    return g;
+  };
 
   PH.makeCar = function (opts) {
     opts = opts || {};
@@ -387,6 +536,7 @@
       }
       // v7.5: black 7-spoke wheels from herocar.js (low-profile
       // stance); the old 5-spoke silver wheels stay the fallback.
+      // v7.6: herocar.js now builds 10-spoke wheels with brake discs.
       [[-1.55, -1.02], [1.45, -1.02]].forEach(function (p) { g.add((PH.buildHeroWheel || wheel)(p[0], p[1], true)); });
       [[-1.55, 1.02], [1.45, 1.02]].forEach(function (p) { g.add((PH.buildHeroWheel || wheel)(p[0], p[1], true)); });
       // v7.5: side intakes behind the doors (herocar.js) — the
@@ -458,6 +608,10 @@
     }
 
     // traffic / police box-body car: 1.9 x 0.72 x 4.4
+    // v7.6: the box gets a real car's silhouette — a sloped hood and
+    // trunk, front and rear bumpers with chrome strips, side skirts
+    // and window chrome trim — so it stops reading as a shipping box
+    // with windows. The v7.5 car was one box + one cabin box.
     var isPolice = kind === 'police';
     var bodyColor = isPolice ? 0xf2f2f2 : color;
     var body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.72, 4.4), mat(bodyColor, isPolice ? 0.4 : 0.55, 0.15));
@@ -470,6 +624,8 @@
     // body variants (v7.4): the same kit, four silhouettes — sedan is
     // the base above; hatch shortens the tail, van grows tall with a
     // long roof, pickup drops the rear roof for an open bed.
+    // v7.6 adds the SUV (taller body, taller cabin, roof rails) and
+    // the taxi/coupe/wagon from v7.4 stay as they were.
     var bodyType = opts.bodyType || 'sedan';
     if (bodyType === 'hatch') {
       body.scale.z = 0.88; cabin.position.z = -0.35; roof.position.z = -0.35;
@@ -480,6 +636,21 @@
       body.scale.y = 1.45; body.position.y = 0.95;
       cabin.scale.y = 1.35; cabin.position.y = 1.55; cabin.scale.z = 1.25;
       roof.position.y = 2.05; roof.scale.z = 1.25;
+    } else if (bodyType === 'suv') {
+      // tall 4x4: higher body and cabin, roof rails, a rear spare —
+      // the big silhouette the street was missing between sedan and van
+      body.scale.y = 1.3; body.position.y = 0.86;
+      cabin.scale.y = 1.2; cabin.position.y = 1.5; cabin.scale.z = 1.15;
+      roof.position.y = 1.92; roof.scale.z = 1.15;
+      [-0.6, 0.6].forEach(function (x) {
+        var rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 2.2), mat(0x222222, 0.5, 0.6));
+        rail.position.set(x, 2.0, -0.2); g.add(rail);
+      });
+      var spare = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.18, 12), mat(0x141414, 0.9));
+      spare.rotation.x = Math.PI / 2; spare.position.set(0, 1.0, -2.25); g.add(spare);
+      var spareHub = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.2, 10),
+        new THREE.MeshStandardMaterial({ color: 0x9a9aa2, metalness: 0.9, roughness: 0.25 }));
+      spareHub.rotation.x = Math.PI / 2; spareHub.position.set(0, 1.0, -2.26); g.add(spareHub);
     } else if (bodyType === 'pickup') {
       cabin.scale.z = 0.6; cabin.position.z = 0.55;
       roof.scale.z = 0.6; roof.position.z = 0.55;
@@ -525,6 +696,31 @@
         new THREE.MeshStandardMaterial({ map: PH.signTexture('TAXI', '#14181c', '#ffd23c'), roughness: 0.5 }));
       signText.position.set(0, 1.85, 0.06); g.add(signText);
     }
+    // v7.6: sloped hood + sloped trunk — two thin angled panels that
+    // break the box's flat top line into a car's profile. The hood
+    // dips toward the nose, the trunk dips toward the tail.
+    var hoodPanel = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.06, 1.0), mat(bodyColor, 0.55, 0.15));
+    hoodPanel.position.set(0, 1.04, 1.65); hoodPanel.rotation.x = -0.16; g.add(hoodPanel);
+    var trunkPanel = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.06, 0.9), mat(bodyColor, 0.55, 0.15));
+    trunkPanel.position.set(0, 1.04, -1.7); trunkPanel.rotation.x = 0.14; g.add(trunkPanel);
+    // v7.6: front + rear bumpers with a chrome strip, and side skirts
+    // along the sills — the box's hard edges get a car's lower trim
+    var bumpMat = mat(0x222222, 0.5, 0.3);
+    var chromeMat = new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.95, roughness: 0.2 });
+    var fBump = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.2, 0.16), bumpMat);
+    fBump.position.set(0, 0.42, 2.24); g.add(fBump);
+    var fStrip = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.04, 0.02), chromeMat);
+    fStrip.position.set(0, 0.5, 2.33); g.add(fStrip);
+    var rBump = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.2, 0.16), bumpMat);
+    rBump.position.set(0, 0.42, -2.24); g.add(rBump);
+    var rStrip = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.04, 0.02), chromeMat);
+    rStrip.position.set(0, 0.5, -2.33); g.add(rStrip);
+    [-0.96, 0.96].forEach(function (x) {
+      var skirt = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 3.6), bumpMat);
+      skirt.position.set(x, 0.32, 0); g.add(skirt);
+      var trim = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 3.4), chromeMat);
+      trim.position.set(x, 1.06, -0.2); g.add(trim);
+    });
     // roof rack on some traffic cars (two rails + two cross bars)
     if (!isPolice && PH.R() < 0.3) {
       [-0.6, 0.6].forEach(function (x) {
@@ -593,6 +789,23 @@
       blue.position.x = 0.4; bar.add(blue);
       g.add(bar);
       g.userData.lightRed = red; g.userData.lightBlue = blue;
+      // v7.6: police hardware — a black push bar on the nose (the ram
+      // bar every pursuit cruiser wears), a spotlight on the driver's
+      // A-pillar and a roof antenna, so a cruiser reads as PD even
+      // with its light bar off
+      var pushBar = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.14, 0.1), mat(0x14181c, 0.5, 0.4));
+      pushBar.position.set(0, 0.75, 2.36); g.add(pushBar);
+      [-0.55, 0.55].forEach(function (x) {
+        var pushUp = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.5, 0.09), mat(0x14181c, 0.5, 0.4));
+        pushUp.position.set(x, 0.62, 2.36); g.add(pushUp);
+      });
+      var spotPost = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.35, 6), mat(0x222222, 0.5, 0.6));
+      spotPost.position.set(-0.85, 1.25, 0.85); g.add(spotPost);
+      var spotHead = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6),
+        new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffee88, emissiveIntensity: 1.2 }));
+      spotHead.position.set(-0.85, 1.45, 0.85); g.add(spotHead);
+      var pdAntenna = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.025, 0.6, 6), mat(0x14181c, 0.5));
+      pdAntenna.position.set(0.6, 1.95, -1.0); g.add(pdAntenna);
     }
     [[-0.95, 1.45], [0.95, 1.45], [-0.95, -1.45], [0.95, -1.45]].forEach(function (p) {
       g.add(wheel(p[0], p[1], false));
@@ -618,18 +831,26 @@
       // v7.4 round 2: seven silhouettes now — sedan, hatch, van,
       // pickup, coupe, wagon and a yellow taxi — plus a wider colour
       // roll and per-car speeds from a crawl (5) to a hurry (13), so
-      // the street never reads as sixteen identical boxes
-      var types = ['sedan', 'sedan', 'hatch', 'van', 'pickup', 'coupe', 'wagon', 'taxi'];
-      var carOpts = { kind: 'traffic', bodyType: types[i % types.length] };
-      if (types[i % types.length] === 'taxi') carOpts.color = 0xffc832;
-      else carOpts.color = PH.pick([0xd83a2a, 0x2a6fd8, 0xf2f2f2, 0xffc832, 0x0e7a7a, 0x8a5aff, 0x1a1a1a, 0xff6ab0, 0x37a05a, 0xc0c8d0, 0x37d67a, 0xff8c42, 0x5a3a8a, 0x2ee6c8]);
-      var car = PH.makeCar(carOpts);
+      // the street never reads as sixteen identical boxes.
+      // v7.6: nine silhouettes — an SUV and a motorcycle join the
+      // rotation, and bikes run a little faster (they filter traffic).
+      var types = ['sedan', 'sedan', 'hatch', 'van', 'pickup', 'coupe', 'wagon', 'taxi', 'suv', 'bike'];
+      var type = types[i % types.length];
+      var car;
+      if (type === 'bike') {
+        car = PH.makeBike({});
+      } else {
+        var carOpts = { kind: 'traffic', bodyType: type };
+        if (type === 'taxi') carOpts.color = 0xffc832;
+        else carOpts.color = PH.pick([0xd83a2a, 0x2a6fd8, 0xf2f2f2, 0xffc832, 0x0e7a7a, 0x8a5aff, 0x1a1a1a, 0xff6ab0, 0x37a05a, 0xc0c8d0, 0x37d67a, 0xff8c42, 0x5a3a8a, 0x2ee6c8]);
+        car = PH.makeCar(carOpts);
+      }
       var s = PH.rand(0, 1);
       var pos = route.from + (route.to - route.from) * s;
       if (route.axis === 'z') { car.position.set(route.fixed, 0, pos); car.rotation.y = route.dir > 0 ? 0 : Math.PI; }
       else { car.position.set(pos, 0, route.fixed); car.rotation.y = route.dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
       scene.add(car);
-      this.cars.push({ mesh: car, route: route, speed: PH.rand(5, 13), frozen: false });
+      this.cars.push({ mesh: car, route: route, speed: type === 'bike' ? PH.rand(11, 15) : PH.rand(5, 13), frozen: false });
     }
   };
   PH.Traffic.prototype.update = function (dt) {
@@ -682,6 +903,9 @@
       else if (roll < 0.32) pOpts.sunglasses = true;
       else if (roll < 0.4) pOpts.jacket = true;
       if (roll < 0.12) pOpts.capColor = PH.pick([0xc81e1e, 0x0e7a7a, 0xffc832, 0x2a6fd8, 0x1a1a1a]);
+      // v7.6: height variation — walkers run 0.92 to 1.08 tall, so the
+      // crowd has short and tall people instead of one stamped height
+      pOpts.scale = PH.rand(0.92, 1.08);
       var p = PH.makePerson(pOpts);
       var s = PH.rand(0, 1);
       var pos = lane.from + (lane.to - lane.from) * s;
@@ -694,7 +918,7 @@
     // 12 pier walkers
     this.pier = [];
     for (var j = 0; j < 12; j++) {
-      var pp = PH.makePerson({});
+      var pp = PH.makePerson({ scale: PH.rand(0.92, 1.08) });
       pp.group.position.set(PH.rand(-84, -32), 1.35, PH.rand(36.5, 43.5));
       pp.group.rotation.y = PH.rand(0, Math.PI * 2);
       scene.add(pp.group);
@@ -746,7 +970,10 @@
     this.members = [];
     var self = this;
     function add(pose, x, z, y, opts) {
-      var p = PH.makePerson(opts || {});
+      opts = opts || {};
+      // v7.6: height variation on the beach too (kids already pass 0.6)
+      if (opts.scale == null) opts.scale = PH.rand(0.92, 1.06);
+      var p = PH.makePerson(opts);
       p.group.position.set(x, y || 0, z);
       p.group.rotation.y = PH.rand(0, Math.PI * 2);
       scene.add(p.group);
@@ -925,8 +1152,11 @@
       scene.add(car);
       this.cruisers.push(car);
       // round 2: white helmet + hi-vis vest + lighter skin, so an
-      // officer is a readable person at dusk instead of a dark blob
-      var off = PH.makePerson({ shirt: 0x1a2a4a, pants: 0x1a2a4a, skin: 0xf2c89b, helmet: true, vest: true });
+      // officer is a readable person at dusk instead of a dark blob.
+      // v7.6: + the police kit (gold badge, name tape, duty belt with
+      // holster, shoulder radio, sleeve patches) — the uniform is
+      // dressed, not a dark shirt.
+      var off = PH.makePerson({ shirt: 0x1a2a4a, pants: 0x1a2a4a, skin: 0xf2c89b, helmet: true, vest: true, policeKit: true });
       scene.add(off.group);
       this.officers.push(off);
     }

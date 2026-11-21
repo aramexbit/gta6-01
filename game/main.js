@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.0
+// PIER HEAT — Sunset Bay v7.1
 // main.js — boots the renderer, builds the world and its crowds, stages
 // the four screenshot scenes (chase / on foot / mission / combat) and runs
 // the playable game: drive the Scarlet Arrow, walk as Mateo, lose the
@@ -127,33 +127,25 @@
     stageTrafficCar(2, 8, -40, false);
     stageTrafficCar(3, 30, -40, false);
     police.frozen = true;
-    // v7.0 rev2: heli further out and lower, so the whole rotor fits in
-    // the frame instead of being cropped by the top edge.
-    police.heli.position.set(-18, 7.5, -16);
+    police.heli.position.set(-30, 11, -25);
     police.heli.rotation.y = Math.PI * 0.75;
     camera.fov = 46; camera.updateProjectionMatrix();
-    // v7.0: camera tight behind the hero's rear-right quarter — the wedge
-    // fills a third of the frame instead of a sixth.
-    camera.position.set(-16.5, 2.5, 15.5);
-    camera.lookAt(-21, 1.5, -2);
+    camera.position.set(-15, 3.2, 21);
+    camera.lookAt(-20, 1.6, -2);
     PH.hud.setSpeed(96);
     PH.hud.setVitals(100, 80);
     PH.hud.setAmmo(12);
-    PH.hud.setMission('STAGE 2/3 — LOSE THE HEAT', 0.66, '02:41', 'NEXT: Reach the pier — follow the yellow diamond');
-    PH.hud.setCash('$1,240');
-    PH.hud.setCar('SCARLET ARROW', '98%');
-    PH.hud.setRadioText('NIGHTWAVE 98.3 — SUNSET DRIVE');
+    PH.hud.setCash(1240);
+    PH.hud.setMission('STAGE 2/3 — LOSE THE HEAT', 66, '02:41', 'NEXT: Reach the pier — follow the yellow diamond');
+    PH.hud.setCarStatus('SCARLET ARROW • 98%');
+    PH.hud.setRadioStation('NIGHTWAVE 98.3 — SUNSET DRIVE');
     PH.hud.setDispatch([
-      { unit: 'PD-104', role: 'CRUISER', dist: '42m', tag: 'PURSUIT' },
-      { unit: 'PD-111', role: 'CRUISER', dist: '68m', tag: 'RAMMING' },
-      { unit: 'HELI-1', role: 'AIR UNIT', dist: '91m', tag: 'SPOTLIGHT' }
+      { chip: 'PURSUIT', name: 'PD-104', role: 'CRUISER', dist: '42m' },
+      { chip: 'RAMMING', name: 'PD-111', role: 'CRUISER', dist: '68m' },
+      { chip: 'SPOTLIGHT', name: 'HELI-1', role: 'AIR UNIT', dist: '91m' }
     ]);
-    PH.hud.setWeapons([
-      { ico: '✊', name: 'FISTS', ammo: '—' },
-      { ico: '🔫', name: 'PISTOL', ammo: '12/12' },
-      { ico: '💥', name: 'SMG', ammo: '0/30' },
-      { ico: '🎯', name: 'RIFLE', ammo: '0/24' }
-    ], 1);
+    PH.hud.setWeapons(1, { pistol: '12/12', smg: '0/30', rifle: '0/24' });
+    PH.hud.hideDialog();
     clearLaneTraffic(-23.5, -80, 30);
     clearLaneTraffic(-16.5, -80, 30);
     PH.buildForegroundProps(scene, 1);
@@ -170,35 +162,26 @@
       mateo.group.visible = true;
       mateo.play('walk');
     }
-    heroState.x = -20; heroState.z = -16; heroState.heading = Math.PI; heroState.speed = 0;
+    heroState.x = -20; heroState.z = -30; heroState.heading = Math.PI; heroState.speed = 0;
     stageTrafficCar(0, -23.5, -34, true);
     stageTrafficCar(1, -16.5, -52, true);
     stageTrafficCar(2, -23.5, 12, true);
     police.frozen = true;
-    // v7.0 rev3: heli lower and closer — at y 13 it sat just above the
-    // top edge of the frame and never appeared in the shot.
-    // v7.0 rev4: y 9 still cropped the rotor at the top edge; y 7.5 puts
-    // the whole heli inside the frame.
-    police.heli.position.set(-6, 7.5, -24);
+    police.heli.position.set(-20, 10, -30);
     police.heli.rotation.y = Math.PI * 0.6;
     camera.fov = 50; camera.updateProjectionMatrix();
-    // v7.0: camera tight behind Mateo — he fills half the frame height.
-    camera.position.set(-10, 2.0, -0.6);
-    camera.lookAt(-10, 1.3, -7);
+    camera.position.set(-10, 2.0, -0.5);
+    camera.lookAt(-10, 1.5, -6);
     PH.hud.setSpeed(0);
     PH.hud.setVitals(100, 80);
     PH.hud.setAmmo(12);
-    PH.hud.setMission('STAGE 1/3 — MEET KIRA', 0.33, '—', 'NEXT: Meet Kira at the pier — follow the yellow marker');
-    PH.hud.setCash('$1,240');
-    PH.hud.setCar('ON FOOT — MATEO VEGA', 'HP 100%');
-    PH.hud.setRadioText('NIGHTWAVE 98.3 — NEON STREETS');
+    PH.hud.setCash(1240);
+    PH.hud.setMission('STAGE 1/3 — MEET KIRA', 33, '', 'NEXT: Meet Kira at the pier — follow the yellow marker');
+    PH.hud.setCarStatus('ON FOOT — MATEO VEGA • HP 100%');
+    PH.hud.setRadioStation('NEON STREETS');
     PH.hud.setDispatch([]);
-    PH.hud.setWeapons([
-      { ico: '✊', name: 'FISTS', ammo: '—' },
-      { ico: '🔫', name: 'PISTOL', ammo: '12/12' },
-      { ico: '💥', name: 'SMG', ammo: '0/30' },
-      { ico: '🎯', name: 'RIFLE', ammo: '0/24' }
-    ], 1);
+    PH.hud.setWeapons(1, { pistol: '12/12', smg: '0/30', rifle: '0/24' });
+    PH.hud.hideDialog();
     PH.buildForegroundProps(scene, 2);
   }
 
@@ -222,37 +205,30 @@
     heroState.x = -20; heroState.z = 60; heroState.heading = Math.PI; heroState.speed = 0;
     stageTrafficCar(0, -23.5, 30, true);
     stageTrafficCar(1, -16.5, 44, true);
-    // Clear the pier strollers to the far west end so the meeting is the
-    // only thing in the middle of the frame.
+    // Keep the pier strollers on the deck behind the meeting, spread
+    // along both edges, so the pier reads busy without crowding the pair.
     cityCrowd.walkers.forEach(function (p, i) {
       if (p.home && p.home.pier) {
-        p.home = { pier: true, x: -72 - (i % 3) * 5, z: (i % 2 === 0) ? 38.5 : 41.5 };
+        p.home = { pier: true, x: -64 - (i % 4) * 4, z: (i % 2 === 0) ? 37.2 : 42.8 };
         p.group.position.set(p.home.x, 1.35, p.home.z);
       }
     });
     police.frozen = true;
-    // v7.0 rev2: heli further out so the wanted panel stops cropping it.
-    police.heli.position.set(-61, 9, 25);
+    police.heli.position.set(-68, 13, 6);
     police.heli.rotation.y = Math.PI * 0.8;
-    camera.fov = 55; camera.updateProjectionMatrix();
-    // v7.0: camera tight on the pair — Mateo and Kira both big in frame.
-    camera.position.set(-50.2, 2.0, 41.8);
-    camera.lookAt(-54.5, 2.2, 38.5);
-    PH.hud.dialog('KIRA — HANDLER', 'The heat is on every corner of Sunset Bay. Take the Scarlet Arrow, cut through the market, and don\'t stop till the pier.', 'KIRA');
+    camera.fov = 50; camera.updateProjectionMatrix();
+    camera.position.set(-49.5, 2.0, 43);
+    camera.lookAt(-54.2, 1.9, 38.5);
+    PH.hud.dialog('KIRA — HANDLER', 'The heat is on every corner of Sunset Bay. Take the Scarlet Arrow, cut through the market, and don\'t stop till the pier.');
     PH.hud.setVitals(100, 80);
     PH.hud.setAmmo(12);
     PH.hud.setSpeed(0);
-    PH.hud.setMission('STAGE 1/3 — THE PIER JOB', 0.2, '—', 'NEXT: Take the Scarlet Arrow and lose the heat');
-    PH.hud.setCash('$1,240');
-    PH.hud.setCar('ON FOOT — MATEO VEGA', 'HP 100%');
-    PH.hud.setRadioText('NIGHTWAVE 98.3 — PIER LIGHTS');
+    PH.hud.setCash(1240);
+    PH.hud.setMission('STAGE 1/3 — THE PIER JOB', 20, '', 'NEXT: Take the Scarlet Arrow and lose the heat');
+    PH.hud.setCarStatus('ON FOOT — MATEO VEGA • HP 100%');
+    PH.hud.setRadioStation('PIER LIGHTS');
     PH.hud.setDispatch([]);
-    PH.hud.setWeapons([
-      { ico: '✊', name: 'FISTS', ammo: '—' },
-      { ico: '🔫', name: 'PISTOL', ammo: '12/12' },
-      { ico: '💥', name: 'SMG', ammo: '0/30' },
-      { ico: '🎯', name: 'RIFLE', ammo: '0/24' }
-    ], 1);
+    PH.hud.setWeapons(1, { pistol: '12/12', smg: '0/30', rifle: '0/24' });
     PH.buildForegroundProps(scene, 3);
   }
 
@@ -271,43 +247,35 @@
       mateo.group.visible = true;
       mateo.play('aim');
     }
-    placePoliceCar(0, -23.5, 44, Math.PI);
-    placePoliceCar(1, -16.5, 52, Math.PI);
-    placePoliceCar(2, -23.5, 60, Math.PI);
-    placeOfficer(0, -20.5, 36.5, Math.PI);
-    placeOfficer(1, -18, 43.5, Math.PI);
-    placeOfficer(2, -23, 38, Math.PI);
+    placePoliceCar(0, -23.5, 43, Math.PI);
+    placePoliceCar(1, -16.5, 49, Math.PI);
+    placePoliceCar(2, -23.5, 57, Math.PI);
+    placeOfficer(0, -21.5, 39, Math.PI);
+    placeOfficer(1, -18, 41.5, Math.PI);
+    placeOfficer(2, -23, 36.5, Math.PI);
     stageTrafficCar(0, -16.5, 12, true);
     stageTrafficCar(1, -23.5, -2, true);
     police.frozen = true;
-    // v7.0 rev2: heli lower and further ahead, inside the frame instead
-    // of cropped by the top edge.
-    police.heli.position.set(-21, 7.5, 42);
+    police.heli.position.set(-26, 7, 58);
     police.heli.rotation.y = Math.PI * 0.7;
-    camera.fov = 55; camera.updateProjectionMatrix();
-    // v7.0: camera tight — Mateo big in the middle, the pale-washed hero
-    // car close at his side, cruisers just ahead.
-    camera.position.set(-17.5, 2.8, 24);
-    camera.lookAt(-21, 1.5, 38);
+    camera.fov = 50; camera.updateProjectionMatrix();
+    camera.position.set(-17.5, 2.8, 25.5);
+    camera.lookAt(-20.5, 1.5, 36);
     PH.hud.setVitals(82, 65);
     PH.hud.setAmmo(9);
     PH.hud.setSpeed(0);
-    PH.hud.setMission('STAGE 3/3 — HOLD THE LINE', 0.85, '01:12', 'NEXT: Hold the line — protect the Scarlet Arrow');
-    PH.hud.setCash('$2,860');
-    PH.hud.setCar('SCARLET ARROW', '76%');
-    PH.hud.setRadioText('NIGHTWAVE 98.3 — SIRENS');
+    PH.hud.setCash(2860);
+    PH.hud.setMission('STAGE 3/3 — HOLD THE LINE', 85, '01:12', 'NEXT: Hold the line — protect the Scarlet Arrow');
+    PH.hud.setCarStatus('SCARLET ARROW • 76%');
+    PH.hud.setRadioStation('SIRENS');
     PH.hud.setDispatch([
-      { unit: 'PD-104', role: 'CRUISER', dist: '18m', tag: 'RAMMING' },
-      { unit: 'PD-111', role: 'CRUISER', dist: '24m', tag: 'PURSUIT' },
-      { unit: 'PD-118', role: 'CRUISER', dist: '31m', tag: 'PURSUIT' },
-      { unit: 'HELI-1', role: 'AIR UNIT', dist: '55m', tag: 'SPOTLIGHT' }
+      { chip: 'RAMMING', name: 'PD-104', role: 'CRUISER', dist: '18m' },
+      { chip: 'PURSUIT', name: 'PD-111', role: 'CRUISER', dist: '24m' },
+      { chip: 'PURSUIT', name: 'PD-118', role: 'CRUISER', dist: '31m' },
+      { chip: 'SPOTLIGHT', name: 'HELI-1', role: 'AIR UNIT', dist: '55m' }
     ]);
-    PH.hud.setWeapons([
-      { ico: '✊', name: 'FISTS', ammo: '—' },
-      { ico: '🔫', name: 'PISTOL', ammo: '9/12' },
-      { ico: '💥', name: 'SMG', ammo: '0/30' },
-      { ico: '🎯', name: 'RIFLE', ammo: '0/24' }
-    ], 1);
+    PH.hud.setWeapons(1, { pistol: '9/12', smg: '0/30', rifle: '0/24' });
+    PH.hud.hideDialog();
     // Muzzle flash stays on for the staged combat frame.
     if (flash && mateo) {
       var fwd = mateo.forward();
@@ -401,8 +369,6 @@
   function build() {
     buildRenderer();
     minimapEl = PH.el('minimap');
-    // v7.0: the combat shot runs at golden hour too — warm low sun keeps
-    // the Scarlet Arrow orange instead of washing it pale cream.
     var mode = (shotNum === 1 || shotNum === 4) ? 'sunset' : 'day';
     world = PH.buildWorld(scene, mode);
     traffic = PH.buildTraffic(scene, world, 16);
@@ -418,18 +384,14 @@
     // Default HUD.
     PH.hud.setVitals(hp, armor);
     PH.hud.setAmmo(ammo);
-    PH.hud.setMission('STAGE 1/3 — LOSE THE HEAT', 0.1, '', 'NEXT: Lose the Bay City PD and reach the pier');
-    PH.hud.setCash('$1,240');
-    PH.hud.setCar('SCARLET ARROW', '98%');
-    PH.hud.setDispatch([]);
-    PH.hud.setWeapons([
-      { ico: '✊', name: 'FISTS', ammo: '—' },
-      { ico: '🔫', name: 'PISTOL', ammo: '12/12' },
-      { ico: '💥', name: 'SMG', ammo: '0/30' },
-      { ico: '🎯', name: 'RIFLE', ammo: '0/24' }
-    ], 1);
     setWanted(0);
     setObjective('PIER HEAT — LOSE THE HEAT', 'Lose the Bay City PD and reach the pier.', -58, 40);
+    PH.hud.setMission('STAGE 1/3 — LOSE THE HEAT', 0, '', 'NEXT: Lose the Bay City PD and reach the pier.');
+    PH.hud.setCash(1240);
+    PH.hud.setCarStatus('SCARLET ARROW • 98%');
+    PH.hud.setRadioStation('NIGHTWAVE 98.3 — SUNSET DRIVE');
+    PH.hud.setDispatch([]);
+    PH.hud.setWeapons(1, { pistol: '12/12', smg: '0/30', rifle: '0/24' });
   }
 
   function loadCharacters() {

@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v6.8
+// PIER HEAT — Sunset Bay v7.1
 // world.js — builds the whole city of Sunset Bay: the beachfront avenue,
 // the gridded downtown blocks with real 3D windows, doors and glass
 // shopfronts, the living beach and the wooden pier. All names, signs and
@@ -79,25 +79,28 @@
     ));
     world.sun = sun;
 
-    // Sun disc in both modes: a soft radial glow, not a star — low over
-    // the ocean at golden hour, high with glare in the day sky, so the
-    // sky never reads flat pale blue.
-    {
-      var sunTex = PH.makeCanvasTexture(128, 128, function (g, w, h) {
-        var grad = g.createRadialGradient(64, 64, 2, 64, 64, 62);
-        grad.addColorStop(0, 'rgba(255,244,200,1)');
-        grad.addColorStop(0.35, 'rgba(255,205,110,0.95)');
-        grad.addColorStop(0.7, 'rgba(255,150,60,0.45)');
-        grad.addColorStop(1, 'rgba(255,120,40,0)');
-        g.fillStyle = grad; g.fillRect(0, 0, w, h);
-      });
-      var sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: sunTex, color: 0xffffff, transparent: true, opacity: 0.95, fog: false, depthWrite: false
-      }));
-      sunDisc.position.set(isSunset ? -150 : 140, isSunset ? 62 : 95, isSunset ? -420 : -380);
-      sunDisc.scale.set(isSunset ? 70 : 55, isSunset ? 70 : 55, 1);
-      scene.add(sunDisc);
+    // Sun disc in BOTH modes: low over the ocean at golden hour, high
+    // with glare at noon — a soft radial glow, not a star, so the sky
+    // never reads flat.
+    var sunTex = PH.makeCanvasTexture(128, 128, function (g, w, h) {
+      var grad = g.createRadialGradient(64, 64, 2, 64, 64, 62);
+      grad.addColorStop(0, 'rgba(255,244,200,1)');
+      grad.addColorStop(0.35, 'rgba(255,205,110,0.95)');
+      grad.addColorStop(0.7, 'rgba(255,150,60,0.45)');
+      grad.addColorStop(1, 'rgba(255,120,40,0)');
+      g.fillStyle = grad; g.fillRect(0, 0, w, h);
+    });
+    var sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: sunTex, color: 0xffffff, transparent: true, opacity: 0.95, fog: false, depthWrite: false
+    }));
+    if (isSunset) {
+      sunDisc.position.set(-150, 62, -420);
+      sunDisc.scale.set(70, 70, 1);
+    } else {
+      sunDisc.position.set(30, 160, -420);
+      sunDisc.scale.set(80, 80, 1);
     }
+    scene.add(sunDisc);
 
     // ---------- shared materials ----------
     var M = {
@@ -587,9 +590,16 @@
       }
       return g;
     }
-    for (var ci = 0; ci < (isSunset ? 6 : 13); ci++) {
-      cloud(PH.rand(-220, 220), PH.rand(70, 110), PH.rand(-220, 220), PH.rand(0.8, 1.6));
+    // v7.1: lower, bigger, more clouds — the old band (y 70–110, small)
+    // never entered any staged frame. The random band sits lower now,
+    // and hero clouds are parked in each shot's sky so every frame has
+    // clouds that read: north (chase / on foot), south (combat), west (pier).
+    for (var ci = 0; ci < (isSunset ? 10 : 16); ci++) {
+      cloud(PH.rand(-220, 220), PH.rand(45, 80), PH.rand(-220, 220), PH.rand(1.4, 2.4));
     }
+    cloud(-60, 52, -190, 2.6); cloud(60, 58, -210, 2.4);
+    cloud(-45, 34, 170, 2.4); cloud(-62, 38, 190, 2.2);
+    cloud(-195, 52, 30, 2.4); cloud(-200, 58, -40, 2.0);
 
     // ---------- per-frame world motion ----------
     world.update = function (dt, t) {
@@ -709,50 +719,65 @@
       return p;
     }
     if (shot === 1) {
-      // Chase: props at the frame EDGES only — v6.9 put a walker and the
-      // fruit cart dead-centre in front of the lens, hiding the hero.
-      fruitCart(-27, 0, 9, 0.5);
-      crate(-8, 0, 8.5, 0.4); crate(-8.8, 0, 9.6, -0.3); crate(-8.4, 1.1, 9, 0.2);
-      trashCan(-9, 0, 6);
-      hydrantFg(-26, 0, 6.5);
-      benchFg(-27, 0, 12, 0.3);
-      walker(-26.5, 0, 7, Math.PI, 'walk');
-      walker(-7.5, 0, 5, 0, 'walk');
-      walker(-25, 0, 2, Math.PI * 0.9, 'run');
+      // Chase: props at the ROAD EDGES only — right edge near the lens,
+      // left edge further up by the hero — nothing dead-centre in front
+      // of the lens hiding the wedge.
+      fruitCart(-12.4, 0, 14, 0.5);
+      crate(-24.5, 0, 3, 0.4); crate(-25.2, 0, 4.5, -0.3); crate(-24.8, 1.1, 3.8, 0.2);
+      trashCan(-11.6, 0, 10.5);
+      hydrantFg(-11.8, 0, 8);
+      benchFg(-24.8, 0, 6.5, 0.3);
+      walker(-24.6, 0, 5.5, Math.PI, 'walk');
+      walker(-12, 0, 16, 0, 'walk');
+      walker(-24.2, 0, 8, Math.PI * 0.9, 'run');
     } else if (shot === 2) {
-      // On foot: props at the sidewalk edges, ahead of Mateo — v6.9 put
-      // a walker and a crate between the lens and Mateo, filling the frame.
-      // v7.0 rev3: the trash can and fruit cart were still close enough
-      // to the lens to read as giant objects at the right edge.
-      fruitCart(-5.8, 0, -13.5, -0.6);
-      crate(-13.8, 0, -7.5, 0.3, 0.8); crate(-13.2, 0, -10.2, -0.2, 0.8);
-      trashCan(-6.0, 0, -12.5);
-      benchFg(-13.6, 0, -5.2, Math.PI / 2);
-      hydrantFg(-13.8, 0, -9);
-      walker(-13.8, 0, -8.5, Math.PI, 'walk');
-      walker(-6.5, 0, -10.5, 0, 'walk');
-      walker(-12.8, 0, -10.5, Math.PI, 'walk');
+      // On foot: props at the SIDEWALK EDGES, ahead of Mateo but never
+      // blocking him — shopfront edge west, road edge east.
+      fruitCart(-7.6, 0, -2.4, -0.6);
+      crate(-12.7, 0, -2.2, 0.3, 0.8); crate(-12.8, 0, -5.2, -0.2, 0.8);
+      trashCan(-7.7, 0, -4.2);
+      benchFg(-12.9, 0, -3.8, Math.PI / 2);
+      hydrantFg(-13, 0, -5.4);
+      walker(-7.7, 0, -2.4, Math.PI, 'walk');
+      walker(-12.8, 0, -3.0, 0, 'walk');
+      walker(-7.8, 0, -5.6, Math.PI, 'walk');
+      // v7.1: the right side (cream shopfront wall) was empty — more
+      // shoppers walking the east sidewalk, spaced out along it so they
+      // read as a street crowd, not a wall of people.
+      walker(-7.8, 0, -8.5, 0, 'walk');
+      walker(-8.5, 0, -11.5, Math.PI, 'walk');
+      walker(-7.7, 0, -14.5, 0, 'walk');
+      crate(-8.3, 0, -15.8, 0.2, 0.8); crate(-8.0, 0, -15.2, -0.2, 0.6);
     } else if (shot === 3) {
-      // Mission: the pier deck at the frame EDGES — v6.9 put crates, a
-      // trash can and a surfboard across the middle, hiding Mateo & Kira.
-      crate(-59.5, 1.35, 36.5, 0.5, 0.7);
-      crate(-58.8, 1.35, 35.2, -0.4, 0.7);
-      towelSurf(-47.5, 1.35, 36.5, 0.4, 0xffd23e);
-      trashCan(-47.8, 1.35, 37.5);
+      // Mission: the pier deck in front of the lens (deck top y=1.35).
+      // Props sit on the DECK EDGES — north edge and far west end, the
+      // only edges this camera can see — never between lens and pair.
+      crate(-58.8, 1.35, 36.7, 0.5, 0.7);
+      crate(-54.5, 1.35, 36.8, -0.4, 0.7);
+      towelSurf(-63.5, 1.35, 37.2, 0.4, 0xffd23e);
+      trashCan(-62.5, 1.35, 37.0);
       cyl(0.22, 0.16, 0.3,
-        new THREE.MeshStandardMaterial({ color: 0xff5d5d, roughness: 0.7 }), -59.2, 1.5, 39.5, 10);
-      walker(-47.6, 1.35, 36.2, Math.PI * 0.75, 'walk');
-      walker(-58.2, 1.35, 39.8, Math.PI * 0.2, 'walk');
+        new THREE.MeshStandardMaterial({ color: 0xff5d5d, roughness: 0.7 }), -60.5, 1.5, 36.8, 10);
+      walker(-59.5, 1.35, 36.9, Math.PI * 0.75, 'walk');
+      walker(-65.5, 1.35, 39.5, Math.PI * 0.2, 'walk');
+      // v7.1: the deck read empty — more strollers along both edges.
+      walker(-63.8, 1.35, 41.5, Math.PI * 0.5, 'walk');
+      walker(-68.0, 1.35, 38.8, 0, 'walk');
+      walker(-64.0, 1.35, 41.8, Math.PI * 0.8, 'walk');
     } else if (shot === 4) {
-      // Combat: props at the road edges — v6.9 put the overturned cart
-      // dead-centre in front of the lens, hiding Mateo's legs and the car.
-      fruitCart(-25.5, 0, 28, 0.4);
-      crate(-12, 0, 29, 0.3); crate(-12.1, 0, 29.1, -0.3);
-      trashCan(-25.8, 0, 31);
-      hydrantFg(-11.8, 0, 32);
+      // Combat: props at the ROAD EDGES, mid-ground between the lens
+      // and the cruisers — nothing dead-centre hiding Mateo or the hero.
+      fruitCart(-13.5, 0, 35, 0.4);
+      crate(-25.5, 0, 33, 0.3); crate(-25.6, 0, 34.2, -0.3);
+      trashCan(-25.3, 0, 32);
+      hydrantFg(-25.4, 0, 35.5);
       walker(-25.2, 0, 31, Math.PI, 'run');
-      walker(-12.2, 0, 27, Math.PI * 0.85, 'run');
-      walker(-24.8, 0, 34, Math.PI * 1.1, 'walk');
+      walker(-13.4, 0, 36.5, Math.PI * 0.85, 'run');
+      walker(-25.0, 0, 37.5, Math.PI * 1.1, 'walk');
+      // v7.1: mid-road was empty — runners crossing between Mateo and
+      // the cruisers, so the shootout street reads alive.
+      walker(-15.2, 0, 38.5, Math.PI, 'run');
+      walker(-24.6, 0, 40, Math.PI * 0.9, 'run');
     }
     return group;
   };

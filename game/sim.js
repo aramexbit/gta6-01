@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v6.8
+// PIER HEAT — Sunset Bay v7.1
 // sim.js — everything that moves: procedural cars (hero wedge, traffic,
 // police), the pedestrian crowds, the living beach with its activities and
 // its run-for-cover behaviour during a chase, the police helicopter and
@@ -251,7 +251,7 @@
     // v7.0: deeper burnt orange, matte (roughness up, metalness near zero)
     // — the old 0xff7a1a / metal 0.15 washed to pale cream under the
     // midday sun in shot 4; this paint stays orange in any light.
-    var paint = new THREE.MeshStandardMaterial({ color: 0xf25c00, roughness: 0.62, metalness: 0.05 });
+    var paint = new THREE.MeshStandardMaterial({ color: 0xc85a00, roughness: 0.62, metalness: 0.05 });
     var glass = new THREE.MeshStandardMaterial({ color: 0x0e1a24, roughness: 0.1, metalness: 0.85 });
     var chrome = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.2, metalness: 0.95 });
     var dark = stdMat(0x1a1a1a, 0.4);
@@ -719,7 +719,7 @@
     // street/pier instead of a cone floating in the sky.
     var beam = new THREE.Mesh(new THREE.ConeGeometry(2.2, 12, 12, 1, true),
       new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
-    beam.position.set(3.4, -6.8, 0); beam.rotation.z = -0.35; heli.add(beam);
+    beam.position.set(2.8, -5.2, 0); beam.rotation.z = -0.45; heli.add(beam);
     var pdTex = PH.makeCanvasTexture(256, 64, function (ctx, w, h) {
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
       ctx.fillStyle = '#1d4f9c'; ctx.font = '900 34px Arial Black, Arial, sans-serif';
@@ -806,6 +806,9 @@
   };
 
   // ---------- muzzle flash ----------
+  // v7.0: bigger star sprite plus a small white core at the same point,
+  // and a much weaker point light — a warm glow at Mateo's hands, not a
+  // flash that whites out the whole frame.
   PH.makeMuzzleFlash = function (scene) {
     var sprite = new THREE.Sprite(new THREE.SpriteMaterial({
       map: PH.flashTexture(), color: 0xffd27a, transparent: true,
@@ -846,8 +849,8 @@
         var flick = 0.85 + Math.sin(this.timer * 47) * 0.15;
         sprite.material.opacity = flick;
         core.material.opacity = flick;
-        sprite.scale.set(2.1 + Math.sin(this.timer * 31) * 0.3, 2.1 + Math.cos(this.timer * 29) * 0.3, 1);
-        core.scale.set(1.15 + Math.sin(this.timer * 37) * 0.15, 1.15 + Math.cos(this.timer * 33) * 0.15, 1);
+        sprite.scale.set(2.1 + Math.sin(this.timer * 31) * 0.2, 2.1 + Math.cos(this.timer * 29) * 0.2, 1);
+        core.scale.set(1.15 + Math.sin(this.timer * 37) * 0.1, 1.15 + Math.cos(this.timer * 33) * 0.1, 1);
         if (!hold && this.timer > 0.09) this.hide();
       }
     };

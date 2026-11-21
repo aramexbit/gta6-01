@@ -66,13 +66,17 @@
     display: none; text-align: center; padding: 8px 22px; }
   #race-pos { font-family: "Arial Black", Arial, sans-serif; font-size: 30px; color: #ffd23c; line-height: 1; }
   #race-lap { font-size: 12px; font-weight: 900; color: #cfe3ff; letter-spacing: 2px; }
+  #race-gap { font-size: 11px; font-weight: 900; color: #8fe3a0; letter-spacing: 1px; margin-top: 2px; }
   #race-countdown { font-family: "Arial Black", Arial, sans-serif; font-size: 54px; color: #ff7a1a;
     display: none; text-shadow: 0 3px 0 #7a2a00, 0 6px 18px #000; }
-  /* v7.3: boat readout, bottom centre-left */
+  /* v7.3: boat readout, bottom centre-left — round 2 adds the police
+     distance and the chase position, so the boat job reads the heat */
   #boat-panel { position: absolute; left: 12px; bottom: 150px; display: none; padding: 8px 14px; }
   #boat-panel h3 { color: #9fd8ff; font-size: 12px; letter-spacing: 1px; }
   #boat-speed { font-family: "Arial Black", Arial, sans-serif; font-size: 26px; color: #fff; }
   #boat-dist { font-size: 12px; color: #ffd23c; font-weight: 900; }
+  #boat-police { font-size: 12px; color: #ff6a5a; font-weight: 900; }
+  #boat-pos { font-size: 12px; color: #8fe3a0; font-weight: 900; }
   #dispatch-panel { position: absolute; top: 216px; right: 12px; width: 300px; display: none; }
   #dispatch-panel h3 { color: #ff6a5a; font-size: 13px; letter-spacing: 1px; margin-bottom: 6px; }
   .drow { display: flex; gap: 6px; align-items: center; font-size: 11px; padding: 2px 0;
@@ -171,8 +175,9 @@
     <div id="crew-cards"></div>
 
     <div id="race-panel" class="panel">
-      <div id="race-pos">P2/3</div>
+      <div id="race-pos">P2/4</div>
       <div id="race-lap">LAP 1/2</div>
+      <div id="race-gap"></div>
       <div id="race-countdown"></div>
     </div>
 
@@ -180,6 +185,8 @@
       <h3>SPEEDBOAT — BAY CHASE</h3>
       <span id="boat-speed">24 KN</span>
       <div id="boat-dist">180m TO PIER</div>
+      <div id="boat-police"></div>
+      <div id="boat-pos"></div>
     </div>
 
     <div id="bl">

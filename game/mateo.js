@@ -55,13 +55,36 @@
     var skull = new THREE.Mesh(new THREE.SphereGeometry(0.23, 14, 12), std(skin, 0.75));
     skull.castShadow = true; g.add(skull);
     var hairMat = std(hairColor, 0.95);
-    // cap ends above the brow line (theta 0.45 PI) so the eyes stay
-    // visible — v7.3 rev 1 had it at 0.55 PI and the hair swallowed
-    // the eyes in shot 2.
-    var cap = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.45), hairMat);
-    cap.position.y = 0.04;
+    // round 2: the old full cap (theta 0.45 PI) read as a brown bowl
+    // hat in shots 2 and 4. The new hair is shorter at the front and
+    // swept to one side: a smaller cap (0.38 PI) that ends above the
+    // brow, a side-parted fringe swept across the forehead, a quiff
+    // bump at the front hairline and short side locks — hair, not a hat.
+    var cap = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.38), hairMat);
+    cap.position.y = 0.05;
     cap.userData.part = 'hair'; // retint target (see core.js)
     g.add(cap);
+    // swept fringe: a thin slab angled down across the forehead, parted
+    // to Mateo's left so the right brow stays fully visible
+    var fringe = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.05, 0.12), hairMat);
+    fringe.position.set(-0.03, 0.2, 0.19);
+    fringe.rotation.z = -0.28;
+    fringe.rotation.x = -0.15;
+    g.add(fringe);
+    // quiff: a small bump at the front hairline, tilted forward
+    var quiff = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), hairMat);
+    quiff.position.set(0.1, 0.25, 0.16);
+    quiff.scale.set(1.4, 0.7, 1);
+    g.add(quiff);
+    // side locks + sideburns, so the hair has edges instead of one dome
+    [-0.21, 0.21].forEach(function (x) {
+      var lock = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.18, 0.1), hairMat);
+      lock.position.set(x, 0.08, 0.14);
+      g.add(lock);
+      var burn = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.04), hairMat);
+      burn.position.set(x, -0.06, 0.18);
+      g.add(burn);
+    });
     if (opts.longHair) {
       var back = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.5, 0.12), hairMat);
       back.position.set(0, -0.14, -0.18); g.add(back);
@@ -69,10 +92,6 @@
         var lock = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.42, 0.1), hairMat);
         lock.position.set(x, -0.1, 0.16); g.add(lock);
       });
-    } else {
-      // short: cap + a thin high fringe that never covers the eyes
-      var fringe = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.06, 0.1), hairMat);
-      fringe.position.set(0, 0.19, 0.2); g.add(fringe);
     }
     var eyeMat = new THREE.MeshBasicMaterial({ color: 0x14100c });
     [-0.085, 0.085].forEach(function (ex) {
@@ -149,6 +168,39 @@
     gun.position.set(0, -0.72, 0.12);
     gun.visible = false;
     armR.add(gun);
+    // round 2 accessories: a wristwatch on the left wrist, a belt,
+    // sneaker laces and a SUNSET BAY patch on the jacket back — small
+    // tells that the hero is dressed, not assembled
+    var watch = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.22), std(0x14181c, 0.4, 0.6));
+    watch.position.y = -0.6; armL.add(watch);
+    var watchFace = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.02, 0.12),
+      new THREE.MeshStandardMaterial({ color: 0x9fd8ff, emissive: 0x6ab0e8, emissiveIntensity: 0.8 }));
+    watchFace.position.set(0, -0.57, 0.08); armL.add(watchFace);
+    var belt = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.36, 0.09, 12), std(0x1a1a1a, 0.8));
+    belt.position.y = 0.9; g.add(belt);
+    var buckle = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.07, 0.03),
+      new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.25 }));
+    buckle.position.set(0, 0.9, 0.36); g.add(buckle);
+    var patchTex = PH.canvasTex(256, 128, function (ctx, w, h) {
+      ctx.fillStyle = '#14181c'; ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#ffd23c'; ctx.lineWidth = 6; ctx.strokeRect(6, 6, w - 12, h - 12);
+      ctx.fillStyle = '#ffd23c'; ctx.font = '900 34px Arial, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('SUNSET', w / 2, h / 2 - 20);
+      ctx.fillText('BAY', w / 2, h / 2 + 20);
+    });
+    var backPatch = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.17),
+      new THREE.MeshStandardMaterial({ map: patchTex, roughness: 0.8 }));
+    backPatch.position.set(0, 1.3, -0.36);
+    backPatch.rotation.y = Math.PI;
+    g.add(backPatch);
+    [kneeL, kneeR].forEach(function (knee) {
+      for (var li = 0; li < 3; li++) {
+        var lace = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.02, 0.03), std(0xf2f2f2, 0.6));
+        lace.position.set(0, -0.42 + li * 0.05, 0.22);
+        knee.add(lace);
+      }
+    });
     // boat gear (v7.4): an orange life vest + a cap, hidden until
     // setBoatGear(true) — Mateo wears them on the speedboat in shot 3
     var boatGear = new THREE.Group();
@@ -235,6 +287,21 @@
           armL.rotation.x = -0.4;
           legL.rotation.x = 0.1; legR.rotation.x = -0.1;
           headG.rotation.y = Math.sin(t * 0.5 + phase) * 0.3;
+        } else if (anim === 'point') {
+          // right arm straight out, finger on a target — Kira calling
+          // out the next police boat in the chase
+          armR.rotation.x = -Math.PI / 2; armR.rotation.z = -0.05;
+          armL.rotation.x = -0.3;
+          headG.rotation.y = 0.25;
+          headG.rotation.x = -0.05;
+          legL.rotation.x = 0.15; legR.rotation.x = -0.15;
+          torso.rotation.y = 0.15;
+        } else if (anim === 'shout') {
+          // one hand cupped to the mouth, calling over the engine
+          armR.rotation.x = -2.2; armR.rotation.z = -0.9;
+          armL.rotation.x = -Math.PI / 2 + 0.25;
+          headG.rotation.x = -0.12;
+          torso.rotation.x = 0.08;
         } else {
           // idle: breathing + a slow look-around
           torso.scale.y = 1 + Math.sin(t * 1.6 + phase) * 0.015;

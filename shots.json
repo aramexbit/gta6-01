@@ -2,7 +2,7 @@
   {
     "mode": "sunset",
     "name": "1-chase.jpg",
-    "note": "street race: BOTH rivals big and close beside the hero (blue hatch right, red pickup left), checkpoint gate framing them, race position P2/3",
+    "note": "street race: THREE rivals big and close (blue hatch right, red pickup left, green coupe ahead), checkpoint gate 'CHECKPOINT 3/14' reading whole, race position P2/4, gap +0.4s",
     "query": "?shot=1&seed=1",
     "seed": 1
   },
@@ -16,7 +16,7 @@
   {
     "mode": "day",
     "name": "3-mission.jpg",
-    "note": "boat mission: Mateo AT THE HELM of the speedboat in a life vest, Kira riding on the stern bench, wake behind, two police boats in pursuit, heli above",
+    "note": "boat mission, close camera (~15u): Mateo AT THE HELM of the speedboat in a life vest, Kira pointing at the pursuit from the stern, big V-wake + bow spray, THREE police boats, sailboats, heli above, beach foreground (umbrella, towels, sunbathers, lifeguard tower)",
     "query": "?shot=3&seed=1",
     "seed": 1
   },

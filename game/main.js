@@ -70,6 +70,91 @@
   };
   var mateo = null, kira = null;
 
+  // ---------- shot-3 beach foreground (round 2) ----------
+  // The v7.4 shot 3 frame was half empty sand: the boat sat 38 units
+  // away and the bottom of the frame was bare beach. The new camera
+  // sits ~15 units from the boat, and this foreground fills the sand
+  // between lens and boat — one umbrella, towels, sunbathers and a
+  // sandcastle, all LOW (lying / flat) except the umbrella, which
+  // frames the left edge instead of covering the boat.
+  function beachForeground3() {
+    var g = new THREE.Group();
+    var cols = [0xff3b30, 0xffc832, 0x2a9df4, 0xff6ab0];
+    function umbrella(x, z, color, scale) {
+      var ug = new THREE.Group(); ug.position.set(x, 0, z);
+      ug.scale.setScalar(scale || 1);
+      var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.6, 6),
+        new THREE.MeshStandardMaterial({ color: 0xd8d0c0, roughness: 0.7 }));
+      pole.position.y = 1.3; ug.add(pole);
+      var canopy = new THREE.Mesh(new THREE.ConeGeometry(2.1, 0.9, 10),
+        new THREE.MeshStandardMaterial({ color: color, roughness: 0.7 }));
+      canopy.position.y = 2.8; canopy.castShadow = true; ug.add(canopy);
+      g.add(ug);
+    }
+    function towel(x, z, color, ry) {
+      var tw = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.0),
+        new THREE.MeshStandardMaterial({ color: color, roughness: 0.95 }));
+      tw.rotation.x = -Math.PI / 2; tw.rotation.z = ry || 0;
+      tw.position.set(x, 0.08, z); g.add(tw);
+    }
+    function sunbather(x, z, ry, shirt) {
+      var p = PH.makePerson({ shirt: shirt });
+      p.group.position.set(x, 0, z);
+      p.group.rotation.y = ry;
+      p.setPose('lying', 0, 5);
+      g.add(p.group);
+      towel(x, z, 0xffc832, ry);
+    }
+    function sandcastle(x, z) {
+      var c = new THREE.Group(); c.position.set(x, 0, z);
+      var base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, 0.9, 8),
+        new THREE.MeshStandardMaterial({ color: 0xd8b878, roughness: 1 }));
+      base.position.y = 0.45; c.add(base);
+      var tower = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.2, 8),
+        new THREE.MeshStandardMaterial({ color: 0xd8b878, roughness: 1 }));
+      tower.position.set(0.3, 1.0, 0.2); c.add(tower);
+      var flag = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.7, 0.05),
+        new THREE.MeshStandardMaterial({ color: 0xff3b30, roughness: 0.8 }));
+      flag.position.set(0.3, 1.9, 0.2); c.add(flag);
+      g.add(c);
+    }
+    // round 2b: every foreground prop sits OFF the lens-to-boat line
+    // (the first layout put the umbrella + cooler dead centre and hid
+    // the boat). The umbrella frames the left edge, the sunbathers lie
+    // low left, the cooler + bag sit at the far left edge.
+    umbrella(-109, 47, cols[0], 0.8);
+    towel(-106, 42, cols[1], 0.4);
+    towel(-105, 45, cols[2], -0.3);
+    sunbather(-106, 41.5, 0.6, 0xd83a2a);
+    sunbather(-105, 44.5, -0.4, 0x0e7a7a);
+    sandcastle(-104, 41);
+    // a cooler + beach bag at the towel line, so the foreground has
+    // small props as well as people
+    var cooler = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.55),
+      new THREE.MeshStandardMaterial({ color: 0x2a9df4, roughness: 0.6 }));
+    cooler.position.set(-109, 0.25, 48.5); g.add(cooler);
+    var bag = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.3),
+      new THREE.MeshStandardMaterial({ color: 0xff6ab0, roughness: 0.9 }));
+    bag.position.set(-107, 0.3, 49.5); bag.rotation.y = 0.5; g.add(bag);
+    scene.add(g);
+    return g;
+  }
+
+  // Push any beach NPC that would drift into the shot-3 frame (within
+  // `radius` of the camera) out of the way: swimmers go further west
+  // into deep water, land NPCs go east up the beach. Staged shots only.
+  function clearBeachNearCamera(camPos, radius) {
+    beachCrowd.members.forEach(function (m) {
+      var pos = m.p.group.position;
+      var dx = pos.x - camPos.x, dz = pos.z - camPos.z;
+      if (dx * dx + dz * dz < radius * radius) {
+        if (m.pose === 'swim' || m.pose === 'surf') { pos.x = -150; pos.z = PH.clamp(pos.z + 40, -120, 120); }
+        else { pos.x = -60; pos.z = PH.clamp(pos.z - 30, -130, 130); }
+        m.home.copy(pos);
+      }
+    });
+  }
+
   // ---------- foreground prop sets (frame edges, hero + action stay clear) ----
   function foregroundSet(n) {
     var g = new THREE.Group();
@@ -156,9 +241,11 @@
     } else if (n === 2) { // on foot: props + 6 walkers along the frame EDGES of the east sidewalk, 9-13 units out (rev 5: at 3-6 units they filled half the frame)
       cart(-14.2, -10, -0.3); crate(-5.6, -12, 0.9); bin(-14.2, -12); bench(-5.6, -9, 0); hydrant(-14.2, -8.5);
       edgeWalkers(6, [[-14.5, -9, 0], [-14.5, -12, 0], [-5.5, -10, 0], [-5.5, -13, 0], [-14.5, -11, 0], [-5.5, -8.5, 0]]);
-    } else if (n === 3) { // mission: pier end — props on the FAR side of the deck (z 36.5) and the pier edges, never between camera (z 47) and the pair
-      crate(-70, 1.35, 36.8, 0.9); towelSurf(-84, 36.8); bin(-86, 36.8); bucket(-74, 36.8);
-      edgeWalkers(5, [[-74, 36.5, 1.35], [-68, 36.5, 1.35], [-72, 44, 1.35], [-80, 37, 1.35], [-66, 43, 1.35]]);
+    } else if (n === 3) { // mission: pier end — props on the NEAR rail
+      // (z 43.4, the rail closest to the shot-3 camera) and the west
+      // deck end, so the bottom-right wood is dressed, not bare
+      crate(-78, 1.35, 43.4, 0.9); towelSurf(-84, 43.4); bin(-86, 43.4); bucket(-72, 43.4);
+      edgeWalkers(5, [[-76, 43.4, 1.35], [-68, 43.4, 1.35], [-72, 37, 1.35], [-80, 37, 1.35], [-66, 43.4, 1.35]]);
     } else { // combat: cart + crate + bin + hydrant + 5 walkers/runners, road edges only (rev 3: the old mid-road walker at (-20,24) stood 1.5 units from the lens)
       cart(-27.5, 28, 0.5); crate(-28.6, 0, 24, 0.9); bin(-11.8, 30); hydrant(-28.4, 33);
       edgeWalkers(5, [[-28.8, 26, 0], [-11.5, 28, 0], [-27, 33, 0], [-28.8, 38, 0], [-11.5, 36, 0]]);
@@ -184,9 +271,9 @@
     if (cfg.ammoRifle != null) { var r = document.getElementById('ammo-rifle'); if (r) r.textContent = cfg.ammoRifle + '/24'; }
     if (cfg.ammoShotgun != null) { var sg = document.getElementById('ammo-shotgun'); if (sg) sg.textContent = cfg.ammoShotgun + '/6'; }
     if (cfg.carName) PH.hud.setCarName(cfg.carName, cfg.carCond);
-    if (cfg.race) PH.hud.setRace(cfg.race.pos, cfg.race.total, cfg.race.lap, cfg.race.laps, cfg.race.countdown);
-    else PH.hud.setRace(0, 0, 0, 0, null);
-    if (cfg.boat) PH.hud.setBoat(cfg.boat.speedKn, cfg.boat.dist);
+    if (cfg.race) { PH.hud.setRace(cfg.race.pos, cfg.race.total, cfg.race.lap, cfg.race.laps, cfg.race.countdown); PH.hud.setRaceGap(cfg.race.gap); }
+    else { PH.hud.setRace(0, 0, 0, 0, null); PH.hud.setRaceGap(null); }
+    if (cfg.boat) PH.hud.setBoat(cfg.boat.speedKn, cfg.boat.dist, cfg.boat.police, cfg.boat.pos, cfg.boat.total);
     if (cfg.crew) cfg.crew.forEach(function (c) { PH.hud.setCrew(c.who, c.status); });
     if (cfg.dialog) PH.hud.setDialog(cfg.dialog.who, cfg.dialog.name, cfg.dialog.text);
     else PH.hud.setDialog(null);
@@ -244,7 +331,7 @@
         wanted: 3, money: 24750, health: 100, armor: 80, ammo: 12, speedKmh: 96,
         carStatus: 'SCARLET ARROW — READY', carName: 'SCARLET ARROW', carCond: 98,
         radio: 'NIGHTWAVE 98.3 — SUNSET DRIVE',
-        race: { pos: 2, total: 3, lap: 1, laps: 2, countdown: null },
+        race: { pos: 2, total: 4, lap: 1, laps: 2, countdown: null, gap: 0.4 },
         crew: [
           { who: 'mateo', status: 'RACING' },
           { who: 'kira', status: 'ON THE RADIO' },
@@ -272,7 +359,7 @@
         { x: -23.5, z: -34, heading: 0 }, { x: -16.5, z: -52, heading: 0 },
         { x: -23.5, z: 12, heading: 0 }
       ]);
-      heli.position.set(-30, 9, -42); heli.rotation.y = THREE.MathUtils.degToRad(108); // v7.3: pulled back + up — at (-20,7.5,-30) the rotor was clipped by the frame edge and the heli filled the top-left
+      heli.position.set(-27, 8, -38); heli.rotation.y = THREE.MathUtils.degToRad(108); // round 2: pulled in + down (was (-30,9,-42)) — the rotor brushed the top frame edge in the v7.4 shot; now the whole heli sits inside the frame with margin
       camera.fov = 50; camera.updateProjectionMatrix();
       camera.position.set(-10, 2.0, -0.5);
       camera.lookAt(-10, 1.5, -6); // camera restored to the v7.2 spot; the lamp pole that blocked it is skipped in world.js instead
@@ -306,18 +393,25 @@
       traffic.freeze([
         { x: -23.5, z: 30, heading: 0 }, { x: -16.5, z: 44, heading: 0 }
       ]);
-      // heli over the water, spotlight toward the boats
-      heli.position.set(-112, 13, 28); heli.rotation.y = THREE.MathUtils.degToRad(144);
+      // heli over the water, spotlight toward the boats — round 2b:
+      // lowered to y 7 so the whole heli AND its rotor sit inside the
+      // closer shot-3 frame instead of brushing its top edge
+      heli.position.set(-114, 7, 30); heli.rotation.y = THREE.MathUtils.degToRad(144);
       camera.fov = 50; camera.updateProjectionMatrix();
-      camera.position.set(-78, 4.5, 58);
-      camera.lookAt(-108, 1.2, 38); // pier end + Kira at the right edge, boat + wake centre, police boats beyond
+      // round 2: the camera moves in from 38 units to ~15, so the boat
+      // + Mateo fill a third of the frame instead of a tenth — and the
+      // sand between lens and boat is dressed with beachgoers, not bare
+      camera.position.set(-99, 3.0, 50);
+      camera.lookAt(-111, 1.0, 40.5);
       foregroundSet(3);
+      beachForeground3();
+      clearBeachNearCamera(camera.position, 22);
       cfg = {
         objective: { title: 'PIER HEAT — THE BOAT JOB', stage: 'STAGE 1/3 — THE BOAT JOB', progress: 20, timer: '', text: 'You are at the helm — police boats are already on the water. Cut across the bay and don\'t look back.', next: 'NEXT: Outrun the police boats across the bay' },
         wanted: 0, money: 36900, health: 100, armor: 80, ammo: 12, speedKmh: 0,
         carStatus: 'AT THE HELM — SPEEDBOAT', carName: 'SPEEDBOAT', carCond: 100,
         radio: 'PIER LIGHTS', dispatch: null,
-        boat: { speedKn: 32, dist: 120 },
+        boat: { speedKn: 32, dist: 120, police: 38, pos: 1, total: 2 },
         crew: [
           { who: 'mateo', status: 'AT THE HELM' },
           { who: 'kira', status: 'ON THE BOAT' },
@@ -340,7 +434,11 @@
       var offs = [[-21.5, 39], [-18, 41.5], [-23, 36.5]];
       police.officers.forEach(function (o, i) {
         o.group.position.set(offs[i][0], 0, offs[i][1]);
-        o.group.rotation.y = Math.PI;
+        // round 2: officers face SOUTH (rotation 0) — toward Mateo and
+        // the camera — so their white helmets, hi-vis vests and faces
+        // read. The old rotation (PI, facing north) showed only their
+        // dark backs, and they read as black blobs.
+        o.group.rotation.y = 0;
         o.setPose('aim', 0, 5);
       });
       traffic.freeze([
@@ -404,7 +502,7 @@
       kira.root.position.set(stern.x, stern.y, stern.z);
       kira.root.rotation.y = stern.heading + (kira.forwardOffset || 0);
       kira.setBoatGear(true);
-      kira.setAnim('wave');
+      kira.setAnim('point'); // round 2: Kira points at the police boats closing in, instead of waving — the chase reads as a chase
     } else {
       kira.root.position.set(-14, 0, -60);
       kira.root.rotation.y = (kira.forwardOffset || 0);

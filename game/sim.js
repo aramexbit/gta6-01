@@ -69,6 +69,62 @@
       var brim = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 10), mat(0x1a2a4a, 0.7));
       brim.position.y = 0.16; headG.add(brim);
     }
+    if (opts.cap) {
+      // baseball cap: dome + a brim sticking out over the face
+      var capDome = new THREE.Mesh(new THREE.SphereGeometry(0.23, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), mat(opts.capColor != null ? opts.capColor : 0xc81e1e, 0.8));
+      capDome.position.y = 0.04; headG.add(capDome);
+      var capBrim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.03, 0.22), mat(opts.capColor != null ? opts.capColor : 0xc81e1e, 0.8));
+      capBrim.position.set(0, 0.12, 0.3); headG.add(capBrim);
+      var capBtn = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), mat(0xf2f2f2, 0.6));
+      capBtn.position.y = 0.26; headG.add(capBtn);
+    }
+    if (opts.helmet) {
+      // white PD helmet: bright dome + a clear visor strip, so an
+      // officer reads as police from across the street even at dusk
+      var helm = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(0xf2f2f2, 0.4));
+      helm.position.y = 0.04; headG.add(helm);
+      var visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.14, 0.04),
+        new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.1, metalness: 0.5, transparent: true, opacity: 0.7 }));
+      visor.position.set(0, 0.04, 0.22); headG.add(visor);
+      var helmBadge = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.02),
+        new THREE.MeshStandardMaterial({ color: 0x2040a0, emissive: 0x2040a0, emissiveIntensity: 0.6 }));
+      helmBadge.position.set(0, 0.14, 0.25); headG.add(helmBadge);
+    }
+    if (opts.sunglasses) {
+      [-0.085, 0.085].forEach(function (ex) {
+        var lens = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.08, 0.02),
+          new THREE.MeshStandardMaterial({ color: 0x101010, roughness: 0.1, metalness: 0.7 }));
+        lens.position.set(ex, 0.02, 0.21); headG.add(lens);
+      });
+      var bridge = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.02, 0.02),
+        new THREE.MeshStandardMaterial({ color: 0x101010, roughness: 0.2, metalness: 0.7 }));
+      bridge.position.set(0, 0.02, 0.21); headG.add(bridge);
+    }
+    if (opts.vest) {
+      // hi-vis vest: bright panel over the shirt + two silver bands
+      var vestF = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.1), mat(0xffc832, 0.7));
+      vestF.position.set(0, 1.22, 0.28); g.add(vestF);
+      var vestB = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.1), mat(0xffc832, 0.7));
+      vestB.position.set(0, 1.22, -0.28); g.add(vestB);
+      [1.1, 1.35].forEach(function (y) {
+        var band = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.06, 0.12),
+          new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.8, roughness: 0.3 }));
+        band.position.set(0, y, 0.28); g.add(band);
+      });
+    }
+    if (opts.jacket) {
+      // open jacket: two dark panels over the shirt, collar up
+      [-0.2, 0.2].forEach(function (x) {
+        var panel = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.6, 0.08), mat(opts.jacketColor != null ? opts.jacketColor : 0x2a3a4a, 0.9));
+        panel.position.set(x, 1.22, 0.3); g.add(panel);
+      });
+    }
+    if (opts.backpack) {
+      var pack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.5, 0.18), mat(opts.packColor != null ? opts.packColor : 0x8a2a3a, 0.9));
+      pack.position.set(0, 1.25, -0.36); g.add(pack);
+      var flap = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.2), mat(0x2a2a2a, 0.9));
+      flap.position.set(0, 1.48, -0.36); g.add(flap);
+    }
     g.add(legL, legR, body, headG, armL, armR);
     g.scale.setScalar(scale);
     g.traverse(function (o) { if (o.isMesh) o.castShadow = true; });
@@ -120,6 +176,18 @@
           g.position.y = -0.55;
           legL.rotation.x = -1.4; legR.rotation.x = -1.4;
           armL.rotation.x = -0.9 + s * 0.25; armR.rotation.x = -0.9 - s * 0.25;
+        } else if (pose === 'kite') {
+          // one arm up holding the string, head tilted to the sky
+          armR.rotation.x = -2.9; armR.rotation.z = -0.3;
+          armL.rotation.x = -0.5;
+          headG.rotation.x = -0.35;
+          legL.rotation.x = 0.2; legR.rotation.x = -0.15;
+        } else if (pose === 'cheer') {
+          // both arms up, bouncing — a beachgoer celebrating a catch
+          armL.rotation.x = -2.8; armR.rotation.x = -2.8;
+          armL.rotation.z = 0.3; armR.rotation.z = -0.3;
+          g.position.y = Math.max(0, Math.sin(t * 3 + P.phase)) * 0.25;
+          legL.rotation.x = 0.15; legR.rotation.x = -0.15;
         } else if (pose === 'aim') {
           armL.rotation.x = -Math.PI / 2; armR.rotation.x = -Math.PI / 2;
           armL.rotation.z = 0.12; armR.rotation.z = -0.12;
@@ -286,6 +354,55 @@
           new THREE.MeshStandardMaterial({ color: 0xffe6a0, emissive: 0xffd060, emissiveIntensity: 1.0 }));
         fogl.position.set(2.26, 0.32, z); g.add(fogl);
       });
+      // round 2 rear + flank enrichment (shot 1 is a rear view, shot 4
+      // a side view — both faces must carry detail, not flat orange):
+      // a bigger, taller rear glass with a chrome surround, a third
+      // brake light strip across the spoiler, bumper reflectors, a rear
+      // badge, side indicators, a fuel cap and a second flank crease
+      var rearGlassBig = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.62, 1.55),
+        new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(true), roughness: 0.12, metalness: 0.55 }));
+      rearGlassBig.position.set(-0.82, 1.02, 0); rearGlassBig.rotation.z = 0.5; g.add(rearGlassBig);
+      var chromeTrim = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 1.6),
+        new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.95, roughness: 0.2 }));
+      chromeTrim.position.set(-0.55, 1.32, 0); chromeTrim.rotation.z = 0.5; g.add(chromeTrim);
+      var brake3 = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 1.1),
+        new THREE.MeshStandardMaterial({ color: 0xff2a20, emissive: 0xff2010, emissiveIntensity: 2.2 }));
+      brake3.position.set(-2.05, 1.23, 0); g.add(brake3);
+      [-0.75, 0.75].forEach(function (z) {
+        var refl = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 0.3),
+          new THREE.MeshStandardMaterial({ color: 0xff5040, emissive: 0xff3020, emissiveIntensity: 0.9 }));
+        refl.position.set(-2.38, 0.42, z); g.add(refl);
+        var indicator = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.22),
+          new THREE.MeshStandardMaterial({ color: 0xffc832, emissive: 0xffb030, emissiveIntensity: 1.0 }));
+        indicator.position.set(1.05, 0.85, z > 0 ? 0.98 : -0.98); g.add(indicator);
+        var crease2 = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.03, 0.02), lineMat);
+        crease2.position.set(-0.1, 0.85, z); g.add(crease2);
+      });
+      var badgeTex = PH.canvasTex(256, 64, function (ctx, w, h) {
+        ctx.fillStyle = '#c85a00'; ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#ffd23c'; ctx.font = '900 30px Arial, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('SCARLET ARROW', w / 2, h / 2);
+      });
+      var badge = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.28),
+        new THREE.MeshStandardMaterial({ map: badgeTex, roughness: 0.5 }));
+      badge.position.set(-2.4, 0.95, 0); badge.rotation.y = -Math.PI / 2; g.add(badge);
+      // fuel cap (driver side) + hood shut lines + rocker extension
+      var cap2 = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.03, 12),
+        new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.25 }));
+      cap2.rotation.x = Math.PI / 2; cap2.position.set(-1.5, 0.75, 0.98); g.add(cap2);
+      [-0.95, 0.95].forEach(function (z) {
+        var hoodLine = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.02, 0.02), lineMat);
+        hoodLine.position.set(1.55, 0.82, z); hoodLine.rotation.z = -0.15; g.add(hoodLine);
+        var rocker = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 0.08), mat(0x7a3400, 0.5));
+        rocker.position.set(0, 0.18, z); g.add(rocker);
+      });
+      // window chrome trim: a bright line under the door glass, both sides
+      [-0.97, 0.97].forEach(function (z) {
+        var trim = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.04, 0.03),
+          new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.95, roughness: 0.2 }));
+        trim.position.set(0.05, 0.78, z); g.add(trim);
+      });
       g.userData.length = 4.6;
       return g;
     }
@@ -325,6 +442,38 @@
       tailgate.position.set(0, 1.3, -2.18); g.add(tailgate);
       var load = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, 1.2), mat(0x8a6a42, 0.95));
       load.position.set(0, 1.35, -1.3); g.add(load);
+    } else if (bodyType === 'coupe') {
+      // sleek two-door: lower roof, cabin shifted back, longer hood
+      cabin.scale.y = 0.8; cabin.position.y = 1.28; cabin.position.z = -0.45;
+      roof.scale.y = 0.8; roof.position.y = 1.6; roof.position.z = -0.45;
+      roof.scale.z = 0.85;
+      var hood = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 1.1), mat(bodyColor, 0.55, 0.15));
+      hood.position.set(0, 1.06, 1.4); g.add(hood);
+      var coupeGlass = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.42, 0.06),
+        new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(false), roughness: 0.12, metalness: 0.55 }));
+      coupeGlass.position.set(0, 1.25, -1.85); g.add(coupeGlass);
+    } else if (bodyType === 'wagon') {
+      // estate: the roof runs the full length with a tall rear glass
+      cabin.scale.z = 1.45; cabin.position.z = -0.35;
+      roof.scale.z = 1.45; roof.position.z = -0.35;
+      var wagonGlass = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.55, 0.06),
+        new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(false), roughness: 0.12, metalness: 0.55 }));
+      wagonGlass.position.set(0, 1.3, -2.2); g.add(wagonGlass);
+      var wagonRail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 3.4), mat(0x222222, 0.5, 0.6));
+      wagonRail.position.set(-0.6, 1.78, -0.35); g.add(wagonRail);
+      var wagonRail2 = wagonRail.clone(); wagonRail2.position.x = 0.6; g.add(wagonRail2);
+    } else if (bodyType === 'taxi') {
+      // yellow cab: checker band down the flanks + a lit roof sign
+      var checker = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.22, 4.0),
+        new THREE.MeshStandardMaterial({ map: PH.checkerTexture(), roughness: 0.6 }));
+      checker.position.set(0.96, 0.75, 0); g.add(checker);
+      var checker2 = checker.clone(); checker2.position.x = -0.96; g.add(checker2);
+      var sign = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.22, 0.3),
+        new THREE.MeshStandardMaterial({ color: 0xffc832, emissive: 0xffb030, emissiveIntensity: 1.4 }));
+      sign.position.set(0, 1.85, -0.2); g.add(sign);
+      var signText = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.18),
+        new THREE.MeshStandardMaterial({ map: PH.signTexture('TAXI', '#14181c', '#ffd23c'), roughness: 0.5 }));
+      signText.position.set(0, 1.85, 0.06); g.add(signText);
     }
     // roof rack on some traffic cars (two rails + two cross bars)
     if (!isPolice && PH.R() < 0.3) {
@@ -416,16 +565,21 @@
     });
     for (var i = 0; i < 16; i++) {
       var route = routes[i % routes.length];
-      // v7.4: traffic rolls a body variant per car — sedan, hatch, van
-      // or pickup — so the street is not sixteen identical boxes
-      var types = ['sedan', 'sedan', 'hatch', 'van', 'pickup'];
-      var car = PH.makeCar({ kind: 'traffic', bodyType: types[i % types.length] });
+      // v7.4 round 2: seven silhouettes now — sedan, hatch, van,
+      // pickup, coupe, wagon and a yellow taxi — plus a wider colour
+      // roll and per-car speeds from a crawl (5) to a hurry (13), so
+      // the street never reads as sixteen identical boxes
+      var types = ['sedan', 'sedan', 'hatch', 'van', 'pickup', 'coupe', 'wagon', 'taxi'];
+      var carOpts = { kind: 'traffic', bodyType: types[i % types.length] };
+      if (types[i % types.length] === 'taxi') carOpts.color = 0xffc832;
+      else carOpts.color = PH.pick([0xd83a2a, 0x2a6fd8, 0xf2f2f2, 0xffc832, 0x0e7a7a, 0x8a5aff, 0x1a1a1a, 0xff6ab0, 0x37a05a, 0xc0c8d0, 0x37d67a, 0xff8c42, 0x5a3a8a, 0x2ee6c8]);
+      var car = PH.makeCar(carOpts);
       var s = PH.rand(0, 1);
       var pos = route.from + (route.to - route.from) * s;
       if (route.axis === 'z') { car.position.set(route.fixed, 0, pos); car.rotation.y = route.dir > 0 ? 0 : Math.PI; }
       else { car.position.set(pos, 0, route.fixed); car.rotation.y = route.dir > 0 ? Math.PI / 2 : -Math.PI / 2; }
       scene.add(car);
-      this.cars.push({ mesh: car, route: route, speed: PH.rand(6, 11), frozen: false });
+      this.cars.push({ mesh: car, route: route, speed: PH.rand(5, 13), frozen: false });
     }
   };
   PH.Traffic.prototype.update = function (dt) {
@@ -468,7 +622,17 @@
     });
     for (var i = 0; i < 130; i++) {
       var lane = lanes[i % lanes.length];
-      var p = PH.makePerson({});
+      // round 2: one walker in four carries something readable — a
+      // cap, a backpack, sunglasses or an open jacket — so the crowd
+      // is not 130 identical shirts
+      var roll = PH.R();
+      var pOpts = {};
+      if (roll < 0.12) pOpts.cap = true;
+      else if (roll < 0.22) pOpts.backpack = true;
+      else if (roll < 0.32) pOpts.sunglasses = true;
+      else if (roll < 0.4) pOpts.jacket = true;
+      if (roll < 0.12) pOpts.capColor = PH.pick([0xc81e1e, 0x0e7a7a, 0xffc832, 0x2a6fd8, 0x1a1a1a]);
+      var p = PH.makePerson(pOpts);
       var s = PH.rand(0, 1);
       var pos = lane.from + (lane.to - lane.from) * s;
       var dir = PH.R() < 0.5 ? 1 : -1;
@@ -540,10 +704,22 @@
       self.members.push(m);
       return m;
     }
-    // 6 sunbathers on towels (lying)
-    for (var i = 0; i < 6; i++) add('lying', PH.rand(-95, -45), PH.rand(-130, 130));
-    // 5 swimmers in the sea
-    for (var j = 0; j < 5; j++) add('swim', PH.rand(-140, -108), PH.rand(-120, 120), 0.15);
+    // 6 sunbathers on towels (lying) — kept off the waterline
+    // (x >= -88): a body lying at the shore's edge read as debris in
+    // the shot-3 frame, so the towels sit up the beach with a bright
+    // towel under every sunbather
+    for (var i = 0; i < 6; i++) {
+      var lx = PH.rand(-88, -45), lz = PH.rand(-130, 130);
+      var lm = add('lying', lx, lz);
+      var ltowel = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2.2),
+        mat(PH.pick([0xff3b30, 0xffc832, 0x2a9df4, 0xff6ab0, 0x37d67a]), 0.95));
+      ltowel.rotation.x = -Math.PI / 2; ltowel.rotation.z = lm.p.group.rotation.y;
+      ltowel.position.set(lx, 0.07, lz);
+      scene.add(ltowel);
+    }
+    // 5 swimmers in the sea — well out from the shore (x <= -118),
+    // so no swimmer drifts into the shot-3 foreground as a white blob
+    for (var j = 0; j < 5; j++) add('swim', PH.rand(-150, -118), PH.rand(-120, 120), 0.15);
     // 3 surfers with boards
     for (var k = 0; k < 3; k++) {
       var s = add('surf', PH.rand(-160, -115), PH.rand(-100, 100), 0.15);
@@ -576,6 +752,27 @@
     });
     // 4 selfie takers at the shore
     for (var sf = 0; sf < 4; sf++) add('selfie', PH.rand(-100, -90), PH.rand(-100, 100));
+    // round 2: 2 kids with buckets at the sandcastles + a kite flyer
+    // + a beach dog — the sand gets life beyond the towel rows
+    for (var kd2 = 0; kd2 < 2; kd2++) {
+      var kid = add('dig', PH.rand(-88, -60), PH.rand(-60, 60), 0, { scale: 0.6, cap: true });
+      var bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.16, 0.3, 8), mat(PH.pick([0xff3b30, 0x2a9df4, 0xffc832]), 0.7));
+      bucket.position.set(0.5, 0.15, 0.4);
+      kid.p.group.add(bucket);
+    }
+    var kiteMan = add('kite', -82, 30);
+    var kite = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1),
+      new THREE.MeshStandardMaterial({ map: PH.kiteTexture(), side: THREE.DoubleSide, roughness: 0.8 }));
+    kite.position.set(-82, 7.5, 30);
+    kite.rotation.z = Math.PI / 4;
+    scene.add(kite);
+    this.kite = kite;
+    this.kiteHome = { x: -82, z: 30 };
+    var dog = PH.makeDog();
+    dog.position.set(-70, 0, -20);
+    scene.add(dog);
+    this.dog = dog;
+    this.dogPhase = PH.rand(0, 6.28);
   };
   PH.BeachCrowd.prototype.update = function (dt, t, threat) {
     this.members.forEach(function (m) {
@@ -620,6 +817,52 @@
         }
       }
     });
+    // the kite bobs and sways above its flyer; the dog trots a loop
+    // along the wet sand, tail up, chasing nothing in particular
+    if (this.kite) {
+      this.kite.position.y = 7.5 + Math.sin(t * 0.9) * 0.7;
+      this.kite.position.x = this.kiteHome.x + Math.sin(t * 0.5) * 1.2;
+      this.kite.rotation.y = Math.sin(t * 0.7) * 0.4;
+    }
+    if (this.dog) {
+      var da = t * 0.12 + this.dogPhase;
+      this.dog.position.set(-70 + Math.cos(da) * 18, 0, -20 + Math.sin(da) * 40);
+      this.dog.rotation.y = Math.atan2(Math.cos(da + 0.1) - Math.cos(da), Math.sin(da + 0.1) - Math.sin(da));
+      if (this.dog.userData.tail) this.dog.userData.tail.rotation.y = Math.sin(t * 8) * 0.5;
+      if (this.dog.userData.legL) this.dog.userData.legL.rotation.x = Math.sin(t * 10) * 0.6;
+      if (this.dog.userData.legR) this.dog.userData.legR.rotation.x = -Math.sin(t * 10) * 0.6;
+    }
+  };
+
+  // ---- beach dog: a small low-poly dog (body, head, ears, tail, legs)
+  PH.makeDog = function () {
+    var g = new THREE.Group();
+    var coat = mat(0x8a5a30, 0.9);
+    var body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.32, 0.28), coat);
+    body.position.y = 0.42; body.castShadow = true; g.add(body);
+    var head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.26, 0.26), coat);
+    head.position.set(0.45, 0.62, 0); g.add(head);
+    var snout = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.14), mat(0x6a4020, 0.9));
+    snout.position.set(0.64, 0.56, 0); g.add(snout);
+    [-0.09, 0.09].forEach(function (z) {
+      var ear = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.06), mat(0x5a3418, 0.9));
+      ear.position.set(0.38, 0.78, z); g.add(ear);
+    });
+    var tail = new THREE.Group(); tail.position.set(-0.38, 0.52, 0);
+    var tailM = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.07, 0.07), coat);
+    tailM.position.x = -0.15; tail.add(tailM);
+    tail.rotation.z = 0.5; g.add(tail);
+    var legL = new THREE.Group(); legL.position.set(0.22, 0.3, 0);
+    var legR = new THREE.Group(); legR.position.set(-0.22, 0.3, 0);
+    [legL, legR].forEach(function (leg) {
+      [-0.1, 0.1].forEach(function (z) {
+        var lm = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.3, 0.09), coat);
+        lm.position.set(0, -0.15, z); leg.add(lm);
+      });
+    });
+    g.add(legL, legR);
+    g.userData.tail = tail; g.userData.legL = legL; g.userData.legR = legR;
+    return g;
   };
 
   // ---- police: 3 officers + 3 cruisers ----
@@ -631,7 +874,9 @@
       var car = PH.makeCar({ kind: 'police', plate: plates[i] });
       scene.add(car);
       this.cruisers.push(car);
-      var off = PH.makePerson({ shirt: 0x1a2a4a, pants: 0x1a2a4a, hat: true });
+      // round 2: white helmet + hi-vis vest + lighter skin, so an
+      // officer is a readable person at dusk instead of a dark blob
+      var off = PH.makePerson({ shirt: 0x1a2a4a, pants: 0x1a2a4a, skin: 0xf2c89b, helmet: true, vest: true });
       scene.add(off.group);
       this.officers.push(off);
     }

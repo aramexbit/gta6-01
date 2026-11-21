@@ -42,7 +42,9 @@
     grocery: [0x37d67a, 0xff7a1a, 0xffc832], cafe: [0x8a5a30, 0xf2e3c8, 0xc85a00],
     pharmacy: [0x37d67a, 0xf2f2f2, 0x2a9df4], fashion: [0xff6ab0, 0x8a5aff, 0xffc832],
     salon: [0xff6ab0, 0xf2f2f2, 0x2a9df4], electronics: [0x2a6fd8, 0x14181c, 0x37d67a],
-    jewellery: [0xffc832, 0xf2f2f2, 0xff7a1a], hardware: [0xc85a00, 0x8a8a92, 0x2a2a2a]
+    jewellery: [0xffc832, 0xf2f2f2, 0xff7a1a], hardware: [0xc85a00, 0x8a8a92, 0x2a2a2a],
+    bakery: [0xd8a860, 0xf2e3c8, 0x8a5a30], toys: [0xff3b30, 0x2a9df4, 0xffc832],
+    books: [0x8a2a3a, 0x2a6fd8, 0xf2e3c8], flowers: [0xff6ab0, 0x37d67a, 0xffc832]
   };
   function paneMaterials(shopKind) {
     var warm = new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(true), roughness: 0.12, metalness: 0.55 });
@@ -249,6 +251,78 @@
     group.add(strip);
   }
 
+  // Round 2 facade styles: a residential front with balconies (slab +
+  // rail + a chair and a plant per balcony), a vertical neon blade
+  // sign for shops, a rooftop garden (planters + tiny trees) and a
+  // stepped setback crown for the taller towers — four more ways a
+  // building can differ from its neighbour.
+  function addBalconies(group, w, h, d) {
+    var floors = Math.max(1, Math.floor((h - 3.2) / 4.2));
+    var zf = d / 2;
+    for (var f = 0; f < floors; f++) {
+      var y = 3.2 + f * 4.2 + 0.4;
+      if (y + 1 > h - 0.6) continue;
+      var slab = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.14, 1.0), mat(0xd8d0c0, 0.9));
+      slab.position.set(-w / 4, y, zf + 0.5);
+      slab.castShadow = true;
+      group.add(slab);
+      var rail = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.7, 0.06), mat(0x2a2a2a, 0.5, 0.6));
+      rail.position.set(-w / 4, y + 0.5, zf + 0.95);
+      group.add(rail);
+      var chair = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), mat(PH.pick([0xff3b30, 0x2a9df4, 0xffc832]), 0.8));
+      chair.position.set(-w / 4 - 0.5, y + 0.35, zf + 0.4);
+      group.add(chair);
+      var plant = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), mat(0x37a05a, 0.9));
+      plant.position.set(-w / 4 + 0.7, y + 0.35, zf + 0.5);
+      group.add(plant);
+      var pot = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.25, 8), mat(0xc85a00, 0.9));
+      pot.position.set(-w / 4 + 0.7, y + 0.15, zf + 0.5);
+      group.add(pot);
+    }
+  }
+  function addNeonBlade(group, w, h, d, name, signBg) {
+    var blade = new THREE.Mesh(new THREE.BoxGeometry(0.18, 4.2, 1.1),
+      new THREE.MeshStandardMaterial({ map: PH.signTexture(name, signBg), emissive: 0xffffff, emissiveIntensity: 0.25, roughness: 0.6 }));
+    blade.position.set(w / 2 + 0.3, 5.4, d / 2 + 0.4);
+    group.add(blade);
+    var arm = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.08, 0.08), mat(0x2a2a2a, 0.5, 0.6));
+    arm.position.set(w / 2 + 0.1, 7.4, d / 2 + 0.4);
+    group.add(arm);
+    var glow = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xffc832, emissive: 0xffb030, emissiveIntensity: 1.6 }));
+    glow.position.set(w / 2 + 0.3, 7.4, d / 2 + 0.4);
+    group.add(glow);
+  }
+  function addRooftopGarden(group, w, h, d) {
+    for (var i = 0; i < 3; i++) {
+      var planter = box(1.6, 0.5, 0.8, 0x6a4a20, -w / 4 + i * (w / 4), h + 0.35, PH.rand(-d / 4, d / 4), 0.95);
+      group.add(planter);
+      var bush = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), mat(0x37a05a, 0.9));
+      bush.position.set(planter.position.x, h + 0.85, planter.position.z);
+      bush.castShadow = true;
+      group.add(bush);
+    }
+    var tree = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.2, 6), mat(0x7a5a38, 0.95));
+    tree.position.set(w / 4, h + 0.8, -d / 4);
+    group.add(tree);
+    var crown = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), mat(0x2e8a3e, 0.85));
+    crown.position.set(w / 4, h + 1.8, -d / 4);
+    crown.castShadow = true;
+    group.add(crown);
+  }
+  function addSetbackCrown(group, w, h, d) {
+    // a stepped top: two smaller boxes stacked, so a tower ends in
+    // steps instead of a flat cut
+    var step1 = box(w * 0.7, 1.2, d * 0.7, 0x3a3f46, 0, h + 0.6, 0, 0.9);
+    group.add(step1);
+    var step2 = box(w * 0.45, 1.0, d * 0.45, 0x4a4f56, 0, h + 1.7, 0, 0.9);
+    group.add(step2);
+    var beacon = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff1010, emissiveIntensity: 2 }));
+    beacon.position.set(0, h + 2.3, 0);
+    group.add(beacon);
+  }
+
   function makeBuilding(x, z, w, d, h, faceNorth, isShop, signIdx, antennaLights) {
     var g = new THREE.Group();
     g.position.set(x, 0, z);
@@ -262,7 +336,7 @@
     body.position.y = h / 2;
     body.castShadow = true; body.receiveShadow = true;
     g.add(body);
-    var shopKinds = ['grocery', 'cafe', 'pharmacy', 'fashion', 'salon', 'electronics', 'jewellery', 'hardware'];
+    var shopKinds = ['grocery', 'cafe', 'pharmacy', 'fashion', 'salon', 'electronics', 'jewellery', 'hardware', 'bakery', 'toys', 'books', 'flowers'];
     var shopKind = shopKinds[signIdx % shopKinds.length];
     var face = faceNorth ? 'front' : 'front';
     // windows on front (facing the street) and back
@@ -293,6 +367,14 @@
       addGroundFloor(g, w, d, styles[Math.floor(roll() * 3)]);
     }
     addRoofProps(g, w, h, d, antennaLights);
+    // round 2: one extra style per building, rolled from its seed —
+    // balconies on homes, a neon blade on shops, a rooftop garden on
+    // some flats, a setback crown on the tall towers
+    var style2 = roll();
+    if (!isShop && style2 < 0.3) addBalconies(g, w, h, d);
+    else if (isShop && style2 < 0.35) addNeonBlade(g, w, h, d, SHOP_NAMES[signIdx % SHOP_NAMES.length], PH.pick(SIGN_COLORS));
+    else if (style2 < 0.55) addRooftopGarden(g, w, h, d);
+    else if (h > 30) addSetbackCrown(g, w, h, d);
     if (!faceNorth) g.rotation.y = Math.PI;
     return g;
   }
@@ -628,21 +710,50 @@
       g.add(box(0.12, 0.55, 0.5, 0x333333, 0.9, 0.28, 0, 0.6, 0.5));
       scene.add(g);
     });
-    // traffic lights, west side of Sunset Blvd
-    [[-26.5, -41], [-26.5, -1], [-26.5, 39], [-26.5, 79]].forEach(function (p) {
-      var g = new THREE.Group(); g.position.set(p[0], 0, p[1]);
+    // traffic lights, BOTH sides of Sunset Blvd, round 2: a real head
+    // with a yellow-bordered backplate, a visor hood over every lamp
+    // and bright lamps — the old bare head read as a black block from
+    // behind (shot 4) and a bare pole from the side (shot 1). The west
+    // heads face east (toward the road), the east heads face west.
+    function makeTrafficLight(x, z, faceEast) {
+      var g = new THREE.Group(); g.position.set(x, 0, z);
       var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 5.5, 8), lampMat);
       pole.position.y = 2.75; pole.castShadow = true; g.add(pole);
-      var headBox = box(0.7, 1.9, 0.5, 0x14181c, 0.4, 5.2, 0, 0.6);
+      var base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.4, 8), mat(0x8a8a92, 0.7));
+      base.position.y = 0.2; g.add(base);
+      // backplate: a dark slab with a yellow border, bigger than the
+      // head, so the light reads as a traffic light from ANY side
+      var plate = box(0.9, 2.1, 0.08, 0xffc832, faceEast ? 0.55 : -0.55, 5.2, 0, 0.6);
+      g.add(plate);
+      var headBox = box(0.7, 1.9, 0.5, 0x14181c, faceEast ? 0.55 : -0.55, 5.2, 0, 0.6);
       g.add(headBox);
       var cols3 = [0xff2a20, 0xffc832, 0x2aff5a];
       cols3.forEach(function (c, i) {
         var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6),
-          new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: i === 0 ? 1.4 : 0.15 }));
-        lamp.position.set(0.4, 5.8 - i * 0.6, 0.26);
+          new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: i === 0 ? 1.6 : 0.2 }));
+        lamp.position.set(faceEast ? 0.55 : -0.55, 5.8 - i * 0.6, 0.26);
         g.add(lamp);
+        // visor hood over each lamp, so the lamp reads as a lamp and
+        // not a coloured dot on a black slab
+        var visor = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.3, 8, 1, false, 0, Math.PI),
+          mat(0x14181c, 0.6));
+        visor.rotation.z = Math.PI / 2;
+        visor.rotation.y = faceEast ? 0 : Math.PI;
+        visor.position.set(faceEast ? 0.55 : -0.55, 5.95 - i * 0.6, 0.26);
+        g.add(visor);
       });
+      // small "WALK" pedestrian box on the pole, low down
+      var walkBox = box(0.4, 0.5, 0.2, 0x14181c, faceEast ? 0.3 : -0.3, 2.2, 0, 0.6);
+      g.add(walkBox);
+      var walkLamp = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.05),
+        new THREE.MeshStandardMaterial({ color: 0x2aff5a, emissive: 0x20ff40, emissiveIntensity: 1.2 }));
+      walkLamp.position.set(faceEast ? 0.42 : -0.42, 2.2, 0.11);
+      g.add(walkLamp);
       scene.add(g);
+    }
+    [[-26.5, -41], [-26.5, -1], [-26.5, 39], [-26.5, 79]].forEach(function (p) {
+      makeTrafficLight(p[0], p[1], true);
+      makeTrafficLight(-13.5, p[1] + 4, false);
     });
 
     // ---- street market stalls (v7.3): the east sidewalk in shot 2
@@ -789,6 +900,46 @@
       angler.setPose('fish', 0, 5);
       pier.add(angler.group);
     });
+    // round 2 — west deck-end dressing: the bare-wood corner that
+    // filled shot 3's bottom-right now carries lobster pots, a life
+    // ring post, a cooler and a fish-cleaning table with a catch
+    [[-84, 43.2], [-82.6, 43.2], [-83.3, 43.2]].forEach(function (p, i) {
+      var pot = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.5, 10),
+        mat(i % 2 ? 0x6a4a20 : 0x8a6a42, 0.95));
+      pot.position.set(p[0], 1.35 + 0.25 + (i === 2 ? 0.5 : 0), p[1]);
+      pot.castShadow = true;
+      pier.add(pot);
+      var potRim = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 6, 14), mat(0x2a2a2a, 0.7));
+      potRim.rotation.x = Math.PI / 2;
+      potRim.position.set(p[0], 1.35 + 0.5 + (i === 2 ? 0.5 : 0), p[1]);
+      pier.add(potRim);
+    });
+    var ringPost = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.6, 6), mat(0xf2f2f2, 0.7));
+    ringPost.position.set(-86, 2.15, 36.8);
+    pier.add(ringPost);
+    var lifeRing = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.11, 8, 16), mat(0xff3b30, 0.7));
+    lifeRing.position.set(-86, 2.7, 36.8);
+    pier.add(lifeRing);
+    var ringBand = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.115, 8, 16, Math.PI / 2), mat(0xf2f2f2, 0.7));
+    ringBand.position.set(-86, 2.7, 36.8);
+    pier.add(ringBand);
+    var cooler = box(1.0, 0.6, 0.6, 0x2a9df4, -72, 1.65, 43.4, 0.6);
+    pier.add(cooler);
+    var coolerLid = box(1.04, 0.12, 0.64, 0xf2f2f2, -72, 2.0, 43.4, 0.6);
+    pier.add(coolerLid);
+    // fish-cleaning table: a board on legs with two silver fish on it
+    pier.add(box(1.6, 0.1, 0.7, 0x8a6a42, -76, 2.3, 43.5, 0.9));
+    [[-76.5, 43.3], [-75.5, 43.7]].forEach(function (p) {
+      var legT = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), mat(0x4a4a4a, 0.6, 0.5));
+      legT.position.set(p[0], 1.85, p[1]);
+      pier.add(legT);
+    });
+    [-0.3, 0.3].forEach(function (dx) {
+      var fish = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.5, 6), mat(0xc0c8d0, 0.4, 0.8));
+      fish.rotation.z = Math.PI / 2;
+      fish.position.set(-76 + dx, 2.4, 43.5);
+      pier.add(fish);
+    });
     // seagulls circling the pier end (white bodies, dark wingtips)
     var gullMat = mat(0xf2f2f2, 0.8);
     var gullTipMat = mat(0x2a2a2a, 0.8);
@@ -846,6 +997,42 @@
       board.rotation.z = PH.rand(-0.2, 0.2);
       board.castShadow = true;
       scene.add(board);
+    }
+    // lifeguard tower at the waterline (x -110, z 30): four splayed
+    // legs, a striped cabin, a roof and a red rescue buoy on the rail
+    // — round 2: it stood at (-106,44), dead on the shot-3 sightline,
+    // and filled the frame; now it anchors the frame's right edge
+    // instead of covering the boat
+    var tower = new THREE.Group(); tower.position.set(-110, 0, 30);
+    [[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]].forEach(function (p) {
+      var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 3.4, 6), mat(0xf2f2f2, 0.8));
+      leg.position.set(p[0] * 1.2, 1.7, p[1] * 1.2);
+      leg.rotation.z = -p[0] * 0.12; leg.rotation.x = p[1] * 0.12;
+      leg.castShadow = true;
+      tower.add(leg);
+    });
+    var cabTex = PH.canvasTex(128, 64, function (ctx, ww, hh) {
+      for (var s = 0; s < 8; s++) { ctx.fillStyle = s % 2 ? '#f2f2f2' : '#ff3b30'; ctx.fillRect(s * 16, 0, 16, hh); }
+    });
+    var cabin = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 2.0),
+      new THREE.MeshStandardMaterial({ map: cabTex, roughness: 0.8 }));
+    cabin.position.y = 4.0; cabin.castShadow = true; tower.add(cabin);
+    var cabRoof = new THREE.Mesh(new THREE.ConeGeometry(2.0, 0.9, 4), mat(0xff3b30, 0.8));
+    cabRoof.position.y = 5.25; cabRoof.rotation.y = Math.PI / 4; tower.add(cabRoof);
+    var buoy = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.1, 8, 16), mat(0xff3b30, 0.7));
+    buoy.position.set(0, 4.6, 1.05); tower.add(buoy);
+    var ramp = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.08, 2.2), mat(0x8a6a42, 0.9));
+    ramp.position.set(0, 2.2, 2.0); ramp.rotation.x = 0.7; tower.add(ramp);
+    scene.add(tower);
+    // footprints along the wet sand: two staggered trails of small dark
+    // ellipses from the tower toward the pier, so the sand is walked-on
+    var fpMat = new THREE.MeshBasicMaterial({ color: 0x8a6a42, transparent: true, opacity: 0.55 });
+    for (var fp = 0; fp < 26; fp++) {
+      var print = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.34), fpMat);
+      print.rotation.x = -Math.PI / 2;
+      print.rotation.z = PH.rand(-0.3, 0.3);
+      print.position.set(-104 + fp * 0.55 + (fp % 2 ? 0.35 : -0.35), 0.07, 46 - fp * 0.35);
+      scene.add(print);
     }
     // volleyball court at (-58,-8): posts + net + bouncing ball
     var vc = new THREE.Group(); vc.position.set(-58, 0, -8);
@@ -907,6 +1094,24 @@
         W.clouds.push(dc);
       }
     }
+    // round 2: a high thin cirrus deck — flat wide streaks that drift
+    // faster than the cumulus below, so the sky has two speeds of cloud
+    W.cirrus = [];
+    for (var cir = 0; cir < 8; cir++) {
+      var streak = new THREE.Group();
+      var streakMat = new THREE.MeshBasicMaterial({
+        color: sunset ? 0xffd9a0 : 0xffffff, transparent: true, opacity: 0.5, fog: true
+      });
+      for (var sp = 0; sp < 4; sp++) {
+        var puff = new THREE.Mesh(new THREE.SphereGeometry(PH.rand(4, 7), 8, 6), streakMat);
+        puff.scale.set(2.2, 0.25, 0.7);
+        puff.position.set(sp * PH.rand(7, 10) - 14, PH.rand(-0.5, 0.5), PH.rand(-2, 2));
+        streak.add(puff);
+      }
+      streak.position.set(PH.rand(-220, 220), PH.rand(70, 95), PH.rand(-220, 220));
+      scene.add(streak);
+      W.cirrus.push(streak);
+    }
 
     W.update = function (dt, t) {
       // foam drift
@@ -935,6 +1140,11 @@
         var a = t * 0.25 + gl.phase;
         gl.g.position.set(gl.cx + Math.cos(a) * gl.r, gl.h + Math.sin(t * 0.8 + gl.phase) * 0.8, gl.cz + Math.sin(a) * gl.r);
         gl.g.rotation.y = -a;
+      });
+      // cirrus streaks drift east faster than the cumulus below
+      W.cirrus.forEach(function (st, i) {
+        st.position.x += dt * (3.0 + (i % 3) * 0.8);
+        if (st.position.x > 240) st.position.x = -240;
       });
       // volleyball bounce
       if (W.volleyball) {

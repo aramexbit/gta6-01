@@ -48,7 +48,9 @@
         ctx.fillRect(i * 32, 0, 32, 14);
         ctx.fillRect(i * 32, h - 14, 32, 14);
       }
-      ctx.fillStyle = '#ffd23c'; ctx.font = '900 56px Arial, sans-serif';
+      // round 2: 44px, not 56 — "CHECKPOINT 3/14" at 56px overflowed
+      // the 512px board and the "4" was clipped in shot 1
+      ctx.fillStyle = '#ffd23c'; ctx.font = '900 44px Arial, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('CHECKPOINT ' + (index + 1) + '/' + total, w / 2, h / 2 + 2);
     });
@@ -59,8 +61,32 @@
     var glow = new THREE.Mesh(new THREE.BoxGeometry(9.0, 0.12, 0.12),
       new THREE.MeshStandardMaterial({ color: 0xffc832, emissive: 0xffb030, emissiveIntensity: 1.6 }));
     glow.position.y = 4.7; g.add(glow);
+    // countdown lamps: three red lamps under the banner that light up
+    // one by one and turn green on GO — the start line reads as a start
+    var lampMats = [];
+    [-1.2, 0, 1.2].forEach(function (x) {
+      var lm = new THREE.MeshStandardMaterial({ color: 0x402020, emissive: 0xff2020, emissiveIntensity: 0.15 });
+      var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), lm);
+      lamp.position.set(x, 4.1, 0.15);
+      g.add(lamp);
+      lampMats.push(lm);
+      var housing = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.12, 10), std(0x14181c, 0.5, 0.4));
+      housing.rotation.x = Math.PI / 2;
+      housing.position.set(x, 4.1, 0.02);
+      g.add(housing);
+    });
     g.userData.banner = banner;
+    g.userData.lampMats = lampMats;
     return g;
+  };
+  // Light the countdown lamps: n = 0..3 lit red, 4 = all green (GO).
+  PH.makeRaceGate.setLights = function (gate, n) {
+    if (!gate || !gate.userData.lampMats) return;
+    gate.userData.lampMats.forEach(function (m, i) {
+      if (n >= 4) { m.color.setHex(0x20ff60); m.emissive.setHex(0x10ff40); m.emissiveIntensity = 2.2; }
+      else if (i < n) { m.color.setHex(0xff2020); m.emissive.setHex(0xff1010); m.emissiveIntensity = 2.2; }
+      else { m.color.setHex(0x402020); m.emissive.setHex(0xff2020); m.emissiveIntensity = 0.15; }
+    });
   };
 
   // --- race state machine ---
@@ -89,19 +115,22 @@
       scene.add(gate);
       self.gates.push(gate);
     });
-    // two rivals, distinct colours AND distinct bodies (v7.4): a blue
-    // hatch and a red pickup, so the two rivals read as different cars
-    var colors = [0x2a6fd8, 0xd83a2a];
-    var bodies = ['hatch', 'pickup'];
+    // three rivals now, distinct colours AND distinct bodies (v7.4):
+    // a blue hatch, a red pickup and a green coupe — round 2 adds the
+    // coupe so the race is a three-car fight, not a duel
+    var colors = [0x2a6fd8, 0xd83a2a, 0x37a05a];
+    var bodies = ['hatch', 'pickup', 'coupe'];
+    var names = ['AZUL', 'ROJA', 'VERDE'];
     colors.forEach(function (c, i) {
       var car = PH.makeCar({ kind: 'traffic', color: c, bodyType: bodies[i] });
       car.position.set(-20 + (i === 0 ? 4 : -4), 0, -104 + i * 4);
       scene.add(car);
       self.rivals.push({
-        mesh: car, gate: 0, speed: 15 + i * 1.2, color: c,
+        mesh: car, gate: 0, speed: 15 + i * 1.2, color: c, name: names[i],
         pos: new THREE.Vector3(-20 + (i === 0 ? 4 : -4), 0, -104 + i * 4)
       });
     });
+    this.gap = 0; // seconds (approx) behind the car ahead of the player
   };
   PH.Race.prototype.showGates = function (on) {
     this.gates.forEach(function (g) { g.visible = on; });
@@ -110,8 +139,9 @@
   // cleared, lap and clock zeroed, rivals back to their grid spots.
   PH.Race.prototype.reset = function () {
     this.nextGate = 0; this.lap = 1; this.raceTime = 0;
-    this.playerGate = 0; this.position = 1;
+    this.playerGate = 0; this.position = 1; this.gap = 0;
     this.countdown = -1; this.countdownT = 0; this.racing = false;
+    this.gates.forEach(function (g) { PH.makeRaceGate.setLights(g, 0); });
     this.rivals.forEach(function (r, i) {
       r.gate = 0;
       r.pos.set(-20 + (i === 0 ? 4 : -4), 0, -104 + i * 4);
@@ -142,7 +172,14 @@
       return a.dist - b.dist;
     });
     for (var i = 0; i < entries.length; i++) {
-      if (entries[i].who === 'player') { this.position = i + 1; break; }
+      if (entries[i].who === 'player') {
+        this.position = i + 1;
+        // gap to the car ahead, in seconds at ~16 u/s — the number the
+        // HUD shows next to the position, so P2 always has a chase target
+        var ahead = entries[i - 1];
+        this.gap = ahead ? Math.max(0, (ahead.dist - entries[i].dist) / 16) : 0;
+        break;
+      }
     }
     return this.position;
   };
@@ -152,6 +189,9 @@
       var left = 3 - Math.floor(this.countdownT);
       if (left !== this.countdown) {
         this.countdown = left;
+        // countdown lamps on the next gate: 3, 2, 1 red, then green GO
+        var gate = this.gates[this.playerGate % this.gates.length];
+        PH.makeRaceGate.setLights(gate, left <= 0 ? 4 : 3 - left);
         if (left <= 0) { this.racing = true; this.countdown = -1; }
       }
     }
@@ -166,6 +206,10 @@
         if (this.lap > this.totalLaps) { this.racing = false; }
       }
       PH.hud.toast('CHECKPOINT ' + this.playerGate + ' — LAP ' + this.lap + '/' + this.totalLaps);
+      // round 2: a checkpoint sounds like a checkpoint — a cheer from
+      // the crowd plus dispatch on the radio
+      PH.Audio.crowdCheer();
+      PH.Audio.radioChatter();
     }
     // rivals: drive toward their next gate, ease off on sharp turns
     this.rivals.forEach(function (r) {
@@ -189,18 +233,20 @@
     this.computePosition(playerPos || { x: -20, z: 8 });
   };
   // Frozen hero arrangement for shot 1: the next gate arches over the
-  // road ahead of the hero, and BOTH rivals run big and close — one in
-  // the right lane just ahead of the hero's nose, one in the left lane
-  // alongside, so the race reads at a glance instead of hiding behind
-  // the gate. The gate sits further ahead (z -18) so it frames the
-  // rivals instead of covering them.
+  // road ahead of the hero, and ALL THREE rivals run big and close —
+  // one in the right lane just ahead of the hero's nose, one in the
+  // left lane alongside, the green coupe ahead in the middle — so the
+  // race reads at a glance instead of hiding behind the gate. Round 2:
+  // the gate sits further ahead (z -24, not -18) and its banner text
+  // fits the board, so "CHECKPOINT 3/14" reads whole.
   PH.Race.prototype.stageShot = function () {
     this.showGates(true);
     var gate = this.gates[2];
-    gate.position.set(-20, 0, -18);
+    gate.position.set(-20, 0, -24);
     gate.rotation.y = 0;
     gate.visible = true;
     this.gates.forEach(function (g, i) { if (i !== 2) g.visible = false; });
+    PH.makeRaceGate.setLights(gate, 2);
     var rival = this.rivals[0];
     rival.mesh.position.set(-16.5, 0, 0);
     rival.mesh.rotation.y = Math.PI;
@@ -211,6 +257,13 @@
     rival2.mesh.rotation.y = Math.PI;
     rival2.pos.copy(rival2.mesh.position);
     rival2.gate = 2;
+    // round 2: the green coupe runs ahead in the middle lane, between
+    // the hero and the gate — three cars deep in the frame
+    var rival3 = this.rivals[2];
+    rival3.mesh.position.set(-20, 0, -10);
+    rival3.mesh.rotation.y = Math.PI;
+    rival3.pos.copy(rival3.mesh.position);
+    rival3.gate = 3;
     // v7.4 rev 2: the red pickup runs further ahead (z -2, not +3) so
     // the hero no longer hides it — both rivals stay readable
     this.playerGate = 2;
@@ -218,5 +271,6 @@
     this.racing = true;
     this.countdown = -1;
     this.position = 2;
+    this.gap = 0.4;
   };
 })();

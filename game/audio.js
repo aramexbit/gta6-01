@@ -32,6 +32,7 @@
         this.started = true;
         this.startRadio();
         this.startWaves();
+        this.startSurf();
         this.startGulls();
         this.startEngine();
       } catch (e) { /* audio is optional; never break the game */ }
@@ -151,6 +152,127 @@
       lfo.connect(lg); lg.connect(g.gain);
       src.connect(f); f.connect(g); g.connect(this.master);
       src.start(); lfo.start();
+    },
+
+    // --- surf crash (round 2): a slow periodic breaker — a low boom
+    // under a hiss, every ~9 s, so the shore breathes instead of
+    // humming one flat loop
+    startSurf: function () {
+      if (!this.ctx || this.surfTimer) return;
+      var self = this;
+      this.surfTimer = setInterval(function () {
+        if (!self.ctx || self.muted || Math.random() < 0.35) return;
+        self.waveCrash();
+      }, 9000);
+    },
+    waveCrash: function () {
+      if (!this.ctx || this.muted) return;
+      var ctx = this.ctx, t = ctx.currentTime;
+      var len = Math.floor(ctx.sampleRate * 1.4);
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) {
+        var k = i / len;
+        d[i] = (Math.random() * 2 - 1) * Math.sin(k * Math.PI);
+      }
+      var src = ctx.createBufferSource(); src.buffer = buf;
+      var f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700;
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.14, t + 0.35);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+      src.connect(f); f.connect(g); g.connect(this.master);
+      src.start(t);
+      // low boom under the hiss
+      var o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(90, t);
+      o.frequency.exponentialRampToValueAtTime(40, t + 0.7);
+      var og = ctx.createGain();
+      og.gain.setValueAtTime(0.12, t);
+      og.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      o.connect(og); og.connect(this.master);
+      o.start(t); o.stop(t + 0.85);
+    },
+
+    // --- tyre screech (round 2): a bandpass noise sweep down, for the
+    // race corners — called when a rival (or the player) takes a turn
+    screech: function () {
+      if (!this.ctx || this.muted) return;
+      var ctx = this.ctx, t = ctx.currentTime;
+      var len = Math.floor(ctx.sampleRate * 0.5);
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      var src = ctx.createBufferSource(); src.buffer = buf;
+      var f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1100; f.Q.value = 6;
+      f.frequency.exponentialRampToValueAtTime(500, t + 0.5);
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(0.12, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      src.connect(f); f.connect(g); g.connect(this.master);
+      src.start(t);
+    },
+
+    // --- police radio chatter (round 2): a static burst + two blips,
+    // the sound of dispatch talking over the chase
+    radioChatter: function () {
+      if (!this.ctx || this.muted) return;
+      var ctx = this.ctx, t = ctx.currentTime;
+      var len = Math.floor(ctx.sampleRate * 0.25);
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ctx.createBufferSource(); src.buffer = buf;
+      var f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 2400; f.Q.value = 2;
+      var g = ctx.createGain(); g.gain.value = 0.1;
+      src.connect(f); f.connect(g); g.connect(this.master);
+      src.start(t);
+      [0.3, 0.48].forEach(function (off) {
+        var o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 1250;
+        var og = ctx.createGain();
+        og.gain.setValueAtTime(0.05, t + off);
+        og.gain.exponentialRampToValueAtTime(0.001, t + off + 0.08);
+        o.connect(og); og.connect(this.master);
+        o.start(t + off); o.stop(t + off + 0.1);
+      }, this);
+    },
+
+    // --- crowd cheer (round 2): a filtered noise swell with two
+    // whistle blasts, for a checkpoint cleared or a race won
+    crowdCheer: function () {
+      if (!this.ctx || this.muted) return;
+      var ctx = this.ctx, t = ctx.currentTime;
+      var len = Math.floor(ctx.sampleRate * 1.2);
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) {
+        var k = i / len;
+        d[i] = (Math.random() * 2 - 1) * Math.sin(k * Math.PI) * 0.8;
+      }
+      var src = ctx.createBufferSource(); src.buffer = buf;
+      var f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 900; f.Q.value = 0.8;
+      var g = ctx.createGain(); g.gain.value = 0.16;
+      src.connect(f); f.connect(g); g.connect(this.master);
+      src.start(t);
+      [0.15, 0.6].forEach(function (off) {
+        var o = ctx.createOscillator(); o.type = 'sine';
+        o.frequency.setValueAtTime(2200, t + off);
+        o.frequency.exponentialRampToValueAtTime(2600, t + off + 0.2);
+        var og = ctx.createGain();
+        og.gain.setValueAtTime(0.04, t + off);
+        og.gain.exponentialRampToValueAtTime(0.001, t + off + 0.25);
+        o.connect(og); og.connect(this.master);
+        o.start(t + off); o.stop(t + off + 0.3);
+      }, this);
+    },
+
+    // --- boat horn, double blast (round 2): two harbour-horn blasts
+    // with a gap, the sound that opens the boat job
+    boatHorn: function () {
+      if (!this.ctx || this.muted) return;
+      var self = this;
+      this.harbourHorn();
+      setTimeout(function () { self.harbourHorn(); }, 650);
     },
 
     // --- siren: 800 Hz sine wobbled ±160 by a 0.9 Hz square LFO ---

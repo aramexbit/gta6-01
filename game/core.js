@@ -210,6 +210,45 @@
     });
   };
 
+  // Taxi checker band (round 2): black-and-white checks for the cab's
+  // flanks, so the taxi reads as a taxi without a roof sign alone.
+  PH.checkerTexture = function () {
+    return PH.canvasTex(256, 32, function (g, w, h) {
+      var s = 16;
+      for (var x = 0; x < w / s; x++) {
+        for (var y = 0; y < h / s; y++) {
+          g.fillStyle = (x + y) % 2 ? '#14181c' : '#f2f2f2';
+          g.fillRect(x * s, y * s, s, s);
+        }
+      }
+    });
+  };
+
+  // Kite (round 2): a diamond in four bright panels with a tail bow,
+  // for the beach kite flyer — a flat colour quad would read as litter.
+  PH.kiteTexture = function () {
+    return PH.canvasTex(128, 128, function (g, w, h) {
+      var cols = ['#ff3b30', '#ffc832', '#2a9df4', '#ff6ab0'];
+      g.fillStyle = cols[0]; g.beginPath(); g.moveTo(64, 0); g.lineTo(128, 64); g.lineTo(64, 64); g.closePath(); g.fill();
+      g.fillStyle = cols[1]; g.beginPath(); g.moveTo(64, 0); g.lineTo(0, 64); g.lineTo(64, 64); g.closePath(); g.fill();
+      g.fillStyle = cols[2]; g.beginPath(); g.moveTo(0, 64); g.lineTo(64, 64); g.lineTo(64, 128); g.closePath(); g.fill();
+      g.fillStyle = cols[3]; g.beginPath(); g.moveTo(128, 64); g.lineTo(64, 64); g.lineTo(64, 128); g.closePath(); g.fill();
+      g.strokeStyle = '#14181c'; g.lineWidth = 4;
+      g.strokeRect(2, 2, w - 4, h - 4);
+    });
+  };
+
+  // Red/white rescue stripes (round 2): the lifeguard tower cabin and
+  // the pier's life-ring post share one striped canvas.
+  PH.stripesTexture = function (color) {
+    return PH.canvasTex(128, 64, function (g, w, h) {
+      for (var s = 0; s < 8; s++) {
+        g.fillStyle = s % 2 ? '#f2f2f2' : color;
+        g.fillRect(s * 16, 0, 16, h);
+      }
+    });
+  };
+
   // Speckled sand.
   PH.sandTexture = function () {
     return PH.canvasTex(256, 256, function (g, w, h) {
@@ -338,10 +377,21 @@
       }
       var rp = el('race-panel'); if (rp) rp.style.display = pos ? 'block' : 'none';
     },
-    setBoat: function (speedKmh, dist) {
+    // gap to the car ahead, shown under the race position (round 2)
+    setRaceGap: function (gap) {
+      var g = el('race-gap'); if (!g) return;
+      if (gap == null || gap <= 0) { g.textContent = ''; return; }
+      g.textContent = 'GAP +' + gap.toFixed(1) + 's TO LEADER';
+    },
+    // boat readout, round 2: speed in knots, distance to the pier,
+    // the nearest police boat's distance and the chase position —
+    // the boat job's HUD now says how close the heat is, not just speed
+    setBoat: function (speedKmh, dist, policeDist, pos, total) {
       var bp = el('boat-panel'); if (bp) bp.style.display = 'block';
       setText('boat-speed', Math.round(speedKmh) + ' KN');
       setText('boat-dist', dist != null ? dist + 'm TO PIER' : '');
+      setText('boat-police', policeDist != null ? 'POLICE ' + Math.round(policeDist) + 'm BEHIND' : '');
+      setText('boat-pos', pos != null ? 'P' + pos + '/' + total + ' IN THE CHASE' : '');
     },
     setCarName: function (name, cond) {
       setText('car-name', name);

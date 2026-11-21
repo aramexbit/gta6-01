@@ -1,5 +1,9 @@
 # PIER HEAT — Sunset Bay
 
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/aramexbit/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/aramexbit/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+
 An original open-world crime game for the make.fun `gta6-01` bounty. You are
 **Mateo Vega**, 28, a getaway driver in a burnt-orange bomber jacket, on the
 run from the **Bay City PD** through the sun-soaked coastal city of **Sunset
@@ -9,6 +13,7 @@ you through the job on the radio while **Nightwave 98.3** plays.
 
 Everything in the game is original: the city, the story, the characters, the
 car, the map, the art and the music. It is not GTA and uses no GTA assets.
+Entered in the [make.fun gta6-01 bounty](https://make.fun/bounty/gta6-01).
 
 ## Play
 

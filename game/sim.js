@@ -235,12 +235,22 @@
       shape.lineTo(-1.9, 0.8); shape.lineTo(-2.3, 0.28);
       var geo = new THREE.ExtrudeGeometry(shape, { depth: 1.9, bevelEnabled: false });
       geo.translate(0, 0, -0.95);
-      var bodyMat = new THREE.MeshStandardMaterial({ color: 0xc85a00, roughness: 0.62, metalness: 0.05 });
+      // v7.5: glossy clearcoat paint from herocar.js (the flanks mirror
+      // the sky); the old matte material stays as the fallback.
+      var bodyMat = PH.heroPaint ? PH.heroPaint() : new THREE.MeshStandardMaterial({ color: 0xc85a00, roughness: 0.62, metalness: 0.05 });
       var body = new THREE.Mesh(geo, bodyMat);
       body.castShadow = true; g.add(body);
-      // flat vertical rear face in body colour
-      var rear = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.75, 1.88), bodyMat);
-      rear.position.set(-2.32, 0.62, 0); g.add(rear);
+      // v7.5: the curved stern from herocar.js replaces the flat rear
+      // panel (and, below, the tail bar, fog lamps, strut spoiler,
+      // tail handle, old bumper/diffuser, exhausts and rear plate —
+      // the rear assembly carries its own versions of all of them, set
+      // on the dome's curve). When herocar.js is absent the old flat
+      // rear stays exactly as it was.
+      if (PH.buildHeroRear) { g.add(PH.buildHeroRear(bodyMat)); }
+      else {
+        var rear = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.75, 1.88), bodyMat);
+        rear.position.set(-2.32, 0.62, 0); g.add(rear);
+      }
       // dark glass cabin + body-colour roof, slanted windscreens
       var cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.42, 1.6),
         new THREE.MeshStandardMaterial({ color: 0x101820, roughness: 0.15, metalness: 0.5 }));
@@ -259,8 +269,13 @@
         var handle = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.04),
           new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.25 }));
         handle.position.set(0.5, 0.78, z); g.add(handle);
-        var mirror = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.06), bodyMat);
-        mirror.position.set(0.95, 0.95, z * 1.02); g.add(mirror);
+        // v7.5: detailed mirrors from herocar.js (stalk + glass face +
+        // amber repeater); the old body-colour box stays the fallback.
+        if (PH.buildHeroMirror) g.add(PH.buildHeroMirror(z > 0 ? 1 : -1));
+        else {
+          var mirror = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.06), bodyMat);
+          mirror.position.set(0.95, 0.95, z * 1.02); g.add(mirror);
+        }
       });
       // v7.3: the rear is no longer a flat box — door glass, a rear
       // quarter window, a tailgate handle and a rear bumper break it up.
@@ -274,11 +289,15 @@
       var rearWindow = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.42, 1.5),
         new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(true), roughness: 0.12, metalness: 0.55 }));
       rearWindow.position.set(-0.85, 0.98, 0); rearWindow.rotation.z = 0.5; g.add(rearWindow);
-      var tailHandle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 0.5),
-        new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.25 }));
-      tailHandle.position.set(-2.4, 0.95, 0); g.add(tailHandle);
-      var rearBumper = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 1.92), mat(0x14181c, 0.5));
-      rearBumper.position.set(-2.32, 0.32, 0); g.add(rearBumper);
+      // v7.5: the tail handle + old bumper live in the flat rear that
+      // the curved stern replaces — skipped when herocar.js is loaded.
+      if (!PH.buildHeroRear) {
+        var tailHandle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 0.5),
+          new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.25 }));
+        tailHandle.position.set(-2.4, 0.95, 0); g.add(tailHandle);
+        var rearBumper = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 1.92), mat(0x14181c, 0.5));
+        rearBumper.position.set(-2.32, 0.32, 0); g.add(rearBumper);
+      }
       // lower door crease + side skirt, so the flank reads as panels
       [-0.97, 0.97].forEach(function (z) {
         var crease = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.03, 0.02), lineMat);
@@ -286,6 +305,11 @@
         var skirt = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.1, 0.06), mat(0x14181c, 0.5));
         skirt.position.set(0, 0.24, z); g.add(skirt);
       });
+      // v7.5: the nose is rebuilt by herocar.js (round LED DRLs, wide
+      // mesh grille, deeper splitter with winglets) — the old flat
+      // grille, splitter and rectangular headlights are skipped when
+      // it is loaded. The old parts stay as the fallback.
+      if (!PH.buildHeroFront) {
       // grille + low front splitter
       g.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 1.4), mat(0x14181c, 0.5)));
       var grille = g.children[g.children.length - 1]; grille.position.set(2.28, 0.45, 0);
@@ -297,23 +321,35 @@
         var hl = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.5), headMat);
         hl.position.set(2.28, 0.62, z); g.add(hl);
       });
-      var tailBar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 1.8),
-        new THREE.MeshStandardMaterial({ color: 0xff2a20, emissive: 0xff2010, emissiveIntensity: 1.4 }));
-      tailBar.position.set(-2.38, 0.72, 0); g.add(tailBar);
-      var diff = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 1.6), mat(0x14181c, 0.5));
-      diff.position.set(-2.3, 0.3, 0); g.add(diff);
-      [-0.45, 0.45].forEach(function (z) {
-        var ex = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.2, 8),
-          new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.2 }));
-        ex.rotation.z = Math.PI / 2; ex.position.set(-2.42, 0.32, z); g.add(ex);
-      });
-      // spoiler on two struts
-      [-0.6, 0.6].forEach(function (z) {
-        var strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), bodyMat);
-        strut.position.set(-2.05, 1.05, z); g.add(strut);
-      });
-      var wing = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.06, 1.9), bodyMat);
-      wing.position.set(-2.05, 1.18, 0); wing.castShadow = true; g.add(wing);
+      } else {
+        g.add(PH.buildHeroFront(bodyMat));
+      }
+      // v7.5: the full-width tail bar, the diffuser and the exhausts
+      // are part of the old flat rear — the rear assembly in herocar.js
+      // carries its own round LED lamps, mesh bumper and exhausts on
+      // the dome's curve instead. Skipped when it is loaded.
+      if (!PH.buildHeroRear) {
+        var tailBar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 1.8),
+          new THREE.MeshStandardMaterial({ color: 0xff2a20, emissive: 0xff2010, emissiveIntensity: 1.4 }));
+        tailBar.position.set(-2.38, 0.72, 0); g.add(tailBar);
+        var diff = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 1.6), mat(0x14181c, 0.5));
+        diff.position.set(-2.3, 0.3, 0); g.add(diff);
+        [-0.45, 0.45].forEach(function (z) {
+          var ex = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.2, 8),
+            new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.2 }));
+          ex.rotation.z = Math.PI / 2; ex.position.set(-2.42, 0.32, z); g.add(ex);
+        });
+      }
+      // v7.5: the strut spoiler is replaced by the integrated lip on
+      // the curved stern (herocar.js) — skipped when it is loaded.
+      if (!PH.buildHeroRear) {
+        [-0.6, 0.6].forEach(function (z) {
+          var strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), bodyMat);
+          strut.position.set(-2.05, 1.05, z); g.add(strut);
+        });
+        var wing = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.06, 1.9), bodyMat);
+        wing.position.set(-2.05, 1.18, 0); wing.castShadow = true; g.add(wing);
+      }
       // v7.4: the rear reads from behind (shot 1 is a rear view) —
       // a trunk-lid seam, a rear wiper, a roof antenna and small fog
       // lamps under the tail bar. (The rear glass itself now carries
@@ -326,9 +362,14 @@
       var antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.5, 6), mat(0x14181c, 0.5));
       antenna.position.set(-0.4, 1.45, 0); antenna.rotation.z = -0.25; g.add(antenna);
       [-0.6, 0.6].forEach(function (z) {
-        var fog = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.3),
-          new THREE.MeshStandardMaterial({ color: 0xff5040, emissive: 0xff3020, emissiveIntensity: 0.8 }));
-        fog.position.set(-2.38, 0.5, z); g.add(fog);
+        // v7.5: the old fog lamps sat on the flat rear face — the
+        // curved stern's round lamps replace them; the door flap
+        // below is part of the flank and stays either way.
+        if (!PH.buildHeroRear) {
+          var fog = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.3),
+            new THREE.MeshStandardMaterial({ color: 0xff5040, emissive: 0xff3020, emissiveIntensity: 0.8 }));
+          fog.position.set(-2.38, 0.5, z); g.add(fog);
+        }
         var flap = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.16, 0.16),
           new THREE.MeshBasicMaterial({ color: 0x7a3400 }));
         flap.position.set(-0.6, 0.75, z > 0 ? 0.98 : -0.98); g.add(flap);
@@ -338,10 +379,19 @@
       var plateMat = new THREE.MeshStandardMaterial({ map: plateTex, roughness: 0.5 });
       var pf = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.18), plateMat);
       pf.position.set(2.32, 0.35, 0); pf.rotation.y = Math.PI / 2; g.add(pf);
-      var pr = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.18), plateMat);
-      pr.position.set(-2.4, 0.35, 0); pr.rotation.y = -Math.PI / 2; g.add(pr);
-      [[-1.55, -1.02], [1.45, -1.02]].forEach(function (p) { g.add(wheel(p[0], p[1], true)); });
-      [[-1.55, 1.02], [1.45, 1.02]].forEach(function (p) { g.add(wheel(p[0], p[1], true)); });
+      // v7.5: the rear plate rides on the curved stern's dome now
+      // (herocar.js) — the old flat plate would sink inside the bulge.
+      if (!PH.buildHeroRear) {
+        var pr = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.18), plateMat);
+        pr.position.set(-2.4, 0.35, 0); pr.rotation.y = -Math.PI / 2; g.add(pr);
+      }
+      // v7.5: black 7-spoke wheels from herocar.js (low-profile
+      // stance); the old 5-spoke silver wheels stay the fallback.
+      [[-1.55, -1.02], [1.45, -1.02]].forEach(function (p) { g.add((PH.buildHeroWheel || wheel)(p[0], p[1], true)); });
+      [[-1.55, 1.02], [1.45, 1.02]].forEach(function (p) { g.add((PH.buildHeroWheel || wheel)(p[0], p[1], true)); });
+      // v7.5: side intakes behind the doors (herocar.js) — the
+      // mid-engine breathes here; the old flank is untouched.
+      if (PH.buildHeroIntake) { g.add(PH.buildHeroIntake(1)); g.add(PH.buildHeroIntake(-1)); }
       // v7.4 rev 2: the wheels sit at the real axles (rear -1.55, front
       // +1.45) and flush with the body (lateral +/-1.02, half-width
       // 0.95) — v7.4 rev 1 had all four clustered at the front and
@@ -896,7 +946,13 @@
   };
 
   // ---- police helicopter ----
+  // v7.5: the helicopter is built in heli.js now (rounded body, curved
+  // cockpit glass, blur-disc rotors tilted toward travel, tube skids).
+  // This function keeps its old contract (userData.rotor / tailRotor /
+  // beam) and delegates to the new builder when it is loaded; the mesh
+  // code below stays as the fallback when heli.js is absent.
   PH.makeHeli = function () {
+    if (PH.makeHeli75) return PH.makeHeli75();
     var g = new THREE.Group();
     var white = mat(0xf2f2f2, 0.4);
     var body = new THREE.Mesh(new THREE.CapsuleGeometry(1.1, 2.2, 4, 10), white);

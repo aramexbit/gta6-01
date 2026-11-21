@@ -2,28 +2,28 @@
   {
     "mode": "sunset",
     "name": "1-chase.jpg",
-    "note": "street race: THREE rivals big and close (blue hatch right, red pickup left, green coupe ahead), checkpoint gate 'CHECKPOINT 3/14' reading whole, race position P2/4, gap +0.4s",
+    "note": "street race: THREE rivals big and close (blue hatch right, red pickup left at (-26,-5) clear of the hero stern, green coupe ahead), checkpoint gate 'CHECKPOINT 3/14' reading whole, race position P2/4, gap +0.4s; v7.5: curved hero stern with round LED lamps, wet road with taillight streaks, reflective facades, layered sunset clouds + mountains",
     "query": "?shot=1&seed=1",
     "seed": 1
   },
   {
     "mode": "day",
     "name": "2-onfoot.jpg",
-    "note": "procedural Mateo facing camera, market stalls on the right, fruit tidied into crates, dressed flank walls",
+    "note": "procedural Mateo facing camera (heading derived from the camera, v7.5), market stalls on the right, fruit tidied into crates, dressed flank walls, reflective glass with neon panes",
     "query": "?shot=2&seed=1",
     "seed": 1
   },
   {
     "mode": "day",
     "name": "3-mission.jpg",
-    "note": "boat mission, close camera (~15u): Mateo AT THE HELM of the speedboat in a life vest, Kira pointing at the pursuit from the stern, big V-wake + bow spray, THREE police boats, sailboats, heli above, beach foreground (umbrella, towels, sunbathers, lifeguard tower)",
+    "note": "boat mission, close camera (~15u): Mateo AT THE HELM of the speedboat in a life vest, Kira pointing at the pursuit from the stern, planing hull riding high with a thick white V-wake + bow spray + prop wash (v7.5), THREE police boats with V-wakes, sailboats with faint trails, heli above with tilted ghost rotor disc (y 5.2, clear of the top edge), beach foreground (umbrella, towels, sunbathers, lifeguard tower), buoys down the lane, deeper two-tone sea",
     "query": "?shot=3&seed=1",
     "seed": 1
   },
   {
     "mode": "sunset",
     "name": "4-combat.jpg",
-    "note": "5-star shootout, small muzzle flash, 6-unit dispatch, slim zebra crossings",
+    "note": "5-star shootout, small muzzle flash, 6-unit dispatch, real zebra crossings (slim stripes across the road, v7.5), wet road with taillight streaks + puddles, hero side intakes + detailed mirrors",
     "query": "?shot=4&seed=1",
     "seed": 1
   }

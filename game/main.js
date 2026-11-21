@@ -326,6 +326,17 @@
       // v7.3: street race is live in shot 1 — the next checkpoint gate
       // arches over the road ahead and a rival car runs alongside.
       race.stageShot();
+      // v7.5: wet-road taillight streaks (wetroad.js) — the hero's red
+      // lamps and the cruisers' lights smear on the wet asphalt
+      // toward the camera. Hero rear = hero (-20,8) minus 2.4 along
+      // forward (sin 198°, cos 198°); cruisers face south, so their
+      // rears sit 2.4 north of their positions.
+      if (PH.carWetStreak) {
+        PH.carWetStreak(scene, -19.3, 10.3, 0xff2a1a);
+        PH.carWetStreak(scene, -16.5, 0.4, 0xff5040);
+        PH.carWetStreak(scene, -23.5, -5.6, 0xff5040);
+        PH.carWetStreak(scene, -16.5, -15.6, 0xff5040);
+      }
       cfg = {
         objective: { title: 'PIER HEAT — STREET RACE', stage: 'STAGE 2/3 — LOSE THE HEAT', progress: 66, timer: '02:41', text: 'Beat the rival through the checkpoints and lose the PD.', next: 'NEXT: Checkpoint 3/14 — follow the amber gate' },
         wanted: 3, money: 24750, health: 100, armor: 80, ammo: 12, speedKmh: 96,
@@ -363,6 +374,11 @@
       camera.fov = 50; camera.updateProjectionMatrix();
       camera.position.set(-10, 2.0, -0.5);
       camera.lookAt(-10, 1.5, -6); // camera restored to the v7.2 spot; the lamp pole that blocked it is skipped in world.js instead
+      // v7.5: Mateo's heading is derived from the camera, not a
+      // constant, so he can never face away again if the camera moves
+      // — he looks straight down the lens. (The v7.4 render already
+      // showed his face; this makes it structural, not luck.)
+      S.mateoHeading = Math.atan2(camera.position.x - S.mateoPos.x, camera.position.z - S.mateoPos.z);
       foregroundSet(2);
       cfg = {
         objective: { title: 'PIER HEAT — MEET KIRA', stage: 'STAGE 1/3 — MEET KIRA', progress: 33, timer: '', text: 'Meet Kira at the pier — follow the yellow marker.', next: 'NEXT: Meet Kira at the pier — follow the yellow marker' },
@@ -396,7 +412,10 @@
       // heli over the water, spotlight toward the boats — round 2b:
       // lowered to y 7 so the whole heli AND its rotor sit inside the
       // closer shot-3 frame instead of brushing its top edge
-      heli.position.set(-114, 7, 30); heli.rotation.y = THREE.MathUtils.degToRad(144);
+      // v7.5: lowered again, 7 -> 5.2 — the v7.4 render still had the
+      // rotor blades ~60 px from the top edge, so the heli drops until
+      // the whole disc has clear sky above it.
+      heli.position.set(-114, 5.2, 30); heli.rotation.y = THREE.MathUtils.degToRad(144);
       camera.fov = 50; camera.updateProjectionMatrix();
       // round 2: the camera moves in from 38 units to ~15, so the boat
       // + Mateo fill a third of the frame instead of a tenth — and the
@@ -449,6 +468,16 @@
       camera.position.set(-17.5, 2.8, 25.5);
       camera.lookAt(-20.5, 1.5, 36);
       foregroundSet(4);
+      // v7.5: wet-road taillight streaks (wetroad.js) — the hero and
+      // the three cruisers all face north (heading PI), so their rears
+      // sit 2.4 south of their positions and the red smears run toward
+      // the camera, which stands north of them.
+      if (PH.carWetStreak) {
+        PH.carWetStreak(scene, -24, 36.4, 0xff2a1a);
+        PH.carWetStreak(scene, -23.5, 45.4, 0xff5040);
+        PH.carWetStreak(scene, -16.5, 51.4, 0xff5040);
+        PH.carWetStreak(scene, -23.5, 59.4, 0xff5040);
+      }
       cfg = {
         objective: { title: 'PIER HEAT — HOLD THE LINE', stage: 'STAGE 3/3 — HOLD THE LINE', progress: 85, timer: '01:12', text: 'The Bay City PD wants the Scarlet Arrow. Hold the line.', next: 'NEXT: Hold the line — protect the Scarlet Arrow' },
         wanted: 5, money: 84300, health: 82, armor: 65, ammo: 9, speedKmh: 0,
@@ -727,6 +756,14 @@
     police.update(dt, S.time, S.wanted);
     if (heli.userData.rotor) heli.userData.rotor.rotation.y += dt * 22;
     if (heli.userData.tailRotor) heli.userData.tailRotor.rotation.x += dt * 30;
+    // v7.5: per-frame hooks for the new visual systems — the wet-road
+    // ribbons strengthen as the camera drops and always point toward
+    // the camera, the sunset sky's sunbeams and cloud rims breathe,
+    // and the police heli's rotor disc leans into its motion.
+    if (PH.updateWetReflections) PH.updateWetReflections(camera.position.y);
+    if (PH.orientWetReflections) PH.orientWetReflections(camera.position.x, camera.position.z);
+    if (PH.updateSunsetSky) PH.updateSunsetSky(S.time);
+    if (PH.poseHeli75) PH.poseHeli75(heli);
     if (mateo) mateo.update(dt);
     if (kira) kira.update(dt);
     // minimap (v7.3: boats + race rivals ride along with police dots)

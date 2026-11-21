@@ -16,6 +16,16 @@ The 3D world, the people, the cars, the boats and the music are all built
 in code — v7.3 removed the last model file entirely, so there are no
 binary assets at all.
 
+## v7.5 — what changed
+
+- **Real sunset sky** (`game/sky.js`, new): layered cumulus — lit-orange base, gold sun side, dark crown, gold rim — over a blue-to-orange gradient, with a low sun disc + starburst + glare, warm haze bands and slanted sunbeams. The old flat cloud blobs are skipped when it loads.
+- **Hero rear, rebuilt** (`game/herocar.js`, new): curved fastback stern, round LED-ring tail lamps, black mesh deck vent, integrated spoiler lip, glossy clearcoat paint, black 7-spoke wheels, side intakes. The old flat rear panel, fog lamps and 5-spoke wheels are skipped when it loads.
+- **Police heli, rebuilt** (`game/heli.js`, new): rounded cabin, curved cockpit glass, thin tapered tail boom + tall fin, main rotor as a tilted blur disc that leans into motion, vertical tail-rotor blur disc, tube skids, sensor turret, POLICE on a blue cheatline. The old mesh heli is skipped when it loads.
+- **Planing hull + V-wake** (`game/waterfx.js`, new): the boat rides high with its bow up, a thick white V-wake whose arms narrow with speed, hull foam and bow spray, two-tone sea (deep blue far, turquoise near). The old ribbon wakes are skipped when it loads.
+- **Reflective glass** (`game/facades.js`, new): every pane gets its own sky/cloud reflection + mullion grid, warm toward the sun and cool away, with a dark building base.
+- **Wet road** (`game/wetroad.js`, new): glossy asphalt; lamp, neon and taillight reflections stretch toward the camera as vertical ribbons, always darker than their source and stronger the lower the camera sits.
+- **Four v7.4 defects fixed:** Mateo's shot-2 heading is now derived from the camera (he can never face away again); the red pickup moved to (-26,-5) so it no longer stacks on the hero's stern in shot 1; the shot-3 heli drops to y 5.2 so its rotor clears the top frame edge; the zebra crossings are real stripes now — long across the road, narrow along travel — instead of wide white blocks.
+
 ## v7.4 — what changed
 
 - **Volumetric sunset clouds** (`game/world.js`, `game/core.js`): each

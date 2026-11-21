@@ -1,4 +1,4 @@
-# Wanted system — Bay City PD (v7.4)
+# Wanted system — Bay City PD (v7.5)
 
 ## Stars 1–5
 The wanted level is shown as five stars in the top-right HUD panel, next to
@@ -7,6 +7,9 @@ stars are dim. At 3 stars or more the wanted panel gets a red glow. The
 cash balance is big and green in v7.4 ($24,750 in shot 1, $48,250 in
 shot 2, $36,900 in shot 3, $84,300 in shot 4) — the old four-figure
 amounts read as pocket change next to a getaway driver's job.
+v7.5: the wanted system itself is unchanged; the new heli (heli.js) is the
+air unit that carries the 3-star spotlight, and its rotor disc now leans
+into its motion instead of sitting flat.
 
 ## How it rises
 - In free play, the wanted level rises while a police cruiser is within

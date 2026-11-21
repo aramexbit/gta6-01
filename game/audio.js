@@ -1,8 +1,11 @@
-// PIER HEAT — Sunset Bay v7.4
+// PIER HEAT — Sunset Bay v7.5
 // audio.js — fully synthesised WebAudio: Nightwave 98.3 synthwave radio,
 // waves, siren, engine and gunshots, plus the v7.3 boat outboard, race
 // countdown beeps and bow splash, and v7.4 gull cries + a harbour horn
 // for the pier and boat scenes. No external sound files.
+// v7.5: no new sounds — the new visual systems (sunset sky, wet road,
+// V-wake, planing hull) are silent by design; the existing outboard,
+// splash and gull cries already cover the boat scene.
 // Audio starts ONLY after a user gesture (click / button); headless
 // screenshots stay silent and error-free.
 (function () {

@@ -1,12 +1,14 @@
-// PIER HEAT — Sunset Bay v7.4
+// PIER HEAT — Sunset Bay v7.5
 // core.js — shared foundation: seeded RNG, canvas textures, HUD setters
 // and the 2D round minimap painter. All characters, boats and portraits
 // are procedural (code primitives + canvas); no model files are loaded.
 // Plain script (no modules). Everything lives on window.PH.
+// v7.5: PH.VERSION 7.5; the six new visual systems (sky.js, herocar.js,
+// heli.js, waterfx.js, facades.js, wetroad.js) hang off this namespace.
 (function () {
   'use strict';
   var PH = window.PH = window.PH || {};
-  PH.VERSION = '7.4';
+  PH.VERSION = '7.5';
   PH.GAME = 'PIER HEAT — Sunset Bay';
 
   // ---------- seeded random (mulberry32) ----------

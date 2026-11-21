@@ -253,7 +253,11 @@
     rival.pos.copy(rival.mesh.position);
     rival.gate = 2;
     var rival2 = this.rivals[1];
-    rival2.mesh.position.set(-23.5, 0, -2);
+    // v7.5: the red pickup moves to (-26,-5) — in v7.4 it sat at
+    // (-23.5,-2), only 0.35 off the camera-to-hero sightline, so it
+    // stacked on the hero's stern in shot 1. A step west and north
+    // breaks the alignment; it stays big and close in the left lane.
+    rival2.mesh.position.set(-26, 0, -5);
     rival2.mesh.rotation.y = Math.PI;
     rival2.pos.copy(rival2.mesh.position);
     rival2.gate = 2;

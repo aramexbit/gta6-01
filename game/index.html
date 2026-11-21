@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="game-version" content="7.4">
+<meta name="game-version" content="7.5">
 <link rel="icon" href="data:,">
 <title>PIER HEAT — Sunset Bay</title>
 <style>
@@ -145,7 +145,7 @@
     <h2>SUNSET BAY</h2>
     <p>Mateo Vega, getaway driver. Kira on the radio. The Bay City PD wants the
     Scarlet Arrow — lose the heat, reach the pier, and hold the line.
-    v7.4: race the rivals on Sunset Blvd, then take the speedboat across the bay.</p>
+    v7.5: race the rivals on Sunset Blvd, then take the speedboat across the bay.</p>
     <div class="keys">WASD / ARROWS — drive &nbsp;•&nbsp; SPACE — brake &nbsp;•&nbsp; SHIFT — run<br>
     F — enter / exit car &nbsp;•&nbsp; CLICK — shoot on foot &nbsp;•&nbsp; P — save &nbsp;•&nbsp; M — mute</div>
     <button id="start-btn">START ENGINE</button>
@@ -244,6 +244,17 @@
 </div>
 <script src="vendor/three.min.js"></script>
 <script src="core.js"></script>
+<!-- v7.5 visual systems (written fresh this round, from the real-world
+     briefs): sky + clouds, hero-car rear, police heli, boat water,
+     reflective facades, wet road. They load before world.js / sim.js /
+     boats.js, which call them when present and keep their old visuals
+     as fallback when they are not. -->
+<script src="sky.js"></script>
+<script src="herocar.js"></script>
+<script src="heli.js"></script>
+<script src="waterfx.js"></script>
+<script src="facades.js"></script>
+<script src="wetroad.js"></script>
 <script src="world.js"></script>
 <script src="sim.js"></script>
 <script src="mateo.js"></script>

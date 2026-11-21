@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.4. Tiny static server for local testing.
+// PIER HEAT — Sunset Bay v7.5. Tiny static server for local testing.
 // Serves the game/ folder at the root: http://localhost:8080/ opens the
 // game. Only files under game/ are served; anything else is a 404, no
 // directory listing, no cache. Model files are gone in v7.3, so a
@@ -68,4 +68,4 @@ createServer(async (req, res) => {
     console.error('404', req.url);
     res.writeHead(404); res.end('not found');
   }
-}).listen(port, () => console.log('pier heat v7.4 — serving game/ at http://localhost:' + port + '/ (shots.json at /shots.json)'));
+}).listen(port, () => console.log('pier heat v7.5 — serving game/ at http://localhost:' + port + '/ (shots.json at /shots.json)'));

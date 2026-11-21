@@ -339,6 +339,21 @@
     this.wake = PH.makeWake(scene, 40);
     this.policeWake = PH.makeWake(scene, 24);
     this.spray = PH.makeSpray(scene, 14);
+    // v7.5: V-wakes from waterfx.js — one per boat (player + 3 police):
+    // two foam arms whose angle narrows with speed, a foam ring at the
+    // hull waterline and bow spray. The old ribbon wakes above stay as
+    // the fallback when waterfx.js is absent.
+    this.vWakes = [];
+    if (PH.makeVWake) {
+      for (var vi = 0; vi < 4; vi++) this.vWakes.push(PH.makeVWake(scene));
+    }
+    // v7.5: faint trailing wakes for the two sailboats (waterfx.js) —
+    // slow boats barely disturb the water, so these are short, wide
+    // and faint, nothing like the planing hulls' sharp V.
+    this.sailWakes = [];
+    if (PH.makeSailboatWake) {
+      for (var sw = 0; sw < 2; sw++) this.sailWakes.push(PH.makeSailboatWake(scene));
+    }
     this.playerSpeed = 16;
     this.heading = Math.PI / 2; // north along the coast
     this.playerPos = new THREE.Vector3(-120, 0, 40);
@@ -362,21 +377,31 @@
     this.player.rotation.y = this.heading;
     this.player.rotation.z = Math.sin(t * 0.9) * 0.04;
     this.player.rotation.x = Math.sin(t * 0.7 + 1) * 0.03;
+    // v7.5: the player boat's wake. When waterfx.js is loaded the
+    // V-wake follows the boat and the hull planes high (planing pose);
+    // the old ribbon wake + spray below are then skipped for the player
+    // boat (they stay as the fallback when waterfx.js is absent, and
+    // wake.update still runs so staged pre-stamps keep fading).
+    var vWake0 = this.vWakes.length ? this.vWakes[0] : null;
+    if (vWake0) vWake0.update(this.playerPos.x, this.playerPos.z, this.heading, this.playerSpeed, t);
+    if (vWake0 && PH.planingPose) PH.planingPose(this.player, this.playerSpeed, t);
     var sternX = this.playerPos.x - Math.sin(this.heading) * 3;
     var sternZ = this.playerPos.z - Math.cos(this.heading) * 3;
-    this.wake.stamp(sternX, sternZ, PH.waveHeight(sternX, sternZ, t), this.heading, this.playerSpeed, t);
+    if (!vWake0) this.wake.stamp(sternX, sternZ, PH.waveHeight(sternX, sternZ, t), this.heading, this.playerSpeed, t);
     this.wake.update(t);
     // bow spray while the boat is at speed + sailboats drifting slowly
     var bowX = this.playerPos.x + Math.sin(this.heading) * 2.9;
     var bowZ = this.playerPos.z + Math.cos(this.heading) * 2.9;
-    this.spray.stamp(bowX, bowZ, PH.waveHeight(bowX, bowZ, t), this.heading, this.playerSpeed, t);
+    if (!vWake0) this.spray.stamp(bowX, bowZ, PH.waveHeight(bowX, bowZ, t), this.heading, this.playerSpeed, t);
     this.spray.update(t);
-    this.sailboats.forEach(function (sb) {
+    this.sailboats.forEach(function (sb, sbi) {
       sb.x += sb.speed * dt;
       if (sb.x > -104) sb.x = -168;
       sb.mesh.position.set(sb.x, PH.waveHeight(sb.x, sb.z, t) * 0.6, sb.z + Math.sin(t * 0.2 + sb.phase) * 2);
       sb.mesh.rotation.y = Math.PI / 2;
       sb.mesh.rotation.z = Math.sin(t * 0.8 + sb.phase) * 0.05;
+      // v7.5: the sailboat's faint trailing wake follows its hull
+      if (self.sailWakes[sbi]) self.sailWakes[sbi].update(sb.mesh.position.x, sb.mesh.position.z, Math.PI / 2, t);
     });
     // police boats: aim at a point 6 units ahead of the player
     var aheadX = this.playerPos.x + Math.sin(this.heading) * 6;
@@ -392,9 +417,13 @@
       pb.mesh.position.y = PH.waveHeight(pb.mesh.position.x, pb.mesh.position.z, t) * 0.6;
       pb.mesh.rotation.y = pb.heading;
       pb.mesh.rotation.z = Math.sin(t * 1.1 + i * 2) * 0.05;
+      // v7.5: police boats plane and throw their own V-wakes too (one
+      // V-wake each); the old ribbon stamp below is the fallback.
+      if (self.vWakes[i + 1]) self.vWakes[i + 1].update(pb.mesh.position.x, pb.mesh.position.z, pb.heading, pb.speed, t);
+      if (PH.planingPose) PH.planingPose(pb.mesh, pb.speed, t);
       var sx = pb.mesh.position.x - Math.sin(pb.heading) * 3;
       var sz = pb.mesh.position.z - Math.cos(pb.heading) * 3;
-      self.policeWake.stamp(sx, sz, PH.waveHeight(sx, sz, t), pb.heading, pb.speed, t);
+      if (!self.vWakes[i + 1]) self.policeWake.stamp(sx, sz, PH.waveHeight(sx, sz, t), pb.heading, pb.speed, t);
       var on = Math.floor(t * 4 + i) % 2 === 0;
       if (pb.mesh.userData.lightRed) {
         pb.mesh.userData.lightRed.material.emissiveIntensity = on ? 2.5 : 0.2;
@@ -447,11 +476,17 @@
       sb.x = sx; sb.z = sz;
       sb.mesh.position.set(sx, 0.1, sz);
       sb.mesh.rotation.y = Math.PI / 2;
-    });
+      // v7.5: the sailboats' faint trailing wakes, staged with them
+      if (this.sailWakes[i]) this.sailWakes[i].stage(sx, sz, Math.PI / 2);
+    }, this);
     // pre-stamp a visible wake ribbon behind the player boat; born far
     // in the future so the frozen staged shot never fades it out.
     // Round 2: a longer, wider ribbon (26 stamps) + a second, fainter
     // V-arm either side of the stern, so the wake reads as a real V.
+    // v7.5: when waterfx.js is loaded the V-wake stages itself (arms +
+    // hull foam + bow spray, hull planing high) and the old ribbon
+    // stamps below are skipped — the old system is the fallback.
+    if (!this.vWakes.length) {
     for (var k = 0; k < 26; k++) {
       this.wake.stamp(-112 - k * 1.6, 40, 0.1, Math.PI / 2, 14, 100);
     }
@@ -459,10 +494,27 @@
       this.wake.stamp(-112 - a * 1.8, 40 + 1.2 + a * 0.55, 0.1, Math.PI / 2, 10, 100);
       this.wake.stamp(-112 - a * 1.8, 40 - 1.2 - a * 0.55, 0.1, Math.PI / 2, 10, 100);
     }
+    } else {
+      this.vWakes[0].stage(-112, 40, Math.PI / 2, 14);
+      if (PH.planingPose) PH.planingPose(this.player, 14, 0);
+    }
+    if (!this.vWakes.length) {
     for (var j = 0; j < 10; j++) {
       this.policeWake.stamp(-126 - j * 1.6, 26, 0.1, Math.PI / 2, 12, 100);
       this.policeWake.stamp(-120 - j * 1.6, 50, 0.1, Math.PI / 2, 12, 100);
       this.policeWake.stamp(-122 - j * 1.6, 34, 0.1, Math.PI / 2, 12, 100);
+    }
+    } else {
+      // police V-wakes + planing poses for the staged shot, same spots
+      // as the old pre-stamps above.
+      this.vWakes[1].stage(-126, 26, Math.PI / 2, 12);
+      this.vWakes[2].stage(-120, 50, Math.PI / 2, 12);
+      this.vWakes[3].stage(-122, 34, Math.PI / 2, 12);
+      if (PH.planingPose) {
+        PH.planingPose(this.policeBoats[0].mesh, 12, 0);
+        PH.planingPose(this.policeBoats[1].mesh, 12, 0);
+        PH.planingPose(this.policeBoats[2].mesh, 12, 0);
+      }
     }
     // a few frozen spray puffs at the bow, so the boat reads as moving
     for (var p = 0; p < 6; p++) {

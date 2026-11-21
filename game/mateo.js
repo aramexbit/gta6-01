@@ -1,10 +1,14 @@
-// PIER HEAT — Sunset Bay v7.4
+// PIER HEAT — Sunset Bay v7.5
 // mateo.js — procedural hero characters, built from code primitives.
 // No model file: Mateo Vega and Kira are assembled here from boxes,
 // capsules and spheres, with a low-poly face (eyes, brows, mouth), a
 // burnt-orange bomber jacket, a white tee, dark jeans and sneakers.
 // v7.4: a `drive` pose (both hands forward on the boat helm) and boat
 // gear — an orange life vest + a cap — for Mateo on the speedboat.
+// v7.5: Mateo's facing in shot 2 is now derived from the camera in
+// main.js (S.mateoHeading = atan2 of camera minus Mateo), so the face
+// he shows the lens can never regress if the camera moves — the rig
+// itself is unchanged (faces +Z, forwardOffset 0).
 // Plain script; uses window.PH. Faces +Z, so forwardOffset is 0.
 (function () {
   'use strict';

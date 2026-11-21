@@ -1,4 +1,4 @@
-# Mateo Vega — the character (v7.4, procedural)
+# Mateo Vega — the character (v7.5, procedural)
 
 ## The character
 Mateo Vega, 28, getaway driver. Burnt-orange bomber jacket, white tee, dark
@@ -7,6 +7,9 @@ mouth line, built as tiny meshes so the face reads in screenshots from any
 angle. Kira is the same rig recoloured: teal bomber, dark tee, long hair.
 On the boat (shot 3, v7.4) Mateo wears an orange life vest and a cap over
 the same rig.
+v7.5: in shot 2 Mateo's heading is derived from the camera position in
+main.js (atan2 of camera minus Mateo), so he faces the lens even if the
+camera is ever moved — the rig itself is unchanged.
 
 ## The file — there is none
 v7.3 REMOVED `game/vendor/mateo.glb` and the whole model loader. Mateo and

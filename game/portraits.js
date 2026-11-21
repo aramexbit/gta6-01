@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.4
+// PIER HEAT — Sunset Bay v7.5
 // portraits.js — canvas-drawn face portraits for crew cards and the
 // dialog box. Each character is defined once as a small feature object
 // (skin, hair style + colour, jacket, extras) and rendered to an
@@ -8,6 +8,8 @@
 // v7.4: each character gets their own backdrop tint + a small accent
 // (Dario's scar, Lena's blush, Kira's earring) so the four faces are
 // not the same drawing in four jackets.
+// v7.5: no new faces — the portraits are untouched; the crew cards
+// they feed keep working exactly as before (see main.js crew config).
 // Plain script; uses window.PH.
 (function () {
   'use strict';

@@ -47,11 +47,19 @@
     books: [0x8a2a3a, 0x2a6fd8, 0xf2e3c8], flowers: [0xff6ab0, 0x37d67a, 0xffc832]
   };
   function paneMaterials(shopKind) {
-    var warm = new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(true), roughness: 0.12, metalness: 0.55 });
-    var cool = new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(false), roughness: 0.12, metalness: 0.55 });
+    // v7.5: reflective panes from facades.js — the set built once in
+    // buildWorld (three warm + three cool, each with its own sky/cloud
+    // reflection and mullion grid). addWindows picks one per pane, so
+    // no two panes share a reflection. The old flat sky-glass below
+    // stays as the fallback when facades.js is absent.
+    var set = PH._facadeGlass || null;
+    var warm = set ? set.warm : new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(true), roughness: 0.12, metalness: 0.55 });
+    var cool = set ? set.cool : new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(false), roughness: 0.12, metalness: 0.55 });
     var dark = new THREE.MeshStandardMaterial({ color: 0x141c26, roughness: 0.18, metalness: 0.5 });
     var lit = new THREE.MeshStandardMaterial({ color: 0xffc860, emissive: 0xffb030, emissiveIntensity: 0.9, roughness: 0.4 });
-    return { skyWarm: warm, skyCool: cool, dark: dark, lit: lit, shopKind: shopKind };
+    // v7.5: the neon panes ride along in the set (facades.js) — a few
+    // 'lit' shop windows catch a neon streak instead of a warm glow.
+    return { skyWarm: warm, skyCool: cool, dark: dark, lit: lit, neon: set ? set.neon : null, shopKind: shopKind };
   }
   function addWindows(group, w, h, d, face, shopKind) {
     var floors = Math.max(1, Math.floor((h - 3.2) / 4.2));
@@ -80,7 +88,17 @@
         var lintel = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.16, 0.16), sillMat);
         lintel.position.set(x, y + 1.02, zf);
         group.add(lintel);
-        var glassMat = kind === 'skyWarm' ? mats.skyWarm : (kind === 'skyCool' ? mats.skyCool : (kind === 'lit' ? mats.lit : mats.dark));
+        // v7.5: when facades.js gave a set, the warm/cool entry is a
+        // list of variants — pick one per pane, so a facade's windows
+        // vary the way real reflections vary.
+        var warmMat = Array.isArray(mats.skyWarm) ? mats.skyWarm[Math.floor(PH.R() * mats.skyWarm.length)] : mats.skyWarm;
+        var coolMat = Array.isArray(mats.skyCool) ? mats.skyCool[Math.floor(PH.R() * mats.skyCool.length)] : mats.skyCool;
+        // v7.5: a third of the 'lit' shop windows catch a neon streak
+        // (pink or cyan, facades.js) instead of a warm interior glow —
+        // the street has neon, and the glass shows it.
+        var neonMat = mats.neon ? mats.neon[Math.floor(PH.R() * mats.neon.length)] : null;
+        var litMat = (neonMat && PH.R() < 0.33) ? neonMat : mats.lit;
+        var glassMat = kind === 'skyWarm' ? warmMat : (kind === 'skyCool' ? coolMat : (kind === 'lit' ? litMat : mats.dark));
         var glass = new THREE.Mesh(new THREE.BoxGeometry(1.25, 1.65, 0.06), glassMat);
         glass.position.set(x, y, zf + zDir * 0.05);
         group.add(glass);
@@ -124,8 +142,11 @@
   // divider posts, striped awning and a name board.
   function addStorefront(group, w, d, name, signBg) {
     var zf = d / 2;
-    var glass = new THREE.Mesh(new THREE.BoxGeometry(w * 0.86, 2.6, 0.1),
-      new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.55 }));
+    // v7.5: the big storefront glass reflects the sky (facades.js —
+    // a wide reflection with a diagonal sun streak); the old flat blue
+    // glass stays as the fallback.
+    var storeGlass = PH.storefrontGlassMaterial ? PH.storefrontGlassMaterial(!!PH._sunsetMode) : new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.55 });
+    var glass = new THREE.Mesh(new THREE.BoxGeometry(w * 0.86, 2.6, 0.1), storeGlass);
     glass.position.set(0, 1.5, zf + 0.06);
     group.add(glass);
     // divider posts
@@ -191,6 +212,10 @@
   // loading dock — so neighbours never share the same base.
   function addGroundFloor(group, w, d, style) {
     var zf = d / 2;
+    // v7.5: dark contact shadow around the building's foot (facades.js)
+    // — the wall meets the pavement in shade, so the facade is
+    // grounded instead of floating on the sidewalk.
+    if (PH.facadeBaseAO) group.add(PH.facadeBaseAO(w, d));
     if (style === 'stoop') {
       group.add(box(2.4, 0.3, 1.4, 0x8a8a92, 0, 0.15, zf + 0.7, 0.9));
       group.add(box(2.0, 0.3, 1.0, 0x9a9aa2, 0, 0.45, zf + 0.5, 0.9));
@@ -201,8 +226,9 @@
         rail.position.set(x, 0.7, zf + 1.1); rail.rotation.x = 0.5; group.add(rail);
       });
     } else if (style === 'lobby') {
-      var glass = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.8, 0.1),
-        new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.55 }));
+      // v7.5: lobby glass reflects the sky too (facades.js).
+      var lobbyGlass = PH.storefrontGlassMaterial ? PH.storefrontGlassMaterial(!!PH._sunsetMode) : new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.55 });
+      var glass = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.8, 0.1), lobbyGlass);
       glass.position.set(0, 1.6, zf + 0.06);
       group.add(glass);
       group.add(box(0.12, 2.8, 0.12, 0x2a2a2a, 0, 1.6, zf + 0.12, 0.5, 0.6));
@@ -484,6 +510,13 @@
 
   PH.buildWorld = function (scene, mode) {
     var sunset = mode === 'sunset';
+    // v7.5: the mode flag for the visual systems (facades.js reads it
+    // for warm/cool glass; wetroad.js for the wet-asphalt sheen).
+    PH._sunsetMode = sunset;
+    // v7.5: one reflective-glass set for the whole city, built once
+    // here (facades.js); paneMaterials() below picks one variant per
+    // pane from it, so the set is never rebuilt per building.
+    PH._facadeGlass = PH.facadeGlassSet ? PH.facadeGlassSet(sunset) : null;
     var W = { clouds: [], cloudShadows: [], antennaLights: [], gulls: [], update: null, mode: mode };
     var rng = PH.R;
 
@@ -535,6 +568,10 @@
     scene.add(skyFill);
 
     // ---- sun disc sprite + glare (v7.4) ----
+    // v7.5: sky.js draws its own sun (disc + starburst + glare), so the
+    // old sun sprite + glare are skipped when it is loaded. The sea
+    // glitter below stays — it is water, not sun.
+    if (!PH.buildSunsetSky) {
     var sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
       map: PH.sunTexture(), transparent: true, fog: false, depthWrite: false
     }));
@@ -568,6 +605,9 @@
       glare.position.set(-150, 24, -410);
       glare.scale.set(220, 28, 1);
       scene.add(glare);
+    }
+    } // v7.5: the old sun (sprite + glare + streak) ends here
+    if (sunset) {
       // sun path glitter on the sea: a warm streak of flat quads
       var glitterMat = new THREE.MeshBasicMaterial({ color: 0xffc860, transparent: true, opacity: 0.5 });
       for (var gi = 0; gi < 14; gi++) {
@@ -593,8 +633,11 @@
     sand.receiveShadow = true;
     scene.add(sand);
 
-    var sea = new THREE.Mesh(new THREE.PlaneGeometry(200, 360),
-      new THREE.MeshStandardMaterial({ color: 0x1a6a9a, roughness: 0.25, metalness: 0.2, transparent: true, opacity: 0.85 }));
+    // v7.5: two-tone sea from waterfx.js (deep blue far out, turquoise
+    // in the shallows, warm sun-path at sunset); the old flat blue
+    // stays as the fallback.
+    var seaMat = PH.seaMaterial ? PH.seaMaterial(sunset) : new THREE.MeshStandardMaterial({ color: 0x1a6a9a, roughness: 0.25, metalness: 0.2, transparent: true, opacity: 0.85 });
+    var sea = new THREE.Mesh(new THREE.PlaneGeometry(200, 360), seaMat);
     sea.rotation.x = -Math.PI / 2; sea.position.set(-205, 0.02, 0);
     scene.add(sea);
 
@@ -608,9 +651,18 @@
       scene.add(foam); foams.push(foam);
     }
     W.foams = foams;
+    // v7.5: drifting foam patches out in the bay (waterfx.js) — foam
+    // left behind by boats that already passed, and foam where the
+    // swell breaks near the sand. Updated from W.update below.
+    W.driftFoam = PH.makeDriftingFoam ? PH.makeDriftingFoam(scene) : null;
+    // v7.5: harbour buoys down the boat lane (waterfx.js) — orange
+    // cones that bob with the swell and mark the race line.
+    W.buoys = PH.makeBuoys ? PH.makeBuoys(scene) : null;
 
     // ---- roads ----
-    var roadMat = mat(0x23262c, 0.95);
+    // v7.5: wet asphalt from wetroad.js (glossy, so the sun and the
+    // lamps smear across it); the old matte asphalt stays the fallback.
+    var roadMat = PH.wetAsphalt ? PH.wetAsphalt(sunset) : mat(0x23262c, 0.95);
     function road(x, z, w, d) {
       var r = new THREE.Mesh(new THREE.PlaneGeometry(w, d), roadMat);
       r.rotation.x = -Math.PI / 2; r.position.set(x, 0.08, z);
@@ -632,14 +684,17 @@
       dash.rotation.x = -Math.PI / 2; dash.position.set(-20, 0.1, dz);
       scene.add(dash);
     }
-    // zebra crossings at every cross street (v7.4: slim and few — 4
-    // narrow strips, 0.6 wide and 4 long, so the white never swallows
-    // the middle of the road the way the v7.3 slabs did in shots 1+4)
+    // zebra crossings at every cross street (v7.5: stripes the right
+    // way round — each stripe LONG across the road (11 in X) and NARROW
+    // along the direction of travel (0.5 in Z), with gaps between
+    // stripes. The v7.4 bars ran the wrong way (0.6 wide in X, 4 long
+    // in Z), so they read as wide white blocks lying along the road in
+    // shot 4 instead of a crossing a pedestrian would walk on.)
     var zebraMat = new THREE.MeshBasicMaterial({ color: 0xf2f2f2 });
     [-120, -80, -40, 0, 40, 80, 120].forEach(function (z) {
-      for (var zx = -23.5; zx <= -17.5; zx += 2) {
-        var zb = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 4), zebraMat);
-        zb.rotation.x = -Math.PI / 2; zb.position.set(zx, 0.1, z);
+      for (var zo = -2.4; zo <= 2.4; zo += 1.2) {
+        var zb = new THREE.Mesh(new THREE.PlaneGeometry(11, 0.5), zebraMat);
+        zb.rotation.x = -Math.PI / 2; zb.position.set(-20, 0.1, z + zo);
         scene.add(zb);
       }
     });
@@ -755,6 +810,17 @@
       makeTrafficLight(p[0], p[1], true);
       makeTrafficLight(-13.5, p[1] + 4, false);
     });
+    // v7.5: wet-road reflections (wetroad.js) — light ribbons on the
+    // asphalt under the lamps, the traffic lights and the neon signs.
+    // The ribbons are laid once here; main.js strengthens or weakens
+    // them every frame from the camera height.
+    if (PH.layWetReflections && PH.wetRoadSpots) PH.layWetReflections(scene, PH.wetRoadSpots());
+    // v7.5: puddles (wetroad.js) — deeper pools that mirror the sky
+    // itself, along the kerbs and one mid-lane at the crossing.
+    if (PH.layPuddles) PH.layPuddles(scene, sunset);
+    // v7.5: curb sheen (wetroad.js) — a faint band of reflected sky
+    // along each kerb, so the street reads as wet from a distance.
+    if (PH.layCurbSheen) PH.layCurbSheen(scene, sunset);
 
     // ---- street market stalls (v7.3): the east sidewalk in shot 2
     // was a blank wall — now it is a row of stalls with striped
@@ -1064,6 +1130,11 @@
     // volumetric) — every cloud now casts a soft moving ground shadow
     // in BOTH modes, not only by day, because the shadow is the cue
     // that makes a cloud read as a solid thing in the sky.
+    // v7.5: sky.js builds the clouds now (layered cumulus: lit-orange
+    // base, gold sun side, dark crown, gold rim, plus its own sun +
+    // sunbeams). The old blobs below are skipped when it is loaded,
+    // and the cirrus deck after them keeps running either way.
+    if (!PH.buildSunsetSky) {
     var nClouds = sunset ? 10 : 16;
     for (var ci = 0; ci < nClouds; ci++) {
       var cl = makeCloud(PH.rand(1.8, 3.0), null, sunset);
@@ -1094,6 +1165,12 @@
         W.clouds.push(dc);
       }
     }
+    } else {
+      // v7.5: layered sunset clouds + sun + sunbeams from sky.js; they
+      // land in W.clouds / W.cloudShadows, so the drift update below
+      // keeps working unchanged.
+      PH.buildSunsetSky(scene, sunset, W);
+    }
     // round 2: a high thin cirrus deck — flat wide streaks that drift
     // faster than the cumulus below, so the sky has two speeds of cloud
     W.cirrus = [];
@@ -1119,6 +1196,10 @@
         f.position.x = -102 + i * 4.5 + Math.sin(t * 0.25 + i * 1.3) * 1.6;
         f.material.opacity = 0.4 + 0.2 * Math.sin(t * 0.4 + i);
       });
+      // v7.5: drifting foam patches out in the bay (waterfx.js)
+      if (W.driftFoam) W.driftFoam.update(t);
+      // v7.5: harbour buoys bobbing with the swell (waterfx.js)
+      if (W.buoys) W.buoys.update(t);
       // clouds drift east, wrap at the edge — and their ground shadows
       // travel with them, half-speed, so the shade slides over streets
       W.clouds.forEach(function (c, i) {

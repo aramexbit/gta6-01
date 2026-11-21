@@ -1,8 +1,10 @@
-// PIER HEAT — Sunset Bay v7.3 (Node 22, standard library only).
+// PIER HEAT — Sunset Bay v7.4 (Node 22, standard library only).
 // Copies game/ and screenshots/ from beside this file to the output
 // directory and writes /output/dossier.json with the vendored make.fun
-// library. v7.3 is fully procedural: the build refuses any binary model
-// file under game/ (the GLB that got v7.2 rejected must never come back).
+// library. v7.4 is fully procedural: the build refuses any binary model
+// file under game/ (the GLB that got v7.2 rejected must never come back)
+// AND refuses screenshots over the 256 KiB cap, so a bad capture fails
+// the build instead of the sealed gate.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in
 // for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
@@ -14,15 +16,16 @@ import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const VERSION = '7.4';
 
 mkdirSync(out, { recursive: true });
-// v7.3 gate: no binary model files may ship in game/ any more.
+// v7.4 gate: no binary model files may ship in game/ any more.
 function assertNoModelFiles(dir: string): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
     if (entry.isDirectory()) assertNoModelFiles(p);
     else if (/\.(glb|gltf|fbx|obj)$/i.test(entry.name)) {
-      throw new Error('v7.3: model file must not ship: ' + p);
+      throw new Error('v7.4: model file must not ship: ' + p);
     }
   }
 }
@@ -30,6 +33,14 @@ assertNoModelFiles(join(here, 'game'));
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+// v7.4: every screenshot must fit the gate cap (4 files, 256 KiB each)
+// and the game must report the same version the build stamps here.
+const shotFiles = readdirSync(join(out, 'screenshots')).sort();
+if (shotFiles.length > 4) throw new Error('v7.4: too many screenshots: ' + shotFiles.length);
+for (const f of shotFiles) {
+  const size = statSync(join(out, 'screenshots', f)).size;
+  if (size > 262144) throw new Error('v7.4: screenshot over 256 KiB: ' + f + ' (' + size + ')');
+}
 
 // The scorer's own caps (reference/gate.json): only text_max_bytes shapes
 // the bytes; the others refuse an entry the scorer would refuse (more than
@@ -43,7 +54,7 @@ const dossier = buildDossier(out, {
   game_path_max_bytes: 1000,
 });
 writeFileSync(join(out, 'dossier.json'), dossier);
-console.log('dossier bytes:', Buffer.byteLength(dossier));
+console.log('pier heat v' + VERSION + ' — dossier bytes:', Buffer.byteLength(dossier));
 for (const f of readdirSync(join(out, 'screenshots')).sort()) {
   console.log('screenshot', f, statSync(join(out, 'screenshots', f)).size, 'bytes');
 }

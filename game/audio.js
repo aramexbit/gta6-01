@@ -1,7 +1,8 @@
-// PIER HEAT — Sunset Bay v7.3
+// PIER HEAT — Sunset Bay v7.4
 // audio.js — fully synthesised WebAudio: Nightwave 98.3 synthwave radio,
 // waves, siren, engine and gunshots, plus the v7.3 boat outboard, race
-// countdown beeps and bow splash. No external sound files.
+// countdown beeps and bow splash, and v7.4 gull cries + a harbour horn
+// for the pier and boat scenes. No external sound files.
 // Audio starts ONLY after a user gesture (click / button); headless
 // screenshots stay silent and error-free.
 (function () {
@@ -31,6 +32,7 @@
         this.started = true;
         this.startRadio();
         this.startWaves();
+        this.startGulls();
         this.startEngine();
       } catch (e) { /* audio is optional; never break the game */ }
     },
@@ -191,9 +193,47 @@
       this.engineGain.gain.setTargetAtTime(this.muted ? 0 : 0.03 + speed01 * 0.09, t, 0.1);
     },
 
-    // --- boat outboard (v7.3): low square hum + prop wash noise ---
+    // --- gull cries (v7.4): a descending two-note cry at random
+    // intervals, so the pier and the boat scenes sound like the coast
+    startGulls: function () {
+      if (!this.ctx || this.gullTimer) return;
+      var self = this;
+      this.gullTimer = setInterval(function () {
+        if (!self.ctx || self.muted || Math.random() < 0.5) return;
+        var ctx = self.ctx, t = ctx.currentTime + 0.05;
+        [0, 0.18].forEach(function (off, i) {
+          var o = ctx.createOscillator(); o.type = 'sine';
+          o.frequency.setValueAtTime(i === 0 ? 1250 : 980, t + off);
+          o.frequency.exponentialRampToValueAtTime(i === 0 ? 980 : 720, t + off + 0.14);
+          var g = ctx.createGain();
+          g.gain.setValueAtTime(0.05, t + off);
+          g.gain.exponentialRampToValueAtTime(0.001, t + off + 0.16);
+          o.connect(g); g.connect(self.master);
+          o.start(t + off); o.stop(t + off + 0.2);
+        });
+      }, 7000);
+    },
+
+    // --- harbour horn (v7.4): a low two-tone blast for the boat job
+    harbourHorn: function () {
+      if (!this.ctx || this.muted) return;
+      var self = this;
+      var ctx = this.ctx, t = ctx.currentTime;
+      [196, 147].forEach(function (f) {
+        var o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+        var fl = ctx.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = 600;
+        var g = ctx.createGain();
+        g.gain.setValueAtTime(0.12, t);
+        g.gain.linearRampToValueAtTime(0.001, t + 1.1);
+        o.connect(fl); fl.connect(g); g.connect(self.master);
+        o.start(t); o.stop(t + 1.15);
+      });
+    },
     startBoatEngine: function () {
       if (!this.ctx || this.boatOsc) return;
+      // v7.4 rev 2: starting the outboard sounds the harbour horn once,
+      // so the boat job opens with a blast as well as a hum
+      this.harbourHorn();
       var ctx = this.ctx;
       var o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 90;
       var f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 500;

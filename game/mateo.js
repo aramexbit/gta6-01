@@ -1,8 +1,10 @@
-// PIER HEAT — Sunset Bay v7.3
+// PIER HEAT — Sunset Bay v7.4
 // mateo.js — procedural hero characters, built from code primitives.
 // No model file: Mateo Vega and Kira are assembled here from boxes,
 // capsules and spheres, with a low-poly face (eyes, brows, mouth), a
 // burnt-orange bomber jacket, a white tee, dark jeans and sneakers.
+// v7.4: a `drive` pose (both hands forward on the boat helm) and boat
+// gear — an orange life vest + a cap — for Mateo on the speedboat.
 // Plain script; uses window.PH. Faces +Z, so forwardOffset is 0.
 (function () {
   'use strict';
@@ -147,6 +149,28 @@
     gun.position.set(0, -0.72, 0.12);
     gun.visible = false;
     armR.add(gun);
+    // boat gear (v7.4): an orange life vest + a cap, hidden until
+    // setBoatGear(true) — Mateo wears them on the speedboat in shot 3
+    var boatGear = new THREE.Group();
+    var vestFront = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.1), std(0xff6a00, 0.8));
+    vestFront.position.set(0, 1.22, 0.36);
+    boatGear.add(vestFront);
+    var vestBack = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.1), std(0xff6a00, 0.8));
+    vestBack.position.set(0, 1.22, -0.36);
+    boatGear.add(vestBack);
+    [-0.22, 0.22].forEach(function (x) {
+      var strap = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.5), std(0xffc832, 0.7));
+      strap.position.set(x, 1.22, 0);
+      boatGear.add(strap);
+    });
+    var cap = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.25, 0.1, 12), std(0xff6a00, 0.8));
+    cap.position.set(0, 1.96, 0);
+    boatGear.add(cap);
+    var capBrim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.04, 0.18), std(0xff6a00, 0.8));
+    capBrim.position.set(0, 1.93, 0.28);
+    boatGear.add(capBrim);
+    boatGear.visible = false;
+    g.add(boatGear);
 
     g.add(legL, legR, torso, headG, armL, armR);
     g.scale.setScalar(scale);
@@ -162,6 +186,8 @@
         anim = name; P.anim = name;
         gun.visible = (name === 'aim' || name === 'fire');
       },
+      // v7.4: show/hide the life vest + cap for the boat scenes
+      setBoatGear: function (on) { boatGear.visible = !!on; },
       update: function (dt) {
         P._t = (P._t || 0) + dt;
         var t = P._t;
@@ -173,8 +199,9 @@
         torso.rotation.x = 0; torso.position.y = 0; g.rotation.x = 0;
         headG.rotation.x = 0;
         // NOTE: never touch g.position.y here — the rig stands on the
-        // pier deck (y 1.35) in shot 3, and resetting y to 0 sank Mateo
-        // under the deck in v7.3 rev 1. The run bob rides the torso.
+        // boat deck (y ~1.0) in shot 3 and on the pier deck (y 1.35)
+        // in free play, and resetting y to 0 sank Mateo under the deck
+        // in v7.3 rev 1. The run bob rides the torso.
         if (anim === 'walk') {
           legL.rotation.x = s * 0.55; legR.rotation.x = -s * 0.55;
           kneeL.rotation.x = Math.max(0, -s) * 0.7; kneeR.rotation.x = Math.max(0, s) * 0.7;
@@ -190,6 +217,24 @@
           legL.rotation.x = 0.15; legR.rotation.x = -0.2;
           headG.rotation.x = -0.05;
           if (anim === 'fire') torso.rotation.x = -0.06;
+        } else if (anim === 'drive') {
+          // v7.4: both hands forward on the boat helm, knees braced
+          // against the swell, torso leaning slightly into the wind
+          armL.rotation.x = -Math.PI / 2 + 0.25; armR.rotation.x = -Math.PI / 2 + 0.25;
+          armL.rotation.z = 0.35; armR.rotation.z = -0.35;
+          legL.rotation.x = 0.25; legR.rotation.x = -0.15;
+          kneeL.rotation.x = 0.25; kneeR.rotation.x = 0.15;
+          torso.rotation.x = 0.12;
+          torso.rotation.z = Math.sin(t * 0.9 + phase) * 0.04;
+          headG.rotation.x = -0.08;
+        } else if (anim === 'wave') {
+          // v7.4 rev 2: one arm raised, waving/pointing at the boats
+          // behind — Kira on the stern bench in shot 3
+          armR.rotation.x = -2.6; armR.rotation.z = -0.4;
+          armR.rotation.y = Math.sin(t * 2.2 + phase) * 0.25;
+          armL.rotation.x = -0.4;
+          legL.rotation.x = 0.1; legR.rotation.x = -0.1;
+          headG.rotation.y = Math.sin(t * 0.5 + phase) * 0.3;
         } else {
           // idle: breathing + a slow look-around
           torso.scale.y = 1 + Math.sin(t * 1.6 + phase) * 0.015;

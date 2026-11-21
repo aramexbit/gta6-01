@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.3
+// PIER HEAT — Sunset Bay v7.4
 // core.js — shared foundation: seeded RNG, canvas textures, HUD setters
 // and the 2D round minimap painter. All characters, boats and portraits
 // are procedural (code primitives + canvas); no model files are loaded.
@@ -6,7 +6,7 @@
 (function () {
   'use strict';
   var PH = window.PH = window.PH || {};
-  PH.VERSION = '7.3';
+  PH.VERSION = '7.4';
   PH.GAME = 'PIER HEAT — Sunset Bay';
 
   // ---------- seeded random (mulberry32) ----------
@@ -84,6 +84,120 @@
     });
   };
 
+  // Cloud palette (v7.4 rev 2): shared by world.js so the shaded side
+  // of a sunset cloud stays a soft mauve, never a dark purple blob.
+  // Sun side warm gold, crown pale cream, shade cool mauve, base muted.
+  PH.CLOUD_PALETTE = {
+    sunset: { sun: 0xffc070, top: 0xffe8c0, shade: 0xa88ab0, base: 0x8a5f80 },
+    day: { sun: 0xfff6e0, top: 0xffffff, shade: 0xc8d4e0, base: 0xaebfd0 }
+  };
+
+  // Sun glare (v7.4): a big soft radial glow sprite, placed exactly
+  // where the sun sits so the sky, the directional light and the glare
+  // all agree on one low sun direction. Warm core, long falloff.
+  PH.sunGlareTexture = function () {
+    return PH.canvasTex(256, 256, function (g, w, h) {
+      var r = g.createRadialGradient(128, 128, 2, 128, 128, 126);
+      r.addColorStop(0, 'rgba(255,252,235,1)');
+      r.addColorStop(0.12, 'rgba(255,224,150,0.9)');
+      r.addColorStop(0.35, 'rgba(255,170,80,0.45)');
+      r.addColorStop(0.7, 'rgba(255,120,60,0.14)');
+      r.addColorStop(1, 'rgba(255,110,50,0)');
+      g.fillStyle = r; g.fillRect(0, 0, w, h);
+    });
+  };
+
+  // Brick / course texture (v7.4): a base wall colour broken into faint
+  // horizontal courses with a little lightness jitter per course, so a
+  // facade reads as stacked material instead of one flat fill. Mipmaps
+  // fade the jitter out with distance instead of shimmering.
+  PH.brickTexture = function (base) {
+    return PH.canvasTex(256, 256, function (g, w, h) {
+      g.fillStyle = base; g.fillRect(0, 0, w, h);
+      var rows = 16;
+      for (var r = 0; r < rows; r++) {
+        var y = r * (h / rows);
+        var lite = PH.R() * 0.16 - 0.08;
+        g.fillStyle = lite > 0 ? 'rgba(255,255,255,' + lite.toFixed(3) + ')'
+          : 'rgba(0,0,0,' + (-lite).toFixed(3) + ')';
+        g.fillRect(0, y, w, h / rows);
+        g.fillStyle = 'rgba(0,0,0,0.10)';
+        g.fillRect(0, y + h / rows - 1, w, 1);
+        // per-brick vertical joints, staggered every other course
+        var off = (r % 2) * 16;
+        for (var x = off; x < w; x += 32) {
+          g.fillStyle = 'rgba(0,0,0,0.08)';
+          g.fillRect(x, y, 1, h / rows);
+        }
+      }
+    });
+  };
+
+  // Contact shadow (v7.4): a soft dark ellipse, darkest in the middle,
+  // laid flat on the ground under a car, a prop or along a wall base so
+  // nothing looks like it floats. Cheap ambient occlusion, no post pass.
+  PH.contactShadowTexture = function () {
+    return PH.canvasTex(128, 128, function (g, w, h) {
+      var r = g.createRadialGradient(64, 64, 4, 64, 64, 62);
+      r.addColorStop(0, 'rgba(0,0,0,0.55)');
+      r.addColorStop(0.55, 'rgba(0,0,0,0.28)');
+      r.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = r; g.fillRect(0, 0, w, h);
+    });
+  };
+
+  // Wall-base AO strip (v7.4): dark at the wall, fading out over about
+  // a metre — the gradient a real building throws on the pavement.
+  PH.wallShadowTexture = function () {
+    return PH.canvasTex(64, 128, function (g, w, h) {
+      var grad = g.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+      grad.addColorStop(0.5, 'rgba(0,0,0,0.18)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = grad; g.fillRect(0, 0, w, h);
+    });
+  };
+
+  // Sky-reflecting glass (v7.4): warm gold toward the low sun, cooling
+  // to blue-grey away from it. Used for rear windows and window panes
+  // that catch the sky instead of going flat black.
+  PH.skyGlassTexture = function (warm) {
+    return PH.canvasTex(128, 128, function (g, w, h) {
+      var grad = g.createLinearGradient(0, 0, w, h);
+      if (warm) {
+        grad.addColorStop(0, '#ffe0a0'); grad.addColorStop(0.5, '#e8a860');
+        grad.addColorStop(1, '#7a5a80');
+      } else {
+        grad.addColorStop(0, '#cfe0f0'); grad.addColorStop(0.5, '#8aa8c8');
+        grad.addColorStop(1, '#3a4a60');
+      }
+      g.fillStyle = grad; g.fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(255,255,255,0.35)';
+      g.fillRect(0, 0, w, 10);
+    });
+  };
+
+  // Faded painted wall sign (v7.4): big flat letters on a washed-out
+  // board, for the side walls of shops — the kind of ghost sign that
+  // makes a street feel lived in.
+  PH.posterTexture = function (text, bg, fg) {
+    return PH.canvasTex(256, 256, function (g, w, h) {
+      g.fillStyle = bg; g.fillRect(0, 0, w, h);
+      g.fillStyle = 'rgba(255,255,255,0.12)';
+      for (var i = 0; i < 40; i++) g.fillRect(PH.R() * w, PH.R() * h, 20 + PH.R() * 50, 3);
+      g.fillStyle = fg; g.font = '900 44px Arial, sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      var words = text.split(' ');
+      words.forEach(function (wd, i) {
+        g.globalAlpha = 0.85;
+        g.fillText(wd, w / 2, h / 2 + (i - (words.length - 1) / 2) * 52);
+      });
+      g.globalAlpha = 1;
+      g.strokeStyle = fg; g.lineWidth = 4; g.globalAlpha = 0.5;
+      g.strokeRect(10, 10, w - 20, h - 20); g.globalAlpha = 1;
+    });
+  };
+
   // Sun disc with halo.
   PH.sunTexture = function () {
     return PH.canvasTex(256, 256, function (g, w, h) {
@@ -110,7 +224,7 @@
     });
   };
 
-  // ---------- v7.3: no external models ----------
+  // ---------- v7.4: no external models ----------
   // v7.2 loaded a GLB character file; v7.3 builds Mateo and Kira from
   // code primitives in mateo.js instead, so there is no model loader
   // left in the game at all. Anything that asks for a model file gets
@@ -120,9 +234,10 @@
 
   // v7.3: the binary model builder was removed with the GLB file.
   // Characters are assembled from primitives in mateo.js; nothing in
-  // the game parses model containers any more.
+  // the game parses model containers any more. v7.4 keeps that rule
+  // and adds the boat-helm pose + life vest on the same rig.
   function buildGLTF(json, bin) {
-    throw new Error('v7.3: model files are gone — see mateo.js');
+    throw new Error('v7.4: model files are gone — see mateo.js');
   }
 
   // (rest of the old model builder deleted in v7.3 — see mateo.js)

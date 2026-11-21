@@ -1,4 +1,4 @@
-// PIER HEAT — Sunset Bay v7.3
+// PIER HEAT — Sunset Bay v7.4
 // sim.js — everything that moves: procedural people + poses, cars (hero,
 // traffic, police), traffic system, city + beach crowds, police + heli,
 // and the muzzle flash. Mateo / Kira are built in mateo.js (primitives,
@@ -7,6 +7,16 @@
   'use strict';
   var PH = window.PH;
   var THREE = window.THREE;
+
+  // Contact shadow under a car (v7.4): a soft dark ellipse on the road
+  // so the car sits ON the asphalt instead of floating above it.
+  function carContactShadow(w, l) {
+    var m = new THREE.Mesh(new THREE.PlaneGeometry(w, l),
+      new THREE.MeshBasicMaterial({ map: PH.contactShadowTexture(), transparent: true, opacity: 0.5, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = 0.03;
+    return m;
+  }
 
   var SKINS = [0xf2c89b, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0xa0662a];
   var SHIRTS = [0xd83a2a, 0x0e7a7a, 0xffc832, 0x8a5aff, 0x37a05a, 0xff7a1a, 0x2a6fd8, 0xf2f2f2, 0x222222, 0xff6ab0];
@@ -120,6 +130,8 @@
   };
 
   // ---- cars ----
+  // Wheel with hub detail (v7.4): five spokes + a centre cap, so the
+  // wheel reads as a wheel from the side instead of a flat dark disc.
   function wheel(x, z, rim) {
     var w = new THREE.Group(); w.position.set(x, 0.36, z);
     var tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.26, 12), mat(0x141414, 0.9));
@@ -127,6 +139,18 @@
     var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.28, 10),
       new THREE.MeshStandardMaterial({ color: rim ? 0xd8d8e0 : 0x888888, metalness: 0.9, roughness: 0.25 }));
     hub.rotation.z = Math.PI / 2; w.add(hub);
+    for (var s = 0; s < 5; s++) {
+      var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.07, 0.05),
+        new THREE.MeshStandardMaterial({ color: rim ? 0xc0c0c8 : 0x666666, metalness: 0.85, roughness: 0.3 }));
+      var a = (s / 5) * Math.PI * 2;
+      spoke.position.set(Math.cos(a) * 0.05, Math.sin(a) * 0.05, 0.14);
+      spoke.rotation.z = a;
+      w.add(spoke);
+      var spoke2 = spoke.clone(); spoke2.position.z = -0.14; w.add(spoke2);
+    }
+    var cap = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.3, 8),
+      new THREE.MeshStandardMaterial({ color: 0xc85a00, metalness: 0.7, roughness: 0.3 }));
+    cap.rotation.z = Math.PI / 2; w.add(cap);
     return w;
   }
 
@@ -179,7 +203,8 @@
         var qtr = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.36, 0.05), glassMat);
         qtr.position.set(-0.95, 1.0, z); g.add(qtr);
       });
-      var rearWindow = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.42, 1.5), glassMat);
+      var rearWindow = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.42, 1.5),
+        new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(true), roughness: 0.12, metalness: 0.55 }));
       rearWindow.position.set(-0.85, 0.98, 0); rearWindow.rotation.z = 0.5; g.add(rearWindow);
       var tailHandle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 0.5),
         new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.25 }));
@@ -221,6 +246,25 @@
       });
       var wing = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.06, 1.9), bodyMat);
       wing.position.set(-2.05, 1.18, 0); wing.castShadow = true; g.add(wing);
+      // v7.4: the rear reads from behind (shot 1 is a rear view) —
+      // a trunk-lid seam, a rear wiper, a roof antenna and small fog
+      // lamps under the tail bar. (The rear glass itself now carries
+      // the sky-reflecting texture — see rearWindow above.)
+      var trunkSeam = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 1.5),
+        new THREE.MeshBasicMaterial({ color: 0x5a2400 }));
+      trunkSeam.position.set(-1.55, 1.0, 0); g.add(trunkSeam);
+      var wiper = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, 0.7), mat(0x14181c, 0.5));
+      wiper.position.set(-0.95, 0.82, 0); wiper.rotation.x = 0.4; g.add(wiper);
+      var antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.5, 6), mat(0x14181c, 0.5));
+      antenna.position.set(-0.4, 1.45, 0); antenna.rotation.z = -0.25; g.add(antenna);
+      [-0.6, 0.6].forEach(function (z) {
+        var fog = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.3),
+          new THREE.MeshStandardMaterial({ color: 0xff5040, emissive: 0xff3020, emissiveIntensity: 0.8 }));
+        fog.position.set(-2.38, 0.5, z); g.add(fog);
+        var flap = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.16, 0.16),
+          new THREE.MeshBasicMaterial({ color: 0x7a3400 }));
+        flap.position.set(-0.6, 0.75, z > 0 ? 0.98 : -0.98); g.add(flap);
+      });
       // plates SUN-8821
       var plateTex = PH.plateTexture('SUN-8821');
       var plateMat = new THREE.MeshStandardMaterial({ map: plateTex, roughness: 0.5 });
@@ -228,8 +272,20 @@
       pf.position.set(2.32, 0.35, 0); pf.rotation.y = Math.PI / 2; g.add(pf);
       var pr = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.18), plateMat);
       pr.position.set(-2.4, 0.35, 0); pr.rotation.y = -Math.PI / 2; g.add(pr);
-      [[0.95, -1.45], [1.45, -1.45]].forEach(function (p) { g.add(wheel(p[0], p[1], true)); });
-      [[0.95, 1.45], [1.45, 1.45]].forEach(function (p) { g.add(wheel(p[0], p[1], true)); });
+      [[-1.55, -1.02], [1.45, -1.02]].forEach(function (p) { g.add(wheel(p[0], p[1], true)); });
+      [[-1.55, 1.02], [1.45, 1.02]].forEach(function (p) { g.add(wheel(p[0], p[1], true)); });
+      // v7.4 rev 2: the wheels sit at the real axles (rear -1.55, front
+      // +1.45) and flush with the body (lateral +/-1.02, half-width
+      // 0.95) — v7.4 rev 1 had all four clustered at the front and
+      // sticking 0.5 out of the flanks, so they read as loose discs
+      // v7.4: soft contact shadow grounds the car; warm fog lamps
+      // sit low on the front valance under the headlights
+      g.add(carContactShadow(2.6, 5.0));
+      [-0.65, 0.65].forEach(function (z) {
+        var fogl = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.28),
+          new THREE.MeshStandardMaterial({ color: 0xffe6a0, emissive: 0xffd060, emissiveIntensity: 1.0 }));
+        fogl.position.set(2.26, 0.32, z); g.add(fogl);
+      });
       g.userData.length = 4.6;
       return g;
     }
@@ -244,6 +300,43 @@
     cabin.position.set(0, 1.35, -0.2); cabin.castShadow = true; g.add(cabin);
     var roof = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.08, 2.0), mat(bodyColor, 0.55, 0.15));
     roof.position.set(0, 1.68, -0.2); g.add(roof);
+    // body variants (v7.4): the same kit, four silhouettes — sedan is
+    // the base above; hatch shortens the tail, van grows tall with a
+    // long roof, pickup drops the rear roof for an open bed.
+    var bodyType = opts.bodyType || 'sedan';
+    if (bodyType === 'hatch') {
+      body.scale.z = 0.88; cabin.position.z = -0.35; roof.position.z = -0.35;
+      var hatchGlass = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 0.06),
+        new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(false), roughness: 0.12, metalness: 0.55 }));
+      hatchGlass.position.set(0, 1.3, -2.05); g.add(hatchGlass);
+    } else if (bodyType === 'van') {
+      body.scale.y = 1.45; body.position.y = 0.95;
+      cabin.scale.y = 1.35; cabin.position.y = 1.55; cabin.scale.z = 1.25;
+      roof.position.y = 2.05; roof.scale.z = 1.25;
+    } else if (bodyType === 'pickup') {
+      cabin.scale.z = 0.6; cabin.position.z = 0.55;
+      roof.scale.z = 0.6; roof.position.z = 0.55;
+      // open bed: low walls around the rear half
+      [-0.9, 0.9].forEach(function (x) {
+        var wall = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 1.8), mat(bodyColor, 0.55, 0.15));
+        wall.position.set(x, 1.3, -1.3); g.add(wall);
+      });
+      var tailgate = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.45, 0.08), mat(bodyColor, 0.55, 0.15));
+      tailgate.position.set(0, 1.3, -2.18); g.add(tailgate);
+      var load = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, 1.2), mat(0x8a6a42, 0.95));
+      load.position.set(0, 1.35, -1.3); g.add(load);
+    }
+    // roof rack on some traffic cars (two rails + two cross bars)
+    if (!isPolice && PH.R() < 0.3) {
+      [-0.6, 0.6].forEach(function (x) {
+        var rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 1.8), mat(0x222222, 0.5, 0.6));
+        rail.position.set(x, 1.78, -0.2); g.add(rail);
+      });
+      [-0.8, 0.4].forEach(function (z) {
+        var bar = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.05, 0.08), mat(0x222222, 0.5, 0.6));
+        bar.position.set(0, 1.78, z); g.add(bar);
+      });
+    }
     // door lines, chrome handles, mirrors
     var dl = new THREE.MeshBasicMaterial({ color: 0x000000 });
     [-0.96, 0.96].forEach(function (x) {
@@ -305,6 +398,7 @@
     [[-0.95, 1.45], [0.95, 1.45], [-0.95, -1.45], [0.95, -1.45]].forEach(function (p) {
       g.add(wheel(p[0], p[1], false));
     });
+    g.add(carContactShadow(2.4, 4.8));
     g.userData.length = 4.4;
     return g;
   };
@@ -322,7 +416,10 @@
     });
     for (var i = 0; i < 16; i++) {
       var route = routes[i % routes.length];
-      var car = PH.makeCar({ kind: 'traffic' });
+      // v7.4: traffic rolls a body variant per car — sedan, hatch, van
+      // or pickup — so the street is not sixteen identical boxes
+      var types = ['sedan', 'sedan', 'hatch', 'van', 'pickup'];
+      var car = PH.makeCar({ kind: 'traffic', bodyType: types[i % types.length] });
       var s = PH.rand(0, 1);
       var pos = route.from + (route.to - route.from) * s;
       if (route.axis === 'z') { car.position.set(route.fixed, 0, pos); car.rotation.y = route.dir > 0 ? 0 : Math.PI; }
@@ -626,14 +723,17 @@
   };
 
   // ---- muzzle flash: star sprite + white core + warm point light ----
+  // v7.4: a short tongue of flame + a small glow, NOT an explosion.
+  // The v7.3 flash (3.0-unit star, light 15) filled the middle of
+  // shot 4; the new one is ~1/3 the size and fades fast.
   PH.MuzzleFlash = function (scene) {
     var g = new THREE.Group();
     var tex = PH.glowTexture();
     var star = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-    star.scale.set(3.0, 3.0, 1);
+    star.scale.set(1.1, 1.1, 1);
     var core = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, color: 0xffffff }));
-    core.scale.set(1.6, 1.6, 1);
-    var light = new THREE.PointLight(0xffc060, 15, 9);
+    core.scale.set(0.55, 0.55, 1);
+    var light = new THREE.PointLight(0xffc060, 6, 5);
     g.add(star, core, light);
     g.visible = false;
     scene.add(g);
@@ -654,14 +754,14 @@
   PH.MuzzleFlash.prototype.update = function (t) {
     if (!this.group.visible) return;
     if (this.held) {
-      this.star.material.opacity = 1; this.core.material.opacity = 1;
-      this.light.intensity = 15;
+      this.star.material.opacity = 0.9; this.core.material.opacity = 0.9;
+      this.light.intensity = 6;
       return;
     }
     var flick = (Math.sin(t * 55) > 0) ? 1 : 0.25;
     this.star.material.opacity = flick;
     this.core.material.opacity = flick;
-    this.light.intensity = 15 * flick;
+    this.light.intensity = 6 * flick;
   };
   PH.MuzzleFlash.prototype.hide = function () { this.group.visible = false; };
 

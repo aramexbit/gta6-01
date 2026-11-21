@@ -1,10 +1,12 @@
-# Mateo Vega — the character (v7.3, procedural)
+# Mateo Vega — the character (v7.4, procedural)
 
 ## The character
 Mateo Vega, 28, getaway driver. Burnt-orange bomber jacket, white tee, dark
 jeans. Low-poly face: two small dark eyes, brows, a nose bump and a simple
 mouth line, built as tiny meshes so the face reads in screenshots from any
 angle. Kira is the same rig recoloured: teal bomber, dark tee, long hair.
+On the boat (shot 3, v7.4) Mateo wears an orange life vest and a cap over
+the same rig.
 
 ## The file — there is none
 v7.3 REMOVED `game/vendor/mateo.glb` and the whole model loader. Mateo and
@@ -27,9 +29,14 @@ mesh that is only visible while aiming or firing.
 ## Animations (state machine in `mateo.js`)
 `idle` (breathing + slow look-around), `walk`, `run` (knees bend on the
 trailing leg, torso leans forward), `aim` and `fire` (both arms raised,
-pistol visible). `setAnim(name)` switches the state; `update(dt)`
-advances the swing phase from time, so the walk cycle is the same in
-every seeded screenshot.
+pistol visible), `drive` (v7.4: both hands forward on the boat helm,
+knees braced against the swell, torso leaning into the wind — used for
+Mateo at the helm in shot 3) and `wave` (v7.4 rev 2: one arm raised,
+waving at the boats behind — Kira on the stern bench in shot 3).
+`setAnim(name)` switches the state; `update(dt)` advances the swing
+phase from time, so the walk cycle is the same in every seeded
+screenshot. `setBoatGear(true)` shows the life vest and cap; it is off
+everywhere else — in shot 3 both Mateo and Kira wear it.
 
 ## Facing
 The face points along local +Z, so `forwardOffset` is 0: a movement
@@ -57,3 +64,6 @@ back panel. Portraits of both characters are drawn separately in
 The model file is what got v7.2 rejected. The procedural rig keeps the
 same silhouette, the same jacket and the same face, with no binary
 asset to review, no loader to maintain and no network fetch at all.
+v7.4 keeps the rule and extends the same rig to the boat: the helm
+wheel in `boats.js` and the `drive` pose + life vest here are primitives
+too, so shot 3's Mateo-on-the-boat staging adds no asset at all.

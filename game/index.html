@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="game-version" content="7.4">
 <link rel="icon" href="data:,">
 <title>PIER HEAT — Sunset Bay</title>
 <style>
@@ -45,7 +46,7 @@
   #stars { font-size: 22px; letter-spacing: 3px; }
   #stars span { color: rgba(255,255,255,0.25); }
   #stars span.lit { color: #ffd23c; text-shadow: 0 0 8px #ff9d00; }
-  #money { font-size: 30px; font-weight: 900; color: #7dff8a; margin-top: 2px;
+  #money { font-size: 36px; font-weight: 900; color: #7dff8a; margin-top: 2px;
     text-shadow: 0 2px 4px #000; letter-spacing: 1px; }
   #wanted-label { font-size: 11px; letter-spacing: 3px; color: #cfe3ff; }
   /* v7.3: crew cards with canvas portraits, right side — one horizontal
@@ -114,9 +115,13 @@
   #radio-row { display: flex; gap: 8px; align-items: center; font-size: 12px; font-weight: 900; }
   #mute-btn { pointer-events: auto; background: rgba(8,12,22,0.8); color: #fff; border: 1px solid #fff;
     border-radius: 6px; padding: 3px 10px; cursor: pointer; font-weight: 900; }
-  /* dialog + toast */
-  #dialog { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
-    display: none; align-items: center; gap: 12px; width: 560px; max-width: 72vw; }
+  /* dialog + toast — v7.4: the dialog rides ABOVE the weapon wheel
+     (bottom 148px, narrower) so all six weapon slots stay visible;
+     the v7.3 dialog at bottom 24px covered the shotgun/sniper slots.
+     v7.4 rev 2: explicit z-index so the dialog never sinks under the
+     weapon row on a narrow viewport */
+  #dialog { position: absolute; left: 50%; bottom: 148px; transform: translateX(-50%);
+    display: none; align-items: center; gap: 12px; width: 500px; max-width: 60vw; z-index: 25; }
   .portrait { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 8px;
     border: 2px solid #fff; display: block; }
   .portrait.kira { box-shadow: 0 0 0 2px #0e7a7a; }
@@ -135,7 +140,8 @@
     <h1>PIER HEAT</h1>
     <h2>SUNSET BAY</h2>
     <p>Mateo Vega, getaway driver. Kira on the radio. The Bay City PD wants the
-    Scarlet Arrow — lose the heat, reach the pier, and hold the line.</p>
+    Scarlet Arrow — lose the heat, reach the pier, and hold the line.
+    v7.4: race the rivals on Sunset Blvd, then take the speedboat across the bay.</p>
     <div class="keys">WASD / ARROWS — drive &nbsp;•&nbsp; SPACE — brake &nbsp;•&nbsp; SHIFT — run<br>
     F — enter / exit car &nbsp;•&nbsp; CLICK — shoot on foot &nbsp;•&nbsp; P — save &nbsp;•&nbsp; M — mute</div>
     <button id="start-btn">START ENGINE</button>
@@ -153,7 +159,7 @@
 
     <div id="wanted-panel" class="panel">
       <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
-      <div id="money">$1,240</div>
+      <div id="money">$24,750</div>
       <div id="wanted-label">BAY CITY PD</div>
     </div>
 

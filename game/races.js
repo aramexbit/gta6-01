@@ -1,10 +1,12 @@
-// PIER HEAT — Sunset Bay v7.3
+// PIER HEAT — Sunset Bay v7.4
 // races.js — street racing on the city road graph: a loop of gates
 // (checkpoint arches) along Sunset Blvd and the cross streets, rival
 // cars that follow the same loop with their own pace, a start countdown
 // and a live race position. Position is computed from checkpoint order
 // first, then distance to the next gate — so a rival one gate ahead
 // always ranks above the player, however close the gap looks.
+// v7.4: in shot 1 the rivals run BIG and CLOSE, one in each lane
+// beside the hero, so the frame reads as a race at a glance.
 // Plain script; uses window.PH.
 (function () {
   'use strict';
@@ -87,10 +89,12 @@
       scene.add(gate);
       self.gates.push(gate);
     });
-    // two rivals, distinct colours, slightly different pace
+    // two rivals, distinct colours AND distinct bodies (v7.4): a blue
+    // hatch and a red pickup, so the two rivals read as different cars
     var colors = [0x2a6fd8, 0xd83a2a];
+    var bodies = ['hatch', 'pickup'];
     colors.forEach(function (c, i) {
-      var car = PH.makeCar({ kind: 'traffic', color: c });
+      var car = PH.makeCar({ kind: 'traffic', color: c, bodyType: bodies[i] });
       car.position.set(-20 + (i === 0 ? 4 : -4), 0, -104 + i * 4);
       scene.add(car);
       self.rivals.push({
@@ -185,23 +189,30 @@
     this.computePosition(playerPos || { x: -20, z: 8 });
   };
   // Frozen hero arrangement for shot 1: the next gate arches over the
-  // road ahead of the hero, one rival car alongside, position HUD live.
+  // road ahead of the hero, and BOTH rivals run big and close — one in
+  // the right lane just ahead of the hero's nose, one in the left lane
+  // alongside, so the race reads at a glance instead of hiding behind
+  // the gate. The gate sits further ahead (z -18) so it frames the
+  // rivals instead of covering them.
   PH.Race.prototype.stageShot = function () {
     this.showGates(true);
     var gate = this.gates[2];
-    gate.position.set(-20, 0, -6);
+    gate.position.set(-20, 0, -18);
     gate.rotation.y = 0;
     gate.visible = true;
     this.gates.forEach(function (g, i) { if (i !== 2) g.visible = false; });
     var rival = this.rivals[0];
-    rival.mesh.position.set(-24.5, 0, -14);
+    rival.mesh.position.set(-16.5, 0, 0);
     rival.mesh.rotation.y = Math.PI;
     rival.pos.copy(rival.mesh.position);
     rival.gate = 2;
     var rival2 = this.rivals[1];
-    rival2.mesh.position.set(60, 0, 80);
-    rival2.mesh.rotation.y = Math.PI / 2;
+    rival2.mesh.position.set(-23.5, 0, -2);
+    rival2.mesh.rotation.y = Math.PI;
     rival2.pos.copy(rival2.mesh.position);
+    rival2.gate = 2;
+    // v7.4 rev 2: the red pickup runs further ahead (z -2, not +3) so
+    // the hero no longer hides it — both rivals stay readable
     this.playerGate = 2;
     this.lap = 1;
     this.racing = true;

@@ -1,10 +1,13 @@
-// PIER HEAT — Sunset Bay v7.3
+// PIER HEAT — Sunset Bay v7.4
 // portraits.js — canvas-drawn face portraits for crew cards and the
 // dialog box. Each character is defined once as a small feature object
 // (skin, hair style + colour, jacket, extras) and rendered to an
 // offscreen canvas at load, so the same face is used in the crew cards,
 // the dialog portrait and the title screen. This replaces the old
 // letter tiles ("K" / "M"). No image files; everything is drawn in code.
+// v7.4: each character gets their own backdrop tint + a small accent
+// (Dario's scar, Lena's blush, Kira's earring) so the four faces are
+// not the same drawing in four jackets.
 // Plain script; uses window.PH.
 (function () {
   'use strict';
@@ -14,19 +17,23 @@
   PH.PORTRAIT_DEFS = {
     mateo: {
       skin: '#e0ac69', hair: '#2a1a12', hairStyle: 'short', jacket: '#ff7a1a',
-      tee: '#f2f2f2', stubble: true, brows: 'flat', name: 'MATEO VEGA', role: 'DRIVER'
+      tee: '#f2f2f2', stubble: true, brows: 'flat', name: 'MATEO VEGA', role: 'DRIVER',
+      bg: ['#3a1a4a', '#c85a3a', '#ffb347'], accent: 'stubble'
     },
     kira: {
       skin: '#f2c89b', hair: '#2a1a12', hairStyle: 'long', jacket: '#0e7a7a',
-      tee: '#222831', stubble: false, brows: 'arched', name: 'KIRA', role: 'HANDLER'
+      tee: '#222831', stubble: false, brows: 'arched', name: 'KIRA', role: 'HANDLER',
+      bg: ['#0a2a4a', '#0e7a7a', '#7ad8c8'], accent: 'earring'
     },
     dario: {
       skin: '#c68642', hair: '#1a1a1a', hairStyle: 'buzz', jacket: '#2a6fd8',
-      tee: '#f2f2f2', stubble: true, brows: 'flat', name: 'DARIO', role: 'MECHANIC'
+      tee: '#f2f2f2', stubble: true, brows: 'flat', name: 'DARIO', role: 'MECHANIC',
+      bg: ['#1a1a2a', '#4a4a5a', '#8a8a9a'], accent: 'scar'
     },
     lena: {
       skin: '#ffdbac', hair: '#8a6a3a', hairStyle: 'bob', jacket: '#8a5aff',
-      tee: '#f2f2f2', stubble: false, brows: 'arched', name: 'LENA', role: 'WHEELWOMAN'
+      tee: '#f2f2f2', stubble: false, brows: 'arched', name: 'LENA', role: 'WHEELWOMAN',
+      bg: ['#2a1a4a', '#8a5aff', '#ff9ad8'], accent: 'blush'
     }
   };
 
@@ -36,9 +43,10 @@
   PH.drawPortraitFace = function (g, def, size) {
     var s = size / 96; // design grid is 96x96
     g.clearRect(0, 0, size, size);
-    // backdrop: warm dusk gradient + faint sun disc
+    // backdrop: each character's own dusk gradient + faint sun disc
+    var bgc = def.bg || ['#2a1a4a', '#c85a3a', '#ffb347'];
     var bg = g.createLinearGradient(0, 0, 0, size);
-    bg.addColorStop(0, '#2a1a4a'); bg.addColorStop(0.55, '#c85a3a'); bg.addColorStop(1, '#ffb347');
+    bg.addColorStop(0, bgc[0]); bg.addColorStop(0.55, bgc[1]); bg.addColorStop(1, bgc[2]);
     g.fillStyle = bg; g.fillRect(0, 0, size, size);
     g.fillStyle = 'rgba(255,230,160,0.85)';
     g.beginPath(); g.arc(70 * s, 22 * s, 9 * s, 0, Math.PI * 2); g.fill();
@@ -123,6 +131,19 @@
       g.fillStyle = 'rgba(42,26,18,0.35)';
       g.beginPath(); g.ellipse(48 * s, 58 * s, 13 * s, 7 * s, 0, 0, Math.PI); g.fill();
     }
+    // per-character accent (v7.4): Dario's scar, Lena's blush, Kira's
+    // gold earring — small marks that tell the four faces apart
+    if (def.accent === 'scar') {
+      g.strokeStyle = 'rgba(90,30,20,0.8)'; g.lineWidth = 1.6 * s;
+      g.beginPath(); g.moveTo(34 * s, 40 * s); g.lineTo(38 * s, 48 * s); g.stroke();
+    } else if (def.accent === 'blush') {
+      g.fillStyle = 'rgba(255,120,140,0.4)';
+      g.beginPath(); g.ellipse(36 * s, 50 * s, 4 * s, 2.5 * s, 0, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.ellipse(60 * s, 50 * s, 4 * s, 2.5 * s, 0, 0, Math.PI * 2); g.fill();
+    } else if (def.accent === 'earring') {
+      g.fillStyle = '#ffd23c';
+      g.beginPath(); g.arc(67 * s, 50 * s, 1.8 * s, 0, Math.PI * 2); g.fill();
+    }
     // rim light on the sun side
     g.strokeStyle = 'rgba(255,210,120,0.7)'; g.lineWidth = 2 * s;
     g.beginPath(); g.ellipse(48 * s, 42 * s, 19 * s, 23 * s, 0, -Math.PI * 0.7, -Math.PI * 0.15); g.stroke();
@@ -168,6 +189,9 @@
       card.id = 'crew-' + who;
       var cv = document.createElement('canvas');
       cv.width = 48; cv.height = 48; cv.className = 'crew-face';
+      // v7.4 rev 2: the face frame takes the character's jacket colour,
+      // so each card's rim matches its portrait at a glance
+      cv.style.borderColor = def.jacket;
       PH.paintPortrait(cv, who);
       var info = document.createElement('div');
       info.className = 'crew-info';

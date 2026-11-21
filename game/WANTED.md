@@ -1,9 +1,12 @@
-# Wanted system — Bay City PD (v7.3)
+# Wanted system — Bay City PD (v7.4)
 
 ## Stars 1–5
 The wanted level is shown as five stars in the top-right HUD panel, next to
 the cash balance and the `BAY CITY PD` label. Lit stars are gold; unlit
-stars are dim. At 3 stars or more the wanted panel gets a red glow.
+stars are dim. At 3 stars or more the wanted panel gets a red glow. The
+cash balance is big and green in v7.4 ($24,750 in shot 1, $48,250 in
+shot 2, $36,900 in shot 3, $84,300 in shot 4) — the old four-figure
+amounts read as pocket change next to a getaway driver's job.
 
 ## How it rises
 - In free play, the wanted level rises while a police cruiser is within
@@ -35,7 +38,10 @@ stars are dim. At 3 stars or more the wanted panel gets a red glow.
 - **Boat chase:** 2 police boats (white hull, blue stripe, flashing roof
   bar) hunt the player's speedboat on the water. They steer at a point
   6 units ahead of the player, never at the exact position, so they
-  trail behind in a visible pursuit line with foam wakes.
+  trail behind in a visible pursuit line with foam wakes. In shot 3
+  (v7.4) Mateo is at the helm himself, so the boats chase the player
+  directly instead of chasing a boat the player is only looking at.
+  Kira rides the stern bench (v7.4 rev 2), watching the boats behind.
 - **Helicopter:** the police heli orbits the hero in free play (radius
   ~26, height ~34, gentle bob) with a long translucent searchlight cone
   that reaches the ground. In the staged shots it is frozen at the staged
@@ -57,3 +63,5 @@ the siren stops.
 Shot 1 (chase) is 3 stars, shot 4 (combat) is 5 stars, shots 2 and 3
 (on foot / mission) are 0 stars. The dispatch board distances in shots 1
 and 4 are the staged values for those scenes, not live measurements.
+Shot 1 also carries the street race (P2/3): both rivals run beside the
+hero, so the heat and the race share the same frame.

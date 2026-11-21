@@ -1,9 +1,12 @@
-// PIER HEAT — Sunset Bay v7.3
+// PIER HEAT — Sunset Bay v7.4
 // boats.js — boat chase on the water: a player speedboat, police boats
 // that hunt it, a fading foam wake behind every boat, and a heli over
 // the sea. Waves are a few summed sines; the same height function is
 // sampled on the CPU for buoyancy (bow / stern / port / starboard),
 // so each hull pitches and rolls with the swell it sits on.
+// v7.4: the hero boat carries a helm wheel at the driver's stand, and
+// stageShot puts Mateo ON the boat — the boat job is played on the
+// water now, not talked about from the pier.
 // Plain script; uses window.PH.
 (function () {
   'use strict';
@@ -52,6 +55,22 @@
     var shield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.55, 1.4),
       new THREE.MeshStandardMaterial({ color: 0x18222e, roughness: 0.1, metalness: 0.6 }));
     shield.position.set(1.35, 1.3, 0); shield.rotation.z = -0.45; g.add(shield);
+    // helm wheel at the driver's stand (v7.4): the driver — Mateo in
+    // shot 3 — stands here with both hands on the wheel
+    var helm = new THREE.Group(); helm.position.set(0.95, 1.45, 0.35);
+    var helmRing = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.045, 8, 16), std(0x2a2a2a, 0.5, 0.6));
+    helm.add(helmRing);
+    for (var hs = 0; hs < 3; hs++) {
+      var spoke = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.04, 0.04), std(0x2a2a2a, 0.5, 0.6));
+      spoke.rotation.z = (hs / 3) * Math.PI;
+      helm.add(spoke);
+    }
+    var helmPost = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.4, 6), std(0x2a2a2a, 0.5, 0.6));
+    helmPost.rotation.x = Math.PI / 2 - 0.4; helmPost.position.set(0.95, 1.25, 0.35);
+    g.add(helmPost);
+    helm.rotation.y = Math.PI / 2; helm.rotation.x = -0.4;
+    g.add(helm);
+    g.userData.helm = helm;
     // bench seats
     [-0.6, -1.4].forEach(function (x) {
       var seat = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.18, 1.3), std(0x8a2a2a, 0.85));
@@ -207,17 +226,36 @@
     });
     this.policeWake.update(t);
   };
+  // Stern position for a second character riding along (v7.4 rev 2):
+  // the rear bench, 2.55 units behind the helm along the boat's axis.
+  PH.BoatChase.prototype.sternPos = function () {
+    var deck = this.deckPos();
+    return { x: deck.x, y: deck.y, z: deck.z + 2.55, heading: -Math.PI / 2 };
+  };
+  // Deck position for a character standing at the helm (v7.4): the
+  // boat's position + the helm offset, rotated by the boat's heading,
+  // so Mateo can stand ON the speedboat instead of on the pier.
+  PH.BoatChase.prototype.deckPos = function () {
+    var hx = 0.95, hz = 0.35;
+    var c = Math.cos(this.heading), s = Math.sin(this.heading);
+    return {
+      x: this.playerPos.x + hx * c + hz * s,
+      y: this.playerPos.y + 1.0,
+      z: this.playerPos.z - hx * s + hz * c,
+      heading: this.heading
+    };
+  };
   // Frozen hero arrangement for the staged shot: player boat mid-frame
   // on the water with a white wake, two police boats trailing behind,
-  // heli above the sea. Called once from main.js staging. Boats sit
-  // just past the pier end (x -104..-118) so they read clearly from
-  // the pier camera instead of shrinking into the horizon.
+  // heli above the sea. v7.4: the boat sits closer to the pier end and
+  // further west, so the pier camera sees a big boat, a big wake and
+  // both police boats — the boat chase IS the shot now.
   PH.BoatChase.prototype.stageShot = function () {
-    this.setPlayer(-104, 44, Math.PI / 2, 0);
-    this.player.position.set(-104, 0.1, 44);
+    this.setPlayer(-112, 40, Math.PI / 2, 0);
+    this.player.position.set(-112, 0.1, 40);
     this.player.rotation.y = Math.PI / 2;
     this.player.rotation.z = 0; this.player.rotation.x = 0;
-    var spots = [[-116, 30], [-114, 56]];
+    var spots = [[-126, 26], [-124, 54]];
     this.policeBoats.forEach(function (pb, i) {
       pb.mesh.position.set(spots[i][0], 0.1, spots[i][1]);
       pb.mesh.rotation.y = Math.PI / 2;
@@ -226,10 +264,10 @@
     // pre-stamp a visible wake ribbon behind the player boat; born far
     // in the future so the frozen staged shot never fades it out
     for (var k = 0; k < 18; k++) {
-      this.wake.stamp(-104 - k * 1.6, 44, 0.1, Math.PI / 2, 14, 100);
+      this.wake.stamp(-112 - k * 1.6, 40, 0.1, Math.PI / 2, 14, 100);
     }
     for (var j = 0; j < 10; j++) {
-      this.policeWake.stamp(-116 - j * 1.6, 30, 0.1, Math.PI / 2, 12, 100);
+      this.policeWake.stamp(-126 - j * 1.6, 26, 0.1, Math.PI / 2, 12, 100);
     }
   };
 })();

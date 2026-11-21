@@ -16,7 +16,50 @@ The 3D world, the people, the cars, the boats and the music are all built
 in code — v7.3 removed the last model file entirely, so there are no
 binary assets at all.
 
-## v7.3 — what changed
+## v7.4 — what changed
+
+- **Volumetric sunset clouds** (`game/world.js`, `game/core.js`): each
+  cloud is a layered cluster — flat base, warm sun-side mid body, small
+  round cauliflower crown sheared downwind, ragged wisps at the edges —
+  with a soft ground shadow that drifts with the cloud, so streets and
+  roofs slide in and out of shade. A denser cloud field rings the sun
+  on the sky dome, and a big radial glare sprite sits exactly at the sun.
+- **Real facades** (`game/world.js`): every window pane rolls its own
+  look — sky-reflecting glass (warm toward the sun, cool away), dark,
+  lit, or a tiny shop interior (shelves per shop kind). Upper floors sit
+  in bays with frames, sills, lintels, curtains and rain streaks; ground
+  floors roll a stoop, a glass lobby or a loading dock; crowns get a
+  cornice, a parapet and an antenna with a blinking red beacon; flanks
+  carry a faded painted sign, a drain pipe and an awning. Brick-course
+  textures fade with distance, and a dark gradient hugs every wall base.
+- **Real cars** (`game/sim.js`): the hero's rear now reads from behind —
+  sky-reflecting rear glass, trunk seam, wiper, antenna, fog lamps —
+  wheels carry five spokes, and every car sits on a soft contact shadow.
+  Traffic rolls four silhouettes from one kit: sedan, hatch, van and
+  pickup (the race rivals are a blue hatch and a red pickup), some with
+  a roof rack.
+- **Shot 3 is on the water** (`game/boats.js`, `game/main.js`, `game/mateo.js`):
+  Mateo stands at the helm of the speedboat in an orange life vest, both
+  hands on the wheel (new `drive` pose), wake behind him, two police
+  boats in pursuit and the heli above; Kira waves him off from the pier
+  end. A boat chase on the water is a scene the top entries do not show.
+- **Shot 1 rivals, big and close** (`game/races.js`): both rivals run
+  beside the hero, one in each lane, with the checkpoint gate framing
+  them instead of hiding them.
+- **Fixes**: cash is now $24,750 / $48,250 / $36,900 / $84,300 (big and
+  green); the muzzle flash is a short tongue of flame, a third of its
+  old size; zebra crossings are 4 slim strips; the pier deck carries
+  crates, coiled rope, tackle, buckets, rods, working fishers and
+  circling gulls; market fruit sits in crates, not scattered; the
+  dialog box rides above the weapon wheel so all six slots show.
+- **Sound** (`game/audio.js`): gull cries over the pier and a harbour
+  horn for the boat job join Nightwave 98.3.
+- **v7.4 rev 2 — wheels, rivals, Kira:** the hero's wheels sit at the
+  real axles and flush with the body (rev 1 had all four clustered at
+  the front, sticking out of the flanks); the red pickup rival runs
+  further ahead so the hero no longer hides it; Kira rides the stern
+  bench instead of standing at the pier end, where the minimap hid her;
+  sunset cloud shade is a softer mauve.
 
 - **Procedural Mateo & Kira** (`game/mateo.js`): the GLB file is gone;
   both characters are assembled from code primitives with faces, bomber
@@ -60,11 +103,13 @@ automatically on the next visit.
 - **The beach** — speckled sand, a living shore with foam lines, 12
   umbrellas, towels, surfboards, a volleyball court, sandcastles,
   swimmers, surfers, joggers, kids digging, fishers and selfie-takers.
-- **The pier** — a wooden pier at Z 40 with posts, rails, lamps, benches
-  and the red-coned `PIER BAIT` shack.
-- **The sky** — gradient sky dome, a glowing sun disc, drifting 3D clouds
-  (10 at sunset, 16 by day, plus 6 fixed hero clouds) with soft shadows
-  on the ground by day.
+- **The pier** — a wooden pier at Z 40 with posts, rails, lamps, benches,
+  crates, coiled rope, tackle, buckets, rods, working fishers, circling
+  gulls and the red-coned `PIER BAIT` shack.
+- **The sky** — gradient sky dome, a glowing sun disc with a big radial
+  glare, drifting volumetric 3D clouds (10 at sunset, 16 by day, plus 6
+  fixed hero clouds and a denser field around the sun) with soft moving
+  shadows on the ground.
 
 ## Systems
 
@@ -89,21 +134,24 @@ automatically on the next visit.
   countdown beeps, bow splash and gunshots. Audio starts only
   after a click or button press.
 - **Boat chase** — speedboat with buoyancy on summed-sine waves, foam
-  wake ribbon, and two police boats steering at a point ahead of the
-  player (see `game/boats.js`).
+  wake ribbon, a helm wheel Mateo steers in shot 3, and two police boats
+  steering at a point ahead of the player (see `game/boats.js`).
 - **Street race** — 14-gate loop on the city road graph, 2 rival cars
-  with corner-aware pace, countdown, position by gates cleared then
-  distance to the next gate (see `game/races.js`).
+  (blue hatch, red pickup) with corner-aware pace, countdown, position
+  by gates cleared then distance to the next gate (see `game/races.js`).
 
 ## Screenshots
 
 Four staged shots, seeded for determinism (`?shot=N&seed=1`):
 
-1. `1-chase.jpg` — sunset chase + street race, 3 stars, heli overhead.
+1. `1-chase.jpg` — sunset chase + street race, 3 stars, heli overhead,
+   both rivals big and close beside the hero.
 2. `2-onfoot.jpg` — daylight, Mateo facing the camera.
-3. `3-mission.jpg` — daylight, Mateo meets Kira on the pier end, boat
-   chase on the water behind them.
-4. `4-combat.jpg` — sunset shootout, 5 stars, muzzle flash held.
+3. `3-mission.jpg` — daylight, Mateo AT THE HELM of the speedboat on the
+   water with Kira riding the stern bench, police boats in pursuit, heli
+   above. v7.4 rev 2: Kira joins the boat — the pier-end spot hid her
+   behind the minimap.
+4. `4-combat.jpg` — sunset shootout, 5 stars, small muzzle flash held.
 
 ## Build
 
@@ -112,8 +160,12 @@ node serve.ts            # play at http://localhost:8080/
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts   # build dossier.json
 ```
 
-## Known deviations from the brief (v7.2 rev 2, plus v7.3)
+## Known deviations from the brief (v7.2 rev 2, plus v7.3, plus v7.4)
 
+- **v7.4 — shot 3 is played on the water:** Mateo is at the helm of the
+  speedboat (not briefed on the pier) because a boat chase on the water
+  is a gameplay scene the top entries do not show; the pier talk still
+  happens through Kira's dialog and her wave from the pier end.
 - **v7.3 — GLB removed:** the character model file that v7.2 shipped
   was removed entirely; Mateo and Kira are procedural (see
   `game/MATEO-MODEL.md`). No binary assets remain in the game.

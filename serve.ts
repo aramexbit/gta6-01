@@ -1,7 +1,8 @@
-// PIER HEAT — Sunset Bay v7.2. Tiny static server for local testing.
+// PIER HEAT — Sunset Bay v7.3. Tiny static server for local testing.
 // Serves the game/ folder at the root: http://localhost:8080/ opens the
 // game. Only files under game/ are served; anything else is a 404, no
-// directory listing, no cache.
+// directory listing, no cache. Model files are gone in v7.3, so a
+// request for one is answered 410 (gone) instead of a silent 404.
 //
 //   node serve.ts --port 8095
 import { createServer } from 'node:http';
@@ -33,6 +34,10 @@ createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    // v7.3: model files were removed from the game — say so explicitly.
+    if (/\.(glb|gltf|fbx|obj)$/i.test(p)) {
+      res.writeHead(410); res.end('gone in v7.3: characters are procedural'); return;
+    }
     const file = normalize(join(root, p));
     if (!file.startsWith(root + '/') && file !== root) {
       res.writeHead(404); res.end('not found'); return;

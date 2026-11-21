@@ -1,6 +1,7 @@
-// PIER HEAT — Sunset Bay v7.2
+// PIER HEAT — Sunset Bay v7.3
 // audio.js — fully synthesised WebAudio: Nightwave 98.3 synthwave radio,
-// waves, siren, engine and gunshots. No external sound files.
+// waves, siren, engine and gunshots, plus the v7.3 boat outboard, race
+// countdown beeps and bow splash. No external sound files.
 // Audio starts ONLY after a user gesture (click / button); headless
 // screenshots stay silent and error-free.
 (function () {
@@ -12,6 +13,7 @@
     radioTimer: null, bar: 0, step: 0,
     engineOsc: null, engineGain: null, engineFilter: null,
     sirenOsc: null, sirenGain: null, sirenLfo: null,
+    boatOsc: null, boatGain: null, boatFilter: null,
 
     init: function () {
       if (this.started) return;
@@ -187,6 +189,58 @@
       this.engineOsc.frequency.setTargetAtTime(55 + speed01 * 220, t, 0.08);
       this.engineFilter.frequency.setTargetAtTime(350 + speed01 * 1600, t, 0.08);
       this.engineGain.gain.setTargetAtTime(this.muted ? 0 : 0.03 + speed01 * 0.09, t, 0.1);
+    },
+
+    // --- boat outboard (v7.3): low square hum + prop wash noise ---
+    startBoatEngine: function () {
+      if (!this.ctx || this.boatOsc) return;
+      var ctx = this.ctx;
+      var o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 90;
+      var f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 500;
+      var g = ctx.createGain(); g.gain.value = 0.0;
+      o.connect(f); f.connect(g); g.connect(this.master);
+      o.start();
+      this.boatOsc = o; this.boatGain = g; this.boatFilter = f;
+    },
+    setBoatEngine: function (speed01) {
+      if (!this.boatOsc) return;
+      var t = this.ctx.currentTime;
+      this.boatOsc.frequency.setTargetAtTime(80 + speed01 * 160, t, 0.1);
+      this.boatFilter.frequency.setTargetAtTime(400 + speed01 * 1200, t, 0.1);
+      this.boatGain.gain.setTargetAtTime(this.muted ? 0 : 0.02 + speed01 * 0.07, t, 0.1);
+    },
+    stopBoatEngine: function () {
+      if (!this.boatOsc) return;
+      try { this.boatOsc.stop(); } catch (e) {}
+      this.boatOsc = null; this.boatGain = null; this.boatFilter = null;
+    },
+
+    // --- race countdown beep (v7.3): short 880 Hz blip, GO is higher ---
+    countdownBeep: function (go) {
+      if (!this.ctx || this.muted) return;
+      var ctx = this.ctx, t = ctx.currentTime;
+      var o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.value = go ? 1320 : 880;
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(go ? 0.3 : 0.18, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + (go ? 0.4 : 0.15));
+      o.connect(g); g.connect(this.master);
+      o.start(t); o.stop(t + 0.45);
+    },
+
+    // --- bow splash (v7.3): filtered noise burst, lowpass 900 Hz ---
+    splash: function () {
+      if (!this.ctx || this.muted) return;
+      var ctx = this.ctx, t = ctx.currentTime;
+      var len = Math.floor(ctx.sampleRate * 0.35);
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      var src = ctx.createBufferSource(); src.buffer = buf;
+      var f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
+      var g = ctx.createGain(); g.gain.value = 0.22;
+      src.connect(f); f.connect(g); g.connect(this.master);
+      src.start(t);
     },
 
     // --- gunshot: bandpass noise burst + falling square ---

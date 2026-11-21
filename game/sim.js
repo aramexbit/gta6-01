@@ -1,7 +1,8 @@
-// PIER HEAT — Sunset Bay v7.2
+// PIER HEAT — Sunset Bay v7.3
 // sim.js — everything that moves: procedural people + poses, cars (hero,
 // traffic, police), traffic system, city + beach crowds, police + heli,
-// the Mateo GLB wrapper and the muzzle flash. Plain script; uses window.PH.
+// and the muzzle flash. Mateo / Kira are built in mateo.js (primitives,
+// no model file). Plain script; uses window.PH.
 (function () {
   'use strict';
   var PH = window.PH;
@@ -168,6 +169,29 @@
         handle.position.set(0.5, 0.78, z); g.add(handle);
         var mirror = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, 0.06), bodyMat);
         mirror.position.set(0.95, 0.95, z * 1.02); g.add(mirror);
+      });
+      // v7.3: the rear is no longer a flat box — door glass, a rear
+      // quarter window, a tailgate handle and a rear bumper break it up.
+      var glassMat = new THREE.MeshStandardMaterial({ color: 0x18222e, roughness: 0.12, metalness: 0.5 });
+      [-0.97, 0.97].forEach(function (z) {
+        var doorGlass = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.42, 0.05), glassMat);
+        doorGlass.position.set(0.05, 1.0, z); g.add(doorGlass);
+        var qtr = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.36, 0.05), glassMat);
+        qtr.position.set(-0.95, 1.0, z); g.add(qtr);
+      });
+      var rearWindow = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.42, 1.5), glassMat);
+      rearWindow.position.set(-0.85, 0.98, 0); rearWindow.rotation.z = 0.5; g.add(rearWindow);
+      var tailHandle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 0.5),
+        new THREE.MeshStandardMaterial({ color: 0xd8d8e0, metalness: 0.9, roughness: 0.25 }));
+      tailHandle.position.set(-2.4, 0.95, 0); g.add(tailHandle);
+      var rearBumper = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 1.92), mat(0x14181c, 0.5));
+      rearBumper.position.set(-2.32, 0.32, 0); g.add(rearBumper);
+      // lower door crease + side skirt, so the flank reads as panels
+      [-0.97, 0.97].forEach(function (z) {
+        var crease = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.03, 0.02), lineMat);
+        crease.position.set(0, 0.42, z); g.add(crease);
+        var skirt = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.1, 0.06), mat(0x14181c, 0.5));
+        skirt.position.set(0, 0.24, z); g.add(skirt);
       });
       // grille + low front splitter
       g.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 1.4), mat(0x14181c, 0.5)));
@@ -606,9 +630,9 @@
     var g = new THREE.Group();
     var tex = PH.glowTexture();
     var star = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-    star.scale.set(2.2, 2.2, 1);
+    star.scale.set(3.0, 3.0, 1);
     var core = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, color: 0xffffff }));
-    core.scale.set(1.2, 1.2, 1);
+    core.scale.set(1.6, 1.6, 1);
     var light = new THREE.PointLight(0xffc060, 15, 9);
     g.add(star, core, light);
     g.visible = false;
@@ -619,8 +643,12 @@
   PH.MuzzleFlash.prototype.place = function (shooterPos, heading, held) {
     this.held = !!held;
     this.group.visible = true;
-    var fx = shooterPos.x + Math.sin(heading) * 0.7;
-    var fz = shooterPos.z + Math.cos(heading) * 0.7;
+    // v7.3: the flash sits 1.1 units ahead AND 0.42 to the shooter's
+    // right (the gun hand) — dead-centre 0.7 ahead put the star
+    // exactly behind the shooter's torso from a rear camera, so the
+    // depth test hid the whole flash in shot 4.
+    var fx = shooterPos.x + Math.sin(heading) * 1.1 + Math.cos(heading) * 0.42;
+    var fz = shooterPos.z + Math.cos(heading) * 1.1 - Math.sin(heading) * 0.42;
     this.group.position.set(fx, 1.45, fz);
   };
   PH.MuzzleFlash.prototype.update = function (t) {
@@ -637,88 +665,9 @@
   };
   PH.MuzzleFlash.prototype.hide = function () { this.group.visible = false; };
 
-  // ---- Mateo / Kira GLB wrapper ----
-  // Loads mateo.glb and normalises the model to a 1.8 m person standing
-  // on the ground. The armature root's ~69x uniform scale is KEPT, not
-  // baked out: the file's animation tracks overwrite bone translations
-  // with model-unit values every frame (so a bake into bone positions is
-  // undone on the first animated frame), and the mesh node has a zero
-  // translation, so its world scale cannot be baked into a translation
-  // either. Keeping the scale is what the file's own inverse bind
-  // matrices expect. Height is measured from the skeleton itself
-  // (HeadTop_End down to the toe ends) — never from a geometry bounding
-  // box, which is meaningless for a skinned mesh.
-  PH.loadMateo = function (scene, tint, onReady) {
-    PH.loadGLB('vendor/mateo.glb', function (gltf) {
-      var root = gltf.scene;
-      // measure the skeleton height in world units
-      root.updateMatrixWorld(true);
-      var top = root.getObjectByName('HeadTop_End');
-      var toeL = root.getObjectByName('LeftToe_End');
-      var toeR = root.getObjectByName('RightToe_End');
-      var v = new THREE.Vector3();
-      var topY = 0, footY = 0;
-      if (top) { top.getWorldPosition(v); topY = v.y; }
-      if (toeL) { toeL.getWorldPosition(v); footY = Math.min(footY, v.y); }
-      if (toeR) { toeR.getWorldPosition(v); footY = Math.min(footY, v.y); }
-      var skelH = (topY - footY) || 1;
-      var s = 1.8 / skelH;
-      root.scale.setScalar(s);
-      // ground the feet at local Y 0
-      root.updateMatrixWorld(true);
-      var f2 = 0;
-      if (toeL) { toeL.getWorldPosition(v); f2 = Math.min(f2, v.y); }
-      if (toeR) { toeR.getWorldPosition(v); f2 = Math.min(f2, v.y); }
-      root.position.y = -f2;
-      // retint jacket / tee / hair
-      PH.retint(root, tint);
-      scene.add(root);
-      // low-poly face on the Head bone, sized from the Head -> HeadTop
-      // distance in bone-local units (so it scales with the model).
-      var headBone = root.getObjectByName('Head');
-      var headTop = root.getObjectByName('HeadTop_End');
-      if (headBone && headTop) {
-        var d = headBone.position.distanceTo(headTop.position) || 0.0126;
-        var eyeMat = new THREE.MeshBasicMaterial({ color: 0x14100c });
-        [-0.28, 0.28].forEach(function (ex) {
-          var eye = new THREE.Mesh(new THREE.SphereGeometry(d * 0.14, 6, 6), eyeMat);
-          eye.position.set(ex * d, d * 0.15, d * 0.8);
-          headBone.add(eye);
-        });
-        var mouth = new THREE.Mesh(new THREE.BoxGeometry(d * 0.7, d * 0.1, d * 0.1), eyeMat);
-        mouth.position.set(0, -d * 0.55, d * 0.8);
-        headBone.add(mouth);
-      }
-      var mixer = new THREE.AnimationMixer(root);
-      var clips = {};
-      gltf.clips.forEach(function (c) { clips[c.name] = c; });
-      var current = null;
-      var api = {
-        root: root, mixer: mixer, clips: clips, loaded: true,
-        // The model's face points along local +X (the MateoEyes geometry
-        // sits at +X in mesh space), so a movement heading h (0 = south,
-        // +Z) needs rotation.y = h - PI/2. The procedural fallback faces
-        // +Z and uses offset 0.
-        forwardOffset: -Math.PI / 2,
-        setAnim: function (name) {
-          var clip = clips[name];
-          if (!clip) return;
-          if (current && current._clip === clip) return;
-          if (current) current.stop();
-          var action = mixer.clipAction(clip);
-          action.reset().fadeIn(0.15).play();
-          current = action; current._clip = clip;
-        },
-        update: function (dt) { mixer.update(dt); }
-      };
-      onReady(api);
-    }, function (err) {
-      window.__errors = window.__errors || [];
-      window.__errors.push('mateo load: ' + err.message);
-      // Fallback: procedural stand-in so the scene still renders.
-      var stand = PH.makePerson({ shirt: tint.MateoJacket || 0xff7a1a, pants: 0x2a3a4a });
-      scene.add(stand.group);
-      onReady({ root: stand.group, mixer: null, clips: {}, loaded: false, forwardOffset: 0, setAnim: function () {}, update: function () {} });
-    });
-  };
+  // ---- Mateo / Kira (v7.3, procedural) ----
+  // The GLB loader is gone (see core.js + mateo.js). PH.loadMateo now
+  // lives in mateo.js and builds both characters from code primitives;
+  // sim.js keeps only this pointer so older call sites stay readable.
+  // Characters face +Z, so forwardOffset is 0 everywhere.
 })();

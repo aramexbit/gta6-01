@@ -20,3 +20,5 @@ out/
 # v7.0 restage — foreground props moved to the frame edges, clouds lowered and enlarged
 # v7.2 — build output stays out of the repo
 # v7.2 rev 2 — capture scripts live in /tmp, never committed
+# v7.3 — GLB removed, Mateo/Kira/boats/races/portraits are procedural; capture scripts still live in /tmp, never committed
+# v7.3 rev 1 — screenshots are fresh byte-new captures of the v7.3 staging (same four names)

@@ -12,9 +12,27 @@ matte-orange wedge coupe **Scarlet Arrow** (plate `SUN-8821`) — so lose the
 heat, reach the pier, and hold the line.
 
 Everything is original: no Rockstar assets, no GTA mods, no downloads.
-The 3D world, the people, the cars and the music are all built in code;
-the only model file is a CC0 animated human (`game/vendor/mateo.glb`),
-loaded by a minimal GLB reader written for this game.
+The 3D world, the people, the cars, the boats and the music are all built
+in code — v7.3 removed the last model file entirely, so there are no
+binary assets at all.
+
+## v7.3 — what changed
+
+- **Procedural Mateo & Kira** (`game/mateo.js`): the GLB file is gone;
+  both characters are assembled from code primitives with faces, bomber
+  jackets and poseable limbs. See `game/MATEO-MODEL.md`.
+- **Boat chase** (`game/boats.js`): shot 3 is now a boat mission — a
+  player speedboat with a foam wake, two police boats in pursuit and the
+  heli over the water.
+- **Street race** (`game/races.js`): shot 1 runs a checkpoint race — an
+  amber gate arches over the road, a rival car runs alongside, and the
+  HUD shows live race position and lap.
+- **Canvas portraits** (`game/portraits.js`): crew cards and dialog use
+  drawn faces instead of letter tiles.
+- **Real street-map minimap**: pre-rendered roads/blocks/sea with
+  labels drawn on top, so police dots can never cover them.
+- **Sunset light**: low sun with long shadows, horizon-coloured haze,
+  sun glare and bigger, lower, sun-lit clouds.
 
 ## Play
 
@@ -60,21 +78,31 @@ automatically on the next visit.
   diamond on the round minimap.
 - **Combat** — pistol / SMG / rifle slots, muzzle flash with a warm point
   light, and aiming police officers.
-- **HUD** — objective panel, wanted stars + cash, dispatch board, weapon
-  slots, health/armor bars, round minimap with roads, sea, sand, pier,
-  objective diamond, police dots and a rotating player arrow, speedometer
-  and radio readout.
+- **HUD** — objective panel, wanted stars + cash, dispatch board (6 units),
+  weapon wheel (6 slots), health/armor bars, crew cards with canvas
+  portraits, round street-map minimap with roads, sea, sand, pier,
+  race loop, objective diamond, police dots and boats, a rotating player
+  arrow, race position + lap, boat speed readout, big speedometer with
+  car name and condition, and radio readout.
 - **Sound** — fully synthesised WebAudio: Nightwave 98.3 synthwave radio
-  (96 BPM, Am–F–C–G), waves, siren, engine and gunshots. Audio starts only
+  (96 BPM, Am–F–C–G), waves, siren, engine, boat outboard, race
+  countdown beeps, bow splash and gunshots. Audio starts only
   after a click or button press.
+- **Boat chase** — speedboat with buoyancy on summed-sine waves, foam
+  wake ribbon, and two police boats steering at a point ahead of the
+  player (see `game/boats.js`).
+- **Street race** — 14-gate loop on the city road graph, 2 rival cars
+  with corner-aware pace, countdown, position by gates cleared then
+  distance to the next gate (see `game/races.js`).
 
 ## Screenshots
 
 Four staged shots, seeded for determinism (`?shot=N&seed=1`):
 
-1. `1-chase.jpg` — sunset chase, 3 stars, heli overhead.
+1. `1-chase.jpg` — sunset chase + street race, 3 stars, heli overhead.
 2. `2-onfoot.jpg` — daylight, Mateo facing the camera.
-3. `3-mission.jpg` — daylight, Mateo meets Kira on the pier.
+3. `3-mission.jpg` — daylight, Mateo meets Kira on the pier end, boat
+   chase on the water behind them.
 4. `4-combat.jpg` — sunset shootout, 5 stars, muzzle flash held.
 
 ## Build
@@ -84,7 +112,14 @@ node serve.ts            # play at http://localhost:8080/
 mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts   # build dossier.json
 ```
 
-## Known deviations from the brief (v7.2 rev 2)
+## Known deviations from the brief (v7.2 rev 2, plus v7.3)
+
+- **v7.3 — GLB removed:** the character model file that v7.2 shipped
+  was removed entirely; Mateo and Kira are procedural (see
+  `game/MATEO-MODEL.md`). No binary assets remain in the game.
+- **v7.3 — shot 3 is a boat mission:** the pier job now ends at a
+  speedboat, with police boats and the heli on the water behind the
+  pier talk, so the mission reads on the water as well as on the deck.
 
 - **Shot 2 heli height:** the brief stages the heli at Y 10, but at Y 10
   its rotor is clipped by the top frame edge. It is staged at Y 7.5 so the
@@ -109,18 +144,21 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts   # build dossier.json
 ## Files
 
 - `game/index.html` — page + HUD markup and styles, loads the scripts.
-- `game/core.js` — seeded RNG, canvas textures, minimal GLB reader,
-  retinting, HUD setters, round minimap painter.
-- `game/world.js` — Sunset Bay: sky, light, ground, sea, roads,
-  buildings, street props, palms, beach, pier, clouds.
+- `game/core.js` — seeded RNG, canvas textures, HUD setters, round
+  street-map minimap painter (pre-rendered base layer).
+- `game/world.js` — Sunset Bay: sky, low sun + haze + glare, ground,
+  sea, roads, buildings, street props, palms, beach, pier, clouds.
 - `game/sim.js` — procedural people + poses, hero/traffic/police cars,
-  traffic, crowds, police, helicopter, Mateo wrapper, muzzle flash.
+  traffic, crowds, police, helicopter, muzzle flash.
+- `game/mateo.js` — procedural Mateo + Kira (primitives, faces, rig).
+- `game/boats.js` — boat chase: speedboats, waves, foam wakes, police boats.
+- `game/races.js` — street race: checkpoint gates, rivals, countdown, position.
+- `game/portraits.js` — canvas face portraits for crew cards and dialog.
 - `game/audio.js` — WebAudio synth engine (radio, waves, siren, engine,
-  gunshots).
+  boat outboard, countdown, splash, gunshots).
 - `game/main.js` — boot, input, save/load, 4 staged shots, free-play loop.
-- `game/MATEO-MODEL.md` — the Mateo model, loader and retint notes.
-- `game/WANTED.md` — the wanted system.
+- `game/MATEO-MODEL.md` — the procedural Mateo/Kira rig.
+- `game/WANTED.md` — the wanted system (incl. boat chase + race heat).
 - `game/vendor/three.min.js` — Three.js global build (untouched).
-- `game/vendor/mateo.glb` — CC0 animated human model (untouched).
 - `main.ts` — dossier builder. `serve.ts` — local static server.
 - `shots.json` — the 4 screenshot definitions.

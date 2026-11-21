@@ -1,18 +1,30 @@
 [
   {
     "name": "1-chase.jpg",
-    "query": "?shot=1&seed=1"
+    "query": "?shot=1&seed=1",
+    "seed": 1,
+    "mode": "sunset",
+    "note": "street race: checkpoint gate, rival car, race position P2/3"
   },
   {
     "name": "2-onfoot.jpg",
-    "query": "?shot=2&seed=1"
+    "query": "?shot=2&seed=1",
+    "seed": 1,
+    "mode": "day",
+    "note": "procedural Mateo facing camera, market stalls on the right"
   },
   {
     "name": "3-mission.jpg",
-    "query": "?shot=3&seed=1"
+    "query": "?shot=3&seed=1",
+    "seed": 1,
+    "mode": "day",
+    "note": "boat mission: Kira briefs Mateo, speedboat + police boats + heli on the water"
   },
   {
     "name": "4-combat.jpg",
-    "query": "?shot=4&seed=1"
+    "query": "?shot=4&seed=1",
+    "seed": 1,
+    "mode": "sunset",
+    "note": "5-star shootout, muzzle flash held, 6-unit dispatch"
   }
 ]

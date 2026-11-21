@@ -1,6 +1,8 @@
-// PIER HEAT — Sunset Bay v7.2
+// PIER HEAT — Sunset Bay v7.3
 // main.js — boot, input, save/load, the 4 staged shots, the free-play
-// loop and the minimap update. Plain script; uses window.PH.
+// loop and the minimap update. Wires the procedural Mateo/Kira
+// (mateo.js), the boat chase (boats.js), the street race (races.js)
+// and the canvas portraits (portraits.js). Plain script; uses window.PH.
 (function () {
   'use strict';
   var PH = window.PH;
@@ -45,6 +47,11 @@
   var hero = PH.makeCar({ kind: 'hero' });
   scene.add(hero);
   var flash = new PH.MuzzleFlash(scene);
+  // v7.3 systems: boat chase on the water + street race on the roads
+  var boatChase = new PH.BoatChase(scene);
+  var race = new PH.Race(scene);
+  // crew cards (canvas portraits) are built once the HUD exists
+  if (PH.buildCrewCards) PH.buildCrewCards();
 
   // ---------- game state ----------
   var S = {
@@ -53,7 +60,7 @@
     onFoot: false, heading: 0, // hero heading (radians, 0 = +Z south)
     heroPos: new THREE.Vector3(-20, 0, 8),
     mateoPos: new THREE.Vector3(-10, 0, -4),
-    mateoHeading: 0, // face direction: 0 = south (+Z), PI/2 = east, -PI/2 = north; GLB offset applied at the root
+    mateoHeading: 0, // face direction: 0 = south (+Z), PI/2 = east, -PI/2 = north; procedural rig faces +Z, offset 0
     objective: { x: -58, z: 40 },
     radio: 'NIGHTWAVE 98.3 — SUNSET DRIVE',
     started: false, time: 0, frames: 0
@@ -133,9 +140,9 @@
     } else if (n === 2) { // on foot: props + 6 walkers along the frame EDGES of the east sidewalk, 9-13 units out (rev 5: at 3-6 units they filled half the frame)
       cart(-14.2, -10, -0.3); crate(-5.6, -12, 0.9); bin(-14.2, -12); bench(-5.6, -9, 0); hydrant(-14.2, -8.5);
       edgeWalkers(6, [[-14.5, -9, 0], [-14.5, -12, 0], [-5.5, -10, 0], [-5.5, -13, 0], [-14.5, -11, 0], [-5.5, -8.5, 0]]);
-    } else if (n === 3) { // mission: pier deck edge
-      crate(-62, 1.35, 44, 0.9); towelSurf(-66, 43); bin(-48, 44); bucket(-60, 43.5);
-      edgeWalkers(5, [[-64, 36.5, 1.35], [-48, 36.5, 1.35], [-58, 44, 1.35], [-66, 37, 1.35], [-46, 43, 1.35]]);
+    } else if (n === 3) { // mission: pier end — props on the FAR side of the deck (z 36.5) and the pier edges, never between camera (z 47) and the pair
+      crate(-70, 1.35, 36.8, 0.9); towelSurf(-84, 36.8); bin(-86, 36.8); bucket(-74, 36.8);
+      edgeWalkers(5, [[-74, 36.5, 1.35], [-68, 36.5, 1.35], [-72, 44, 1.35], [-80, 37, 1.35], [-66, 43, 1.35]]);
     } else { // combat: cart + crate + bin + hydrant + 5 walkers/runners, road edges only (rev 3: the old mid-road walker at (-20,24) stood 1.5 units from the lens)
       cart(-27.5, 28, 0.5); crate(-28.6, 0, 24, 0.9); bin(-11.8, 30); hydrant(-28.4, 33);
       edgeWalkers(5, [[-28.8, 26, 0], [-11.5, 28, 0], [-27, 33, 0], [-28.8, 38, 0], [-11.5, 36, 0]]);
@@ -159,6 +166,12 @@
     PH.hud.setWeapon('pistol');
     if (cfg.ammoSmg != null) { var s = document.getElementById('ammo-smg'); if (s) s.textContent = cfg.ammoSmg + '/30'; }
     if (cfg.ammoRifle != null) { var r = document.getElementById('ammo-rifle'); if (r) r.textContent = cfg.ammoRifle + '/24'; }
+    if (cfg.ammoShotgun != null) { var sg = document.getElementById('ammo-shotgun'); if (sg) sg.textContent = cfg.ammoShotgun + '/6'; }
+    if (cfg.carName) PH.hud.setCarName(cfg.carName, cfg.carCond);
+    if (cfg.race) PH.hud.setRace(cfg.race.pos, cfg.race.total, cfg.race.lap, cfg.race.laps, cfg.race.countdown);
+    else PH.hud.setRace(0, 0, 0, 0, null);
+    if (cfg.boat) PH.hud.setBoat(cfg.boat.speedKn, cfg.boat.dist);
+    if (cfg.crew) cfg.crew.forEach(function (c) { PH.hud.setCrew(c.who, c.status); });
     if (cfg.dialog) PH.hud.setDialog(cfg.dialog.who, cfg.dialog.name, cfg.dialog.text);
     else PH.hud.setDialog(null);
   }
@@ -207,14 +220,28 @@
       camera.position.set(-15, 3.2, 21);
       camera.lookAt(-20, 1.6, -2);
       foregroundSet(1);
+      // v7.3: street race is live in shot 1 — the next checkpoint gate
+      // arches over the road ahead and a rival car runs alongside.
+      race.stageShot();
       cfg = {
-        objective: { title: 'PIER HEAT — LOSE THE HEAT', stage: 'STAGE 2/3 — LOSE THE HEAT', progress: 66, timer: '02:41', text: 'Lose the Bay City PD and reach the pier.', next: 'NEXT: Reach the pier — follow the yellow diamond' },
+        objective: { title: 'PIER HEAT — STREET RACE', stage: 'STAGE 2/3 — LOSE THE HEAT', progress: 66, timer: '02:41', text: 'Beat the rival through the checkpoints and lose the PD.', next: 'NEXT: Checkpoint 3/14 — follow the amber gate' },
         wanted: 3, money: 1240, health: 100, armor: 80, ammo: 12, speedKmh: 96,
-        carStatus: 'SCARLET ARROW • 98%', radio: 'NIGHTWAVE 98.3 — SUNSET DRIVE',
+        carStatus: 'SCARLET ARROW — READY', carName: 'SCARLET ARROW', carCond: 98,
+        radio: 'NIGHTWAVE 98.3 — SUNSET DRIVE',
+        race: { pos: 2, total: 3, lap: 1, laps: 2, countdown: null },
+        crew: [
+          { who: 'mateo', status: 'RACING' },
+          { who: 'kira', status: 'ON THE RADIO' },
+          { who: 'dario', status: 'IN THE PIT' },
+          { who: 'lena', status: 'ON CALL' }
+        ],
         dispatch: [
           { tactic: 'PURSUIT', unit: 'PD-104', role: 'CRUISER', dist: 42 },
           { tactic: 'RAMMING', unit: 'PD-111', role: 'CRUISER', dist: 68 },
-          { tactic: 'SPOTLIGHT', unit: 'HELI-1', role: 'AIR UNIT', dist: 91 }
+          { tactic: 'SPOTLIGHT', unit: 'HELI-1', role: 'AIR UNIT', dist: 91 },
+          { tactic: 'ROADBLOCK', unit: 'PD-125', role: 'CRUISER', dist: 120 },
+          { tactic: 'PURSUIT', unit: 'PD-130', role: 'CRUISER', dist: 155 },
+          { tactic: 'SPOTLIGHT', unit: 'HELI-2', role: 'AIR UNIT', dist: 210 }
         ]
       };
     } else if (shotNum === 2) {
@@ -229,37 +256,56 @@
         { x: -23.5, z: -34, heading: 0 }, { x: -16.5, z: -52, heading: 0 },
         { x: -23.5, z: 12, heading: 0 }
       ]);
-      heli.position.set(-20, 7.5, -30); heli.rotation.y = THREE.MathUtils.degToRad(108); // y lowered from 10: at y 10 the rotor was clipped by the top frame edge (rev 1)
+      heli.position.set(-30, 9, -42); heli.rotation.y = THREE.MathUtils.degToRad(108); // v7.3: pulled back + up — at (-20,7.5,-30) the rotor was clipped by the frame edge and the heli filled the top-left
       camera.fov = 50; camera.updateProjectionMatrix();
       camera.position.set(-10, 2.0, -0.5);
-      camera.lookAt(-10, 1.5, -6);
+      camera.lookAt(-10, 1.5, -6); // camera restored to the v7.2 spot; the lamp pole that blocked it is skipped in world.js instead
       foregroundSet(2);
       cfg = {
         objective: { title: 'PIER HEAT — MEET KIRA', stage: 'STAGE 1/3 — MEET KIRA', progress: 33, timer: '', text: 'Meet Kira at the pier — follow the yellow marker.', next: 'NEXT: Meet Kira at the pier — follow the yellow marker' },
         wanted: 0, money: 1240, health: 100, armor: 80, ammo: 12, speedKmh: 0,
-        carStatus: 'ON FOOT — MATEO VEGA • HP 100%', radio: 'NEON STREETS', dispatch: null
+        carStatus: 'ON FOOT — MATEO VEGA', carName: 'MATEO VEGA', carCond: null,
+        radio: 'NEON STREETS', dispatch: null,
+        crew: [
+          { who: 'mateo', status: 'ON FOOT' },
+          { who: 'kira', status: 'WAITING AT PIER' },
+          { who: 'dario', status: 'IN THE PIT' },
+          { who: 'lena', status: 'ON CALL' }
+        ]
       };
     } else if (shotNum === 3) {
-      // MISSION — day, pier deck, Mateo + Kira face to face
+      // MISSION — day, pier end, Mateo + Kira face to face, and the
+      // boat chase is live on the water behind them (v7.3: the pier
+      // job IS a boat job now — Kira points Mateo at the speedboat).
       S.wanted = 0; S.health = 100; S.armor = 80; S.ammo = 12; S.money = 1240;
-      S.onFoot = true; S.objective = { x: -58, z: 40 };
-      S.mateoPos.set(-52, 1.35, 38.5); S.mateoHeading = 3 * Math.PI / 4; // 3/4 to camera (camera is NE of Mateo)
+      S.onFoot = true; S.objective = { x: -104, z: 44 };
+      S.mateoPos.set(-78, 1.35, 39.5); S.mateoHeading = 0.9; // facing SE, toward the camera at (-70,47)
       hero.position.set(-20, 0, 60); hero.rotation.y = Math.PI;
       police.cruisers.forEach(function (c, i) { c.position.set(-60 + i * 6, 0, 80); c.rotation.y = Math.PI; });
       police.officers.forEach(function (o, i) { o.group.position.set(-40 + i * 3, 0, 90); });
       traffic.freeze([
         { x: -23.5, z: 30, heading: 0 }, { x: -16.5, z: 44, heading: 0 }
       ]);
-      heli.position.set(-68, 13, 6); heli.rotation.y = THREE.MathUtils.degToRad(144);
+      // heli over the water, spotlight toward the boats
+      heli.position.set(-104, 12, 34); heli.rotation.y = THREE.MathUtils.degToRad(144);
+      boatChase.stageShot();
       camera.fov = 50; camera.updateProjectionMatrix();
-      camera.position.set(-49.5, 2.0, 43);
-      camera.lookAt(-54.2, 1.9, 38.5);
+      camera.position.set(-70, 2.8, 47);
+      camera.lookAt(-86, 1.8, 41); // v7.3 rev 1: pulled east + up so Mateo & Kira are clear of the crate and the boats read beyond the pier end
       foregroundSet(3);
       cfg = {
-        objective: { title: 'PIER HEAT — THE PIER JOB', stage: 'STAGE 1/3 — THE PIER JOB', progress: 20, timer: '', text: 'Meet Kira at the pier and hear the plan.', next: 'NEXT: Take the Scarlet Arrow and lose the heat' },
+        objective: { title: 'PIER HEAT — THE BOAT JOB', stage: 'STAGE 1/3 — THE BOAT JOB', progress: 20, timer: '', text: 'Kira has a speedboat waiting past the pier — police boats are already on the water.', next: 'NEXT: Board the speedboat and lose the police boats' },
         wanted: 0, money: 1240, health: 100, armor: 80, ammo: 12, speedKmh: 0,
-        carStatus: 'ON FOOT — MATEO VEGA • HP 100%', radio: 'PIER LIGHTS', dispatch: null,
-        dialog: { who: 'kira', name: 'KIRA — HANDLER', text: 'The heat is on every corner of Sunset Bay. Take the Scarlet Arrow, cut through the market, and don\'t stop till the pier.' }
+        carStatus: 'ON FOOT — MATEO VEGA', carName: 'SPEEDBOAT', carCond: 100,
+        radio: 'PIER LIGHTS', dispatch: null,
+        boat: { speedKn: 24, dist: 180 },
+        crew: [
+          { who: 'mateo', status: 'ON THE PIER' },
+          { who: 'kira', status: 'BRIEFING YOU' },
+          { who: 'dario', status: 'FUELLED THE BOAT' },
+          { who: 'lena', status: 'ON CALL' }
+        ],
+        dialog: { who: 'kira', name: 'KIRA — HANDLER', text: 'The boat is waiting past the pier — police boats are already on the water. Cut across the bay and don\'t look back.' }
       };
     } else {
       // COMBAT — sunset, wanted 5, Mateo shooting
@@ -289,12 +335,21 @@
       cfg = {
         objective: { title: 'PIER HEAT — HOLD THE LINE', stage: 'STAGE 3/3 — HOLD THE LINE', progress: 85, timer: '01:12', text: 'The Bay City PD wants the Scarlet Arrow. Hold the line.', next: 'NEXT: Hold the line — protect the Scarlet Arrow' },
         wanted: 5, money: 2860, health: 82, armor: 65, ammo: 9, speedKmh: 0,
-        carStatus: 'SCARLET ARROW • 76%', radio: 'SIRENS', ammoSmg: 0, ammoRifle: 0,
+        carStatus: 'SCARLET ARROW — BATTLE-WORN', carName: 'SCARLET ARROW', carCond: 76,
+        radio: 'SIRENS', ammoSmg: 0, ammoRifle: 0, ammoShotgun: 0,
+        crew: [
+          { who: 'mateo', status: 'HOLDING THE LINE' },
+          { who: 'kira', status: 'ON THE RADIO' },
+          { who: 'dario', status: 'IN THE PIT' },
+          { who: 'lena', status: 'ON CALL' }
+        ],
         dispatch: [
           { tactic: 'RAMMING', unit: 'PD-104', role: 'CRUISER', dist: 18 },
           { tactic: 'PURSUIT', unit: 'PD-111', role: 'CRUISER', dist: 24 },
           { tactic: 'PURSUIT', unit: 'PD-118', role: 'CRUISER', dist: 31 },
-          { tactic: 'SPOTLIGHT', unit: 'HELI-1', role: 'AIR UNIT', dist: 55 }
+          { tactic: 'SPOTLIGHT', unit: 'HELI-1', role: 'AIR UNIT', dist: 55 },
+          { tactic: 'ROADBLOCK', unit: 'PD-122', role: 'CRUISER', dist: 74 },
+          { tactic: 'K9', unit: 'PD-127', role: 'K9 UNIT', dist: 96 }
         ]
       };
     }
@@ -315,7 +370,7 @@
   function placeKira() {
     if (!kira) return;
     if (shotNum === 3) {
-      kira.root.position.set(-56.5, 1.35, 38.5);
+      kira.root.position.set(-82, 1.35, 40.5);
       kira.root.rotation.y = Math.PI / 2 + (kira.forwardOffset || 0); // facing east, toward Mateo
       kira.setAnim('idle');
     } else {
@@ -406,6 +461,13 @@
   var shotCfg = null;
   if (isShot) {
     shotCfg = stageShot();
+    // v7.3: characters load synchronously now (procedural, no fetch),
+    // so the loader callbacks ran BEFORE stageShot set the shot
+    // positions — re-place both characters (and the shot-4 flash)
+    // here, after staging, or Mateo stands at the default spawn.
+    placeMateo();
+    placeKira();
+    if (shotNum === 4) flash.place(S.mateoPos, S.mateoHeading, true);
     document.getElementById('loading').style.display = 'none';
     document.getElementById('hud').style.display = 'block';
     S.started = true;
@@ -502,7 +564,7 @@
 
   // ---------- main loop ----------
   // Debug handle for headless probes (scene inspection, no gameplay effect).
-  window.__PH_DEBUG = { scene: scene, camera: camera, state: S, get mateo() { return mateo; }, get kira() { return kira; } };
+  window.__PH_DEBUG = { scene: scene, camera: camera, state: S, boats: boatChase, race: race, get mateo() { return mateo; }, get kira() { return kira; } };
   var clock = new THREE.Clock();
   var minimap = document.getElementById('minimap');
   function animate() {
@@ -514,9 +576,16 @@
       traffic.update(dt);
       freePlay(dt);
     } else {
-      // staged shots: keep the world alive but frozen in place
+      // staged shots: keep the world alive but frozen in place.
+      // Race rivals and boats are staged statically — their live
+      // update would drive them out of frame before the screenshot.
       if (shotNum === 4) flash.update(S.time);
       if (shotNum === 2 && mateo) mateo.setAnim('walk');
+      if (shotNum === 3) {
+        // only the foam wakes shimmer; the boats hold their marks
+        boatChase.wake.update(0.5);
+        boatChase.policeWake.update(0.5);
+      }
     }
     var threat = S.wanted >= 1 ? { active: true, x: S.onFoot ? S.mateoPos.x : S.heroPos.x, z: S.onFoot ? S.mateoPos.z : S.heroPos.z } : null;
     cityCrowd.update(dt, S.time, threat);
@@ -526,13 +595,16 @@
     if (heli.userData.tailRotor) heli.userData.tailRotor.rotation.x += dt * 30;
     if (mateo) mateo.update(dt);
     if (kira) kira.update(dt);
-    // minimap
+    // minimap (v7.3: boats + race rivals ride along with police dots)
     var playerPos = S.onFoot ? S.mateoPos : S.heroPos;
     var playerHeading = S.onFoot ? S.mateoHeading : S.heading;
     PH.drawMinimap(minimap, {
       time: S.time, wanted: Math.round(S.wanted), objective: S.objective,
       player: { x: playerPos.x, z: playerPos.z, heading: playerHeading },
-      police: police.cruisers.map(function (c) { return { x: c.position.x, z: c.position.z }; })
+      police: police.cruisers.map(function (c) { return { x: c.position.x, z: c.position.z }; }),
+      boats: shotNum === 3 ? boatChase.policeBoats.map(function (pb) { return { x: pb.mesh.position.x, z: pb.mesh.position.z }; }) : null,
+      raceGate: shotNum === 1 ? { x: -20, z: -6 } : null,
+      rivals: shotNum === 1 ? race.rivals.map(function (r) { return { x: r.pos.x, z: r.pos.z }; }) : null
     });
     renderer.render(scene, camera);
     S.frames++;

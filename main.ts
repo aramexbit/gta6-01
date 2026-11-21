@@ -1,7 +1,9 @@
-// PIER HEAT — Sunset Bay v7.2 (Node 22, standard library only).
+// PIER HEAT — Sunset Bay v7.3 (Node 22, standard library only).
 // Copies game/ and screenshots/ from beside this file to the output
 // directory and writes /output/dossier.json with the vendored make.fun
-// library. Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in
+// library. v7.3 is fully procedural: the build refuses any binary model
+// file under game/ (the GLB that got v7.2 rejected must never come back).
+// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in
 // for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
@@ -14,6 +16,17 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 mkdirSync(out, { recursive: true });
+// v7.3 gate: no binary model files may ship in game/ any more.
+function assertNoModelFiles(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) assertNoModelFiles(p);
+    else if (/\.(glb|gltf|fbx|obj)$/i.test(entry.name)) {
+      throw new Error('v7.3: model file must not ship: ' + p);
+    }
+  }
+}
+assertNoModelFiles(join(here, 'game'));
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
 mkdirSync(join(out, 'screenshots'), { recursive: true });
 if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });

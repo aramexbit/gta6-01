@@ -45,11 +45,36 @@
   #stars { font-size: 22px; letter-spacing: 3px; }
   #stars span { color: rgba(255,255,255,0.25); }
   #stars span.lit { color: #ffd23c; text-shadow: 0 0 8px #ff9d00; }
-  #money { font-size: 20px; font-weight: 900; color: #7dff8a; margin-top: 2px; }
+  #money { font-size: 30px; font-weight: 900; color: #7dff8a; margin-top: 2px;
+    text-shadow: 0 2px 4px #000; letter-spacing: 1px; }
   #wanted-label { font-size: 11px; letter-spacing: 3px; color: #cfe3ff; }
-  #dispatch-panel { position: absolute; top: 118px; right: 12px; width: 300px; display: none; }
+  /* v7.3: crew cards with canvas portraits, right side — one horizontal
+     row under the wanted panel (a vertical stack collided with the
+     minimap in v7.3 rev 1). Dispatch sits below the row. */
+  #crew-cards { position: absolute; top: 112px; right: 12px; width: 300px;
+    display: flex; flex-direction: row; gap: 6px; }
+  .crew-card { flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; align-items: center;
+    text-align: center; background: rgba(8,12,22,0.72); border: 1px solid rgba(255,255,255,0.55);
+    border-radius: 10px; padding: 5px 2px; text-shadow: 0 1px 2px #000; }
+  .crew-face { width: 48px; height: 48px; border-radius: 8px; border: 2px solid #fff; flex: none; }
+  .crew-name { font-size: 10px; font-weight: 900; letter-spacing: 0.5px; }
+  .crew-role { font-size: 9px; color: #9fd8ff; font-weight: bold; }
+  .crew-status { font-size: 9px; color: #7dff8a; font-weight: bold; }
+  /* v7.3: race position + countdown, top centre */
+  #race-panel { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    display: none; text-align: center; padding: 8px 22px; }
+  #race-pos { font-family: "Arial Black", Arial, sans-serif; font-size: 30px; color: #ffd23c; line-height: 1; }
+  #race-lap { font-size: 12px; font-weight: 900; color: #cfe3ff; letter-spacing: 2px; }
+  #race-countdown { font-family: "Arial Black", Arial, sans-serif; font-size: 54px; color: #ff7a1a;
+    display: none; text-shadow: 0 3px 0 #7a2a00, 0 6px 18px #000; }
+  /* v7.3: boat readout, bottom centre-left */
+  #boat-panel { position: absolute; left: 12px; bottom: 150px; display: none; padding: 8px 14px; }
+  #boat-panel h3 { color: #9fd8ff; font-size: 12px; letter-spacing: 1px; }
+  #boat-speed { font-family: "Arial Black", Arial, sans-serif; font-size: 26px; color: #fff; }
+  #boat-dist { font-size: 12px; color: #ffd23c; font-weight: 900; }
+  #dispatch-panel { position: absolute; top: 216px; right: 12px; width: 300px; display: none; }
   #dispatch-panel h3 { color: #ff6a5a; font-size: 13px; letter-spacing: 1px; margin-bottom: 6px; }
-  .drow { display: flex; gap: 6px; align-items: center; font-size: 12px; padding: 3px 0;
+  .drow { display: flex; gap: 6px; align-items: center; font-size: 11px; padding: 2px 0;
     border-top: 1px solid rgba(255,255,255,0.12); }
   .chip { background: #c81e1e; color: #fff; font-size: 10px; font-weight: 900; padding: 2px 6px; border-radius: 4px; }
   .dunit { font-weight: 900; }
@@ -75,24 +100,27 @@
   /* bottom right: minimap + speed */
   #br { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column;
     align-items: flex-end; gap: 6px; }
-  #minimap { width: 220px; height: 220px; border-radius: 50%; border: 3px solid #fff;
+  #minimap { width: 200px; height: 200px; border-radius: 50%; border: 3px solid #fff;
     background: #101826; box-shadow: 0 0 16px rgba(0,0,0,0.6); }
   #speed-box { text-align: right; }
-  #speed-num { font-family: "Arial Black", Arial, sans-serif; font-size: 42px; line-height: 1;
+  #speed-num { font-family: "Arial Black", Arial, sans-serif; font-size: 54px; line-height: 1;
     text-shadow: 0 2px 4px #000; }
   #speed-unit { font-size: 13px; font-weight: 900; color: #cfe3ff; }
   #car-status { font-size: 12px; color: #ffd23c; font-weight: 900; }
+  #car-name { font-size: 15px; font-weight: 900; letter-spacing: 1px; color: #fff; }
+  .condwrap { height: 7px; background: rgba(255,255,255,0.18); border-radius: 4px; margin: 3px 0; overflow: hidden; }
+  #car-cond-bar { height: 100%; background: #ff7a1a; border-radius: 4px; }
+  #car-cond { font-size: 12px; color: #ffd23c; font-weight: 900; }
   #radio-row { display: flex; gap: 8px; align-items: center; font-size: 12px; font-weight: 900; }
   #mute-btn { pointer-events: auto; background: rgba(8,12,22,0.8); color: #fff; border: 1px solid #fff;
     border-radius: 6px; padding: 3px 10px; cursor: pointer; font-weight: 900; }
   /* dialog + toast */
   #dialog { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
     display: none; align-items: center; gap: 12px; width: 560px; max-width: 72vw; }
-  .portrait { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 8px; display: flex;
-    align-items: center; justify-content: center; font-family: "Arial Black", Arial, sans-serif;
-    font-size: 34px; border: 2px solid #fff; }
-  .portrait.kira { background: linear-gradient(135deg, #0e7a7a, #083b3b); }
-  .portrait.mateo { background: linear-gradient(135deg, #ff7a1a, #7a2a00); }
+  .portrait { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 8px;
+    border: 2px solid #fff; display: block; }
+  .portrait.kira { box-shadow: 0 0 0 2px #0e7a7a; }
+  .portrait.mateo { box-shadow: 0 0 0 2px #ff7a1a; }
   #dialog-name { color: #ffd23c; font-size: 13px; font-weight: 900; letter-spacing: 1px; }
   #dialog-text { font-size: 14px; line-height: 1.4; margin-top: 2px; }
   #toast { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
@@ -134,6 +162,20 @@
       <div id="dispatch-rows"></div>
     </div>
 
+    <div id="crew-cards"></div>
+
+    <div id="race-panel" class="panel">
+      <div id="race-pos">P2/3</div>
+      <div id="race-lap">LAP 1/2</div>
+      <div id="race-countdown"></div>
+    </div>
+
+    <div id="boat-panel" class="panel">
+      <h3>SPEEDBOAT — BAY CHASE</h3>
+      <span id="boat-speed">24 KN</span>
+      <div id="boat-dist">180m TO PIER</div>
+    </div>
+
     <div id="bl">
       <div id="weapons">
         <div class="wslot" data-slot="fists">
@@ -152,6 +194,14 @@
           <svg width="26" height="26" viewBox="0 0 24 24"><path d="M1 8h20l3 2-2 3h-5l-1 6h-3l1-6H5l-1 3H1l1-3H1z" fill="#fff"/></svg>
           <div class="wname">RIFLE</div><div class="wammo" id="ammo-rifle">0/24</div>
         </div>
+        <div class="wslot" data-slot="shotgun">
+          <svg width="26" height="26" viewBox="0 0 24 24"><path d="M2 7h14l5 2-1 4h-4l-1 6h-3l1-6H8l-1 4H4l1-4H2z" fill="#fff"/></svg>
+          <div class="wname">SHOTGUN</div><div class="wammo" id="ammo-shotgun">0/6</div>
+        </div>
+        <div class="wslot" data-slot="sniper">
+          <svg width="26" height="26" viewBox="0 0 24 24"><path d="M1 9h22l2 2-2 2H9l-1 5H5l1-5H3l-1 3H1l1-3H1z" fill="#fff"/></svg>
+          <div class="wname">SNIPER</div><div class="wammo" id="ammo-sniper">0/5</div>
+        </div>
       </div>
       <div id="vitals" class="panel">
         <div class="vrow"><span class="vlabel">HEALTH</span><div class="vbar"><div id="health-bar" style="width:100%"></div></div><span class="vnum" id="health-num">100</span></div>
@@ -160,17 +210,19 @@
     </div>
 
     <div id="br">
-      <canvas id="minimap" width="220" height="220"></canvas>
+      <canvas id="minimap" width="200" height="200"></canvas>
       <div id="speed-box" class="panel">
         <span id="speed-num">0</span> <span id="speed-unit">KM/H</span>
-        <div id="car-status">SCARLET ARROW • 98%</div>
+        <div id="car-name">SCARLET ARROW</div>
+        <div class="condwrap"><div id="car-cond-bar" style="width:98%"></div></div>
+        <div><span id="car-status">SCARLET ARROW • 98%</span> <span id="car-cond">98%</span></div>
         <div id="radio-row"><span id="radio-text">NIGHTWAVE 98.3 — SUNSET DRIVE</span>
         <button id="mute-btn">MUTE [M]</button></div>
       </div>
     </div>
 
     <div id="dialog" class="panel">
-      <div id="dialog-portrait" class="portrait kira">K</div>
+      <canvas id="dialog-portrait" class="portrait kira" width="64" height="64"></canvas>
       <div><div id="dialog-name">KIRA — HANDLER</div><div id="dialog-text"></div></div>
     </div>
 
@@ -181,6 +233,10 @@
 <script src="core.js"></script>
 <script src="world.js"></script>
 <script src="sim.js"></script>
+<script src="mateo.js"></script>
+<script src="boats.js"></script>
+<script src="races.js"></script>
+<script src="portraits.js"></script>
 <script src="audio.js"></script>
 <script src="main.js"></script>
 </body>

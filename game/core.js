@@ -1,11 +1,12 @@
-// PIER HEAT — Sunset Bay v7.2
-// core.js — shared foundation: seeded RNG, canvas textures, minimal GLB
-// reader, model retinting, HUD setters and the 2D round minimap painter.
+// PIER HEAT — Sunset Bay v7.3
+// core.js — shared foundation: seeded RNG, canvas textures, HUD setters
+// and the 2D round minimap painter. All characters, boats and portraits
+// are procedural (code primitives + canvas); no model files are loaded.
 // Plain script (no modules). Everything lives on window.PH.
 (function () {
   'use strict';
   var PH = window.PH = window.PH || {};
-  PH.VERSION = '7.2';
+  PH.VERSION = '7.3';
   PH.GAME = 'PIER HEAT — Sunset Bay';
 
   // ---------- seeded random (mulberry32) ----------
@@ -109,203 +110,40 @@
     });
   };
 
-  // ---------- minimal GLB reader ----------
-  // Reads a binary glTF container (JSON chunk + BIN chunk), builds
-  // geometries from accessors, materials from base-color factors, the
-  // node hierarchy (TRS or matrix), skins with skeletons + inverse bind
-  // matrices, and rebuilds animation clips from the channels.
-  PH.loadGLB = function (url, onDone, onError) {
-    fetch(url).then(function (res) {
-      if (!res.ok) throw new Error('GLB fetch failed: ' + res.status);
-      return res.arrayBuffer();
-    }).then(function (buf) {
-      var dv = new DataView(buf);
-      var magic = dv.getUint32(0, true);
-      if (magic !== 0x46546C67) throw new Error('not a GLB file');
-      var jsonLen = dv.getUint32(12, true);
-      var json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen)));
-      var binOff = 20 + jsonLen + 8;
-      var bin = new Uint8Array(buf, binOff);
-      var gltf = buildGLTF(json, bin);
-      onDone(gltf);
-    }).catch(function (err) { if (onError) onError(err); });
-  };
+  // ---------- v7.3: no external models ----------
+  // v7.2 loaded a GLB character file; v7.3 builds Mateo and Kira from
+  // code primitives in mateo.js instead, so there is no model loader
+  // left in the game at all. Anything that asks for a model file gets
+  // this explicit refusal instead of a silent fallback.
+  PH.loadGLB = null;
+  PH.NO_MODEL_FILES = true;
 
-  function accessorArray(json, bin, idx) {
-    var acc = json.accessors[idx];
-    var bv = json.bufferViews[acc.bufferView];
-    var compBytes = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }[acc.componentType];
-    var numComp = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 }[acc.type];
-    var off = (bv.byteOffset || 0) + (acc.byteOffset || 0);
-    var stride = bv.byteStride || compBytes * numComp;
-    var out = new Float32Array(acc.count * numComp);
-    for (var i = 0; i < acc.count; i++) {
-      for (var c = 0; c < numComp; c++) {
-        var p = off + i * stride + c * compBytes;
-        var v;
-        if (acc.componentType === 5126) v = new DataView(bin.buffer, bin.byteOffset + p, 4).getFloat32(0, true);
-        else if (acc.componentType === 5123) v = new DataView(bin.buffer, bin.byteOffset + p, 2).getUint16(0, true);
-        else if (acc.componentType === 5125) v = new DataView(bin.buffer, bin.byteOffset + p, 4).getUint32(0, true);
-        else if (acc.componentType === 5121) v = bin[p];
-        else if (acc.componentType === 5122) v = new DataView(bin.buffer, bin.byteOffset + p, 2).getInt16(0, true);
-        else v = bin[p];
-        out[i * numComp + c] = v;
-      }
-    }
-    return { data: out, count: acc.count, numComp: numComp, type: acc.type };
-  }
-
+  // v7.3: the binary model builder was removed with the GLB file.
+  // Characters are assembled from primitives in mateo.js; nothing in
+  // the game parses model containers any more.
   function buildGLTF(json, bin) {
-    var materials = (json.materials || []).map(function (m) {
-      var pbr = m.pbrMetallicRoughness || {};
-      var col = pbr.baseColorFactor || [1, 1, 1, 1];
-      var mat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(col[0], col[1], col[2]),
-        roughness: (pbr.metallicRoughnessTexture ? 0.7 : (pbr.roughnessFactor != null ? pbr.roughnessFactor : 0.8)),
-        metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 0.05
-      });
-      mat.name = m.name || '';
-      mat.transparent = col[3] < 1;
-      mat.opacity = col[3];
-      return mat;
-    });
-    if (!materials.length) materials = [new THREE.MeshStandardMaterial({ color: 0xcccccc })];
-
-    var nodeObjs = [];
-    var skins = [];
-    (json.skins || []).forEach(function (skin) {
-      var ibm = accessorArray(json, bin, skin.inverseBindMatrices).data;
-      skins.push({ joints: skin.joints, ibm: ibm, skeleton: skin.skeleton });
-    });
-
-    function buildNode(idx) {
-      var nd = json.nodes[idx];
-      var obj;
-      var isJoint = skins.some(function (s) { return s.joints.indexOf(idx) >= 0; });
-      if (isJoint) obj = new THREE.Bone();
-      else obj = new THREE.Object3D();
-      obj.name = nd.name || ('node' + idx);
-      if (nd.matrix) {
-        var m = new THREE.Matrix4().fromArray(nd.matrix);
-        m.decompose(obj.position, obj.quaternion, obj.scale);
-      } else {
-        if (nd.translation) obj.position.fromArray(nd.translation);
-        if (nd.rotation) obj.quaternion.fromArray(nd.rotation);
-        if (nd.scale) obj.scale.fromArray(nd.scale);
-      }
-      nodeObjs[idx] = obj;
-      if (nd.mesh != null) {
-        var meshDef = json.meshes[nd.mesh];
-        meshDef.primitives.forEach(function (prim) {
-          var geo = new THREE.BufferGeometry();
-          var pos = accessorArray(json, bin, prim.attributes.POSITION);
-          geo.setAttribute('position', new THREE.BufferAttribute(pos.data, 3));
-          if (prim.attributes.NORMAL) {
-            var n = accessorArray(json, bin, prim.attributes.NORMAL);
-            geo.setAttribute('normal', new THREE.BufferAttribute(n.data, 3));
-          }
-          if (prim.attributes.TEXCOORD_0) {
-            var uv = accessorArray(json, bin, prim.attributes.TEXCOORD_0);
-            geo.setAttribute('uv', new THREE.BufferAttribute(uv.data, 2));
-          }
-          if (prim.attributes.JOINTS_0) {
-            var j = accessorArray(json, bin, prim.attributes.JOINTS_0);
-            // joints may be ubyte/ushort: keep as float attribute via Uint16
-            var jarr = new Uint16Array(j.data.length);
-            for (var i = 0; i < j.data.length; i++) jarr[i] = j.data[i];
-            geo.setAttribute('skinIndex', new THREE.BufferAttribute(jarr, 4));
-          }
-          if (prim.attributes.WEIGHTS_0) {
-            var w = accessorArray(json, bin, prim.attributes.WEIGHTS_0);
-            geo.setAttribute('skinWeight', new THREE.BufferAttribute(w.data, 4));
-          }
-          if (prim.indices != null) {
-            var ia = accessorArray(json, bin, prim.indices);
-            geo.setIndex(new THREE.BufferAttribute(new Uint32Array(ia.data), 1));
-          }
-          var mat = materials[prim.material != null ? prim.material : 0];
-          var mesh;
-          if (nd.skin != null) {
-            mesh = new THREE.SkinnedMesh(geo, mat);
-            mesh.userData.skinIndex = nd.skin;
-          } else {
-            mesh = new THREE.Mesh(geo, mat);
-          }
-          mesh.name = (meshDef.name || 'mesh') + '_' + idx;
-          obj.add(mesh);
-        });
-      }
-      (nd.children || []).forEach(function (ci) { obj.add(buildNode(ci)); });
-      return obj;
-    }
-
-    var scene = new THREE.Group();
-    scene.name = 'glb-root';
-    var roots = json.scenes && json.scenes[0] ? json.scenes[0].nodes : [];
-    roots.forEach(function (ri) { scene.add(buildNode(ri)); });
-
-    // Update world matrices BEFORE binding: bind() freezes the mesh's
-    // matrixWorld as the bind matrix, and at build time it is still
-    // identity. (Rev 3: the bind matrix was identity, so the skinning
-    // used mesh-space vertices against armature-scaled bones.)
-    scene.updateMatrixWorld(true);
-
-    // Bind skins. The bind matrix MUST be identity for this file, not
-    // the mesh's world matrix: the file's inverse bind matrices already
-    // map mesh-local vertices into joint space (they carry the 1/69
-    // armature factor), so passing the bind-time world matrix (69.18x)
-    // would inflate every vertex 69x. With an identity bind matrix, and
-    // bindMode 'attached' (bindMatrixInverse = current world inverse),
-    // the shader reduces to the glTF formula jointWorld x IBM x vertex.
-    // (Rev 4: the 69.18 bind matrix was the giant-feet bug — the head
-    // vertex landed at world y=117 instead of y=3.)
-    scene.traverse(function (o) {
-      if (o.isSkinnedMesh && o.userData.skinIndex != null) {
-        var sk = skins[o.userData.skinIndex];
-        var bones = sk.joints.map(function (ji) { return nodeObjs[ji]; });
-        var ibms = [];
-        for (var i = 0; i < sk.joints.length; i++) {
-          ibms.push(new THREE.Matrix4().fromArray(sk.ibm, i * 16));
-        }
-        var skeleton = new THREE.Skeleton(bones, ibms);
-        o.bind(skeleton, new THREE.Matrix4());
-        o.userData.skeleton = skeleton;
-      }
-    });
-
-    // Animations.
-    var clips = (json.animations || []).map(function (anim) {
-      var tracks = [];
-      anim.channels.forEach(function (ch) {
-        var sampler = anim.samplers[ch.sampler];
-        var times = accessorArray(json, bin, sampler.input).data;
-        var vals = accessorArray(json, bin, sampler.output);
-        var node = nodeObjs[ch.target.node];
-        if (!node) return;
-        var path = ch.target.path;
-        var name = node.name;
-        if (path === 'translation') tracks.push(new THREE.VectorKeyframeTrack(name + '.position', times, vals.data));
-        else if (path === 'rotation') tracks.push(new THREE.QuaternionKeyframeTrack(name + '.quaternion', times, vals.data));
-        else if (path === 'scale') tracks.push(new THREE.VectorKeyframeTrack(name + '.scale', times, vals.data));
-      });
-      return new THREE.AnimationClip(anim.name || 'clip', -1, tracks);
-    });
-
-    return { scene: scene, clips: clips, nodes: nodeObjs, json: json };
+    throw new Error('v7.3: model files are gone — see mateo.js');
   }
 
-  // ---------- retint ----------
-  // Recolour named materials on a loaded model (e.g. jacket orange).
+  // (rest of the old model builder deleted in v7.3 — see mateo.js)
+
+  // (end of deleted model builder)
+
+  // ---------- retint (v7.3, procedural) ----------
+  // Recolour a procedural character by part tag: mateo.js marks the
+  // jacket shell, tee panel and hair cap with userData.part, so a tint
+  // map like { jacket: 0x0e7a7a } recolours the same rig into Kira.
   PH.retint = function (root, map) {
+    if (!root || !map) return;
     root.traverse(function (o) {
-      if (!o.material) return;
-      var mats = Array.isArray(o.material) ? o.material : [o.material];
-      mats.forEach(function (m) {
-        if (m && m.name && map[m.name] != null) {
-          m.color = new THREE.Color(map[m.name]);
-          if (m.name === 'MateoJacket') { m.roughness = 0.85; m.metalness = 0.0; }
-        }
-      });
+      if (!o.isMesh || !o.userData.part) return;
+      var col = map[o.userData.part];
+      if (col == null) return;
+      if (Array.isArray(o.material)) {
+        o.material.forEach(function (m) { m.color = new THREE.Color(col); });
+      } else if (o.material) {
+        o.material.color = new THREE.Color(col);
+      }
     });
   };
 
@@ -363,9 +201,37 @@
       if (!text) { d.style.display = 'none'; return; }
       d.style.display = 'flex';
       var p = el('dialog-portrait');
-      if (p) { p.textContent = who === 'kira' ? 'K' : 'M'; p.className = 'portrait ' + who; }
+      if (p) {
+        // v7.3: real canvas portrait, not a letter tile
+        if (PH.paintPortrait) PH.paintPortrait(p, who === 'kira' ? 'kira' : 'mateo');
+        p.className = 'portrait ' + who;
+      }
       setText('dialog-name', name);
       setText('dialog-text', text);
+    },
+    setCrew: function (who, status) {
+      var n = el('crew-status-' + who); if (n) n.textContent = status;
+    },
+    setRace: function (pos, total, lap, laps, countdown) {
+      var n = el('race-pos'); if (n) n.textContent = 'P' + pos + '/' + total;
+      var l = el('race-lap'); if (l) l.textContent = 'LAP ' + lap + '/' + laps;
+      var c = el('race-countdown');
+      if (c) {
+        if (countdown != null && countdown > 0) { c.style.display = 'block'; c.textContent = countdown; }
+        else if (countdown === 0) { c.style.display = 'block'; c.textContent = 'GO!'; }
+        else c.style.display = 'none';
+      }
+      var rp = el('race-panel'); if (rp) rp.style.display = pos ? 'block' : 'none';
+    },
+    setBoat: function (speedKmh, dist) {
+      var bp = el('boat-panel'); if (bp) bp.style.display = 'block';
+      setText('boat-speed', Math.round(speedKmh) + ' KN');
+      setText('boat-dist', dist != null ? dist + 'm TO PIER' : '');
+    },
+    setCarName: function (name, cond) {
+      setText('car-name', name);
+      setText('car-cond', cond != null ? Math.round(cond) + '%' : '');
+      setBar('car-cond-bar', cond != null ? cond : 0);
     },
     toast: function (msg) {
       var t = el('toast'); if (!t) return;
@@ -375,39 +241,41 @@
     }
   };
 
-  // ---------- minimap (round 2D canvas) ----------
-  PH.drawMinimap = function (canvas, st) {
-    if (!canvas) return;
-    var g = canvas.getContext('2d');
-    var W = canvas.width, H = canvas.height;
-    var cx = W / 2, cy = H / 2, R = W / 2 - 4;
-    // world bounds mapped into the circle
+  // ---------- minimap (round 2D street map, v7.3) ----------
+  // Drawn from the same world layout that builds the 3D city (roads,
+  // blocks, sea, sand, pier) — never a screenshot. The static layer
+  // (water / blocks / roads) is pre-rendered once to an offscreen
+  // canvas; each frame only blits it and draws the moving markers.
+  // Draw order is deliberate: police dots and the player arrow go down
+  // FIRST, labels go on TOP, so a dot can never cover the map label.
+  PH._mapBase = null;
+  PH._mapBaseSize = 0;
+  PH._buildMapBase = function (size) {
+    var c = document.createElement('canvas');
+    c.width = size; c.height = size;
+    var g = c.getContext('2d');
+    var cx = size / 2, cy = size / 2, R = size / 2 - 4;
     var x0 = -110, x1 = 120, z0 = -130, z1 = 130;
     function mx(x) { return cx + ((x - (x0 + x1) / 2) / ((x1 - x0) / 2)) * R; }
     function mz(z) { return cy + ((z - (z0 + z1) / 2) / ((z1 - z0) / 2)) * R; }
-    g.clearRect(0, 0, W, H);
-    g.save();
-    g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.clip();
-    // base
-    g.fillStyle = '#101826'; g.fillRect(0, 0, W, H);
-    // sea (west)
-    g.fillStyle = '#123a5c'; g.fillRect(0, 0, mx(-102), H);
-    // sand strip
-    g.fillStyle = '#c9a86a'; g.fillRect(mx(-102), 0, mx(-28) - mx(-102), H);
-    // city blocks (40-unit grid) slightly lighter than base
+    g.fillStyle = '#101826'; g.fillRect(0, 0, size, size);
+    // sea (west) + sand strip + beach line
+    g.fillStyle = '#123a5c'; g.fillRect(0, 0, mx(-102), size);
+    g.fillStyle = '#c9a86a'; g.fillRect(mx(-102), 0, mx(-28) - mx(-102), size);
+    g.fillStyle = '#e8d5a0'; g.fillRect(mx(-102), 0, 2, size);
+    // city blocks (40-unit grid)
     g.fillStyle = '#232f45';
     for (var gx = -20; gx <= 160; gx += 40) {
       for (var gz = -160; gz <= 120; gz += 40) {
         g.fillRect(mx(gx), mz(gz), mx(gx + 32) - mx(gx), mz(gz + 32) - mz(gz));
       }
     }
-    // fine 20-unit grid lines
-    g.strokeStyle = 'rgba(255,255,255,0.08)'; g.lineWidth = 1;
-    for (var i = -100; i <= 160; i += 20) {
-      g.beginPath(); g.moveTo(mx(i), 0); g.lineTo(mx(i), H); g.stroke();
-      g.beginPath(); g.moveTo(0, mz(i)); g.lineTo(W, mz(i)); g.stroke();
-    }
-    // roads: dark casing then bright core
+    // downtown landmark blocks, slightly taller tone
+    g.fillStyle = '#2c3a55';
+    [[66, -100], [106, 60], [26, 110]].forEach(function (p) {
+      g.fillRect(mx(p[0] - 10), mz(p[1] - 10), mx(p[0] + 10) - mx(p[0] - 10), mz(p[1] + 10) - mz(p[1] - 10));
+    });
+    // roads: dark casing, then bright core, then centre dashes
     function road(xa, za, xb, zb, wdt) {
       g.strokeStyle = '#05070c'; g.lineWidth = wdt + 3;
       g.beginPath(); g.moveTo(mx(xa), mz(za)); g.lineTo(mx(xb), mz(zb)); g.stroke();
@@ -416,13 +284,70 @@
     }
     [-120, -80, -40, 0, 40, 80, 120].forEach(function (z) { road(-9, z, 170, z, 3); });
     road(-20, -170, -20, 170, 4);
-    // Sunset Blvd centre line (yellow)
     g.strokeStyle = '#e8c832'; g.lineWidth = 1.4; g.setLineDash([6, 5]);
     g.beginPath(); g.moveTo(mx(-20), mz(-170)); g.lineTo(mx(-20), mz(170)); g.stroke();
     g.setLineDash([]);
-    // pier
+    // pier deck + bait shack dot
     g.fillStyle = '#8a6a42';
     g.fillRect(mx(-88), mz(35.5), mx(-28) - mx(-88), mz(44.5) - mz(35.5));
+    g.fillStyle = '#b02020';
+    g.fillRect(mx(-42), mz(38), mx(-38) - mx(-42), mz(42) - mz(38));
+    // race loop (thin amber trace) so the race route reads on the map
+    g.strokeStyle = 'rgba(255,210,60,0.55)'; g.lineWidth = 2; g.setLineDash([4, 4]);
+    g.beginPath();
+    PH.RACE_LOOP.forEach(function (pt, i) {
+      if (i === 0) g.moveTo(mx(pt.x), mz(pt.z)); else g.lineTo(mx(pt.x), mz(pt.z));
+    });
+    g.closePath(); g.stroke(); g.setLineDash([]);
+    return c;
+  };
+  PH.drawMinimap = function (canvas, st) {
+    if (!canvas) return;
+    var g = canvas.getContext('2d');
+    var W = canvas.width, H = canvas.height;
+    var cx = W / 2, cy = H / 2, R = W / 2 - 4;
+    var x0 = -110, x1 = 120, z0 = -130, z1 = 130;
+    function mx(x) { return cx + ((x - (x0 + x1) / 2) / ((x1 - x0) / 2)) * R; }
+    function mz(z) { return cy + ((z - (z0 + z1) / 2) / ((z1 - z0) / 2)) * R; }
+    if (!PH._mapBase || PH._mapBaseSize !== W) {
+      PH._mapBase = PH._buildMapBase(W);
+      PH._mapBaseSize = W;
+    }
+    g.clearRect(0, 0, W, H);
+    g.save();
+    g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.clip();
+    g.drawImage(PH._mapBase, 0, 0);
+    // --- moving markers, UNDER the labels ---
+    // police boats on the water (white hull dots with blue ring)
+    if (st && st.boats) {
+      st.boats.forEach(function (b) {
+        g.fillStyle = '#ffffff';
+        g.beginPath(); g.arc(mx(b.x), mz(b.z), 4, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = '#2040ff'; g.lineWidth = 1.5; g.stroke();
+      });
+    }
+    // police dots (blue, flashing red when wanted)
+    if (st && st.police) {
+      st.police.forEach(function (p, i) {
+        var blink = st.wanted > 0 && (Math.floor((st.time || 0) * 2 + i) % 2 === 0);
+        g.fillStyle = blink ? '#ff3b30' : '#3b82f6';
+        g.beginPath(); g.arc(mx(p.x), mz(p.z), 4.5, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = '#fff'; g.lineWidth = 1.2; g.stroke();
+      });
+    }
+    // next race gate (amber square) + rival cars (small red triangles)
+    if (st && st.raceGate) {
+      g.fillStyle = '#ffb030';
+      var rx = mx(st.raceGate.x), ry = mz(st.raceGate.z);
+      g.fillRect(rx - 5, ry - 5, 10, 10);
+      g.strokeStyle = '#fff'; g.lineWidth = 1.2; g.strokeRect(rx - 5, ry - 5, 10, 10);
+    }
+    if (st && st.rivals) {
+      st.rivals.forEach(function (r) {
+        g.fillStyle = '#ff5a4a';
+        g.beginPath(); g.arc(mx(r.x), mz(r.z), 3.5, 0, Math.PI * 2); g.fill();
+      });
+    }
     // objective diamond + pulsing ring
     if (st && st.objective) {
       var ox = mx(st.objective.x), oy = mz(st.objective.z);
@@ -434,15 +359,6 @@
       g.moveTo(ox, oy - 9); g.lineTo(ox + 9, oy); g.lineTo(ox, oy + 9); g.lineTo(ox - 9, oy);
       g.closePath(); g.fill();
       g.strokeStyle = '#7a5b00'; g.lineWidth = 1.5; g.stroke();
-    }
-    // police dots (blue, flashing red when wanted)
-    if (st && st.police) {
-      st.police.forEach(function (p, i) {
-        var blink = st.wanted > 0 && (Math.floor((st.time || 0) * 2 + i) % 2 === 0);
-        g.fillStyle = blink ? '#ff3b30' : '#3b82f6';
-        g.beginPath(); g.arc(mx(p.x), mz(p.z), 4.5, 0, Math.PI * 2); g.fill();
-        g.strokeStyle = '#fff'; g.lineWidth = 1.2; g.stroke();
-      });
     }
     // player arrow (big orange, white frame, rotates with heading)
     if (st && st.player) {
@@ -461,14 +377,19 @@
     // ring border
     g.strokeStyle = '#ffffff'; g.lineWidth = 3;
     g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.stroke();
-    // north arrow + N, top centre
+    // --- labels LAST, on top of every dot ---
     g.fillStyle = '#fff'; g.font = 'bold 13px Arial';
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.beginPath();
     g.moveTo(cx, 12); g.lineTo(cx + 5, 22); g.lineTo(cx - 5, 22); g.closePath(); g.fill();
     g.fillText('N', cx, 30);
-    // label
-    g.fillStyle = 'rgba(255,255,255,0.85)'; g.font = 'bold 11px Arial';
-    g.fillText('SUNSET BAY', cx, H - 12);
+    // label plate: dark chip behind the text so dots can never hide it
+    var label = 'SUNSET BAY';
+    g.font = 'bold 11px Arial';
+    var tw = g.measureText(label).width + 12;
+    g.fillStyle = 'rgba(8,12,22,0.8)';
+    g.fillRect(cx - tw / 2, H - 22, tw, 16);
+    g.fillStyle = 'rgba(255,255,255,0.95)';
+    g.fillText(label, cx, H - 14);
   };
 })();

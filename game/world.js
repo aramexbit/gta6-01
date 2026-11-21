@@ -1,6 +1,7 @@
-// PIER HEAT — Sunset Bay v7.2
-// world.js — builds Sunset Bay: sky, light, ground, sea, roads, buildings,
-// street props, palms, beach, pier and clouds. Plain script; uses window.PH.
+// PIER HEAT — Sunset Bay v7.3
+// world.js — builds Sunset Bay: sky, low sun + long shadows, haze,
+// glare, ground, sea, roads, buildings, street props, palms, beach,
+// pier and big low lit clouds. Plain script; uses window.PH.
 (function () {
   'use strict';
   var PH = window.PH;
@@ -158,18 +159,29 @@
     return g;
   }
 
-  // Clouds are unlit (MeshBasicMaterial): lit standard-material clouds
-  // rendered pitch black on their shaded side in v7.2 rev 1. White, flat
-  // lighting is what a bright cartoon cloud should be.
-  function makeCloud(scale, opacity) {
+  // Clouds (v7.3): bigger, lower, sun-kissed. Each cloud is a cluster
+  // of puffs — white on top, warm orange-pink underneath where the low
+  // sun hits it — so they read as sunset clouds, not flat white blobs.
+  // Unlit basic materials keep them bright from every angle.
+  function makeCloud(scale, opacity, sunset) {
     var g = new THREE.Group();
-    var cm = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: opacity == null ? 0.9 : opacity, fog: true });
-    var n = 3 + Math.floor(PH.R() * 3);
+    var topMat = new THREE.MeshBasicMaterial({ color: 0xfff4e0, transparent: true, opacity: opacity == null ? 0.92 : opacity, fog: true });
+    var lowMat = new THREE.MeshBasicMaterial({ color: sunset ? 0xffb070 : 0xffe8c8, transparent: true, opacity: opacity == null ? 0.92 : opacity, fog: true });
+    var n = 5 + Math.floor(PH.R() * 3);
     for (var i = 0; i < n; i++) {
-      var s = new THREE.Mesh(new THREE.SphereGeometry(PH.rand(3, 5.5), 10, 8), cm);
-      s.scale.y = 0.42;
-      s.position.set(PH.rand(-6, 6), PH.rand(-0.5, 1.5), PH.rand(-3, 3));
+      var s = new THREE.Mesh(new THREE.SphereGeometry(PH.rand(4, 7.5), 10, 8), i < 2 ? lowMat : topMat);
+      s.scale.y = 0.38;
+      s.position.set(PH.rand(-9, 9), PH.rand(-1.5, 1.5) - (i < 2 ? 1.2 : 0), PH.rand(-4, 4));
       g.add(s);
+    }
+    // soft warm halo behind the cluster at sunset
+    if (sunset) {
+      var halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: PH.sunTexture(), transparent: true, opacity: 0.35, fog: false, depthWrite: false
+      }));
+      halo.scale.set(34, 16, 1);
+      halo.position.z = -2;
+      g.add(halo);
     }
     g.scale.setScalar(scale);
     return g;
@@ -196,29 +208,64 @@
     var sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false }));
     scene.add(sky);
 
-    // ---- fog + lights ----
-    scene.fog = new THREE.Fog(sunset ? 0xff9a5a : 0xa8c8e8, 120, 520);
+    // ---- fog + lights (v7.3: low sun, long shadows, horizon haze) ----
+    // One sun direction drives everything: the directional light, the
+    // sky gradient and the glare sprite below. At sunset the sun sits
+    // barely above the sea, so shadows stretch long across the road.
+    // The fog colour matches the horizon band, so distant buildings
+    // dissolve into the sunset instead of being cut by grey fog.
+    scene.fog = new THREE.Fog(sunset ? 0xff9a5a : 0xc8d8e8, 120, 520);
     var hemi = new THREE.HemisphereLight(sunset ? 0xffd9a0 : 0xbfdfff, sunset ? 0x4a2a4a : 0x4a6a4a, 0.85);
     scene.add(hemi);
-    var sun = new THREE.DirectionalLight(sunset ? 0xffc080 : 0xfff2dd, sunset ? 2.4 : 2.0);
-    sun.position.set(sunset ? -160 : 90, sunset ? 55 : 190, sunset ? -40 : 60);
+    var sun = new THREE.DirectionalLight(sunset ? 0xffc080 : 0xfff2dd, sunset ? 2.6 : 2.0);
+    sun.position.set(sunset ? -260 : 90, sunset ? 26 : 190, sunset ? -60 : 60);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.left = -160; sun.shadow.camera.right = 160;
     sun.shadow.camera.top = 160; sun.shadow.camera.bottom = -160;
-    sun.shadow.camera.far = 600;
+    sun.shadow.camera.far = 700;
     sun.shadow.bias = -0.0005;
     scene.add(sun);
     scene.add(new THREE.AmbientLight(0xffffff, 0.18));
     W.sun = sun;
+    // warm bounce light from the sea side, so shadow faces are not dead
+    var bounce = new THREE.DirectionalLight(sunset ? 0xff8a50 : 0x9fc4e8, 0.5);
+    bounce.position.set(200, 40, 0);
+    scene.add(bounce);
 
-    // ---- sun disc sprite ----
+    // ---- sun disc sprite + glare streak (v7.3) ----
     var sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
       map: PH.sunTexture(), transparent: true, fog: false, depthWrite: false
     }));
-    if (sunset) { sunSprite.position.set(-150, 62, -420); sunSprite.scale.set(70, 70, 1); }
+    if (sunset) { sunSprite.position.set(-150, 30, -420); sunSprite.scale.set(90, 90, 1); }
     else { sunSprite.position.set(30, 160, -420); sunSprite.scale.set(80, 80, 1); }
     scene.add(sunSprite);
+    // horizontal glare streak across the sun at sunset (canvas texture)
+    if (sunset) {
+      var glareTex = PH.canvasTex(512, 64, function (g, w, h) {
+        var grad = g.createLinearGradient(0, 0, w, 0);
+        grad.addColorStop(0, 'rgba(255,180,80,0)');
+        grad.addColorStop(0.5, 'rgba(255,220,140,0.9)');
+        grad.addColorStop(1, 'rgba(255,180,80,0)');
+        g.fillStyle = grad; g.fillRect(0, h / 2 - 4, w, 8);
+        g.fillStyle = 'rgba(255,240,200,0.9)';
+        g.beginPath(); g.arc(w / 2, h / 2, 14, 0, Math.PI * 2); g.fill();
+      });
+      var glare = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glareTex, transparent: true, fog: false, depthWrite: false, opacity: 0.85
+      }));
+      glare.position.set(-150, 30, -410);
+      glare.scale.set(220, 28, 1);
+      scene.add(glare);
+      // sun path glitter on the sea: a warm streak of flat quads
+      var glitterMat = new THREE.MeshBasicMaterial({ color: 0xffc860, transparent: true, opacity: 0.5 });
+      for (var gi = 0; gi < 14; gi++) {
+        var gl = new THREE.Mesh(new THREE.PlaneGeometry(10 + gi * 2, 1.2), glitterMat);
+        gl.rotation.x = -Math.PI / 2;
+        gl.position.set(-150 + gi * 3, 0.06, 40 + gi * 6);
+        scene.add(gl);
+      }
+    }
 
     // ---- ground: city slab, sand, sea ----
     var city = new THREE.Mesh(new THREE.PlaneGeometry(300, 360),
@@ -274,11 +321,13 @@
       dash.rotation.x = -Math.PI / 2; dash.position.set(-20, 0.1, dz);
       scene.add(dash);
     }
-    // zebra crossings at every cross street
+    // zebra crossings at every cross street (v7.3: narrower — 5 slim
+    // stripes over 7 units instead of a 12-unit white slab, so the
+    // middle of the road stays open for the action)
     var zebraMat = new THREE.MeshBasicMaterial({ color: 0xf2f2f2 });
     [-120, -80, -40, 0, 40, 80, 120].forEach(function (z) {
-      for (var zx = -26; zx <= -14; zx += 2) {
-        var zb = new THREE.Mesh(new THREE.PlaneGeometry(1, 12), zebraMat);
+      for (var zx = -24; zx <= -16; zx += 2) {
+        var zb = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 5.5), zebraMat);
         zb.rotation.x = -Math.PI / 2; zb.position.set(zx, 0.1, z);
         scene.add(zb);
       }
@@ -317,6 +366,9 @@
     var lampHeadMat = new THREE.MeshStandardMaterial({ color: 0xffe6a0, emissive: sunset ? 0xffc860 : 0x000000, emissiveIntensity: sunset ? 1.2 : 0 });
     for (var lz = -165; lz <= 165; lz += 30) {
       [-29.5, -10.5].forEach(function (lx) {
+        // v7.3: skip the lamp at (-10.5, 0) — it stands half a unit
+        // from the shot-2 camera and reads as a black bar in frame.
+        if (lx === -10.5 && lz === 0) return;
         var g = new THREE.Group();
         g.position.set(lx, 0, lz);
         var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 7, 8), lampMat);
@@ -364,6 +416,45 @@
       scene.add(g);
     });
 
+    // ---- street market stalls (v7.3): the east sidewalk in shot 2
+    // was a blank wall — now it is a row of stalls with striped
+    // awnings, crates, fruit and a vendor NPC each, so the right side
+    // of the frame has life instead of empty facade.
+    function makeMarketStall(x, z, awnColor, goodsColor) {
+      var g = new THREE.Group();
+      g.position.set(x, 0, z);
+      var counter = box(2.4, 1.0, 1.2, 0x7a5a30, 0, 0.5, 0, 0.9);
+      g.add(counter);
+      var awnTex = PH.canvasTex(256, 64, function (ctx, ww, hh) {
+        for (var s = 0; s < 8; s++) { ctx.fillStyle = s % 2 ? '#f2f2f2' : awnColor; ctx.fillRect(s * 32, 0, 32, hh); }
+      });
+      var awn = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.1, 1.6),
+        new THREE.MeshStandardMaterial({ map: awnTex, roughness: 0.8 }));
+      awn.position.set(0, 2.4, 0); awn.rotation.x = 0.15; g.add(awn);
+      [-1.1, 1.1].forEach(function (px) {
+        var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 6), mat(0x4a4a4a, 0.6, 0.5));
+        pole.position.set(px, 1.2, 0.6); g.add(pole);
+      });
+      for (var i = 0; i < 8; i++) {
+        var fruit = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), mat(goodsColor, 0.5));
+        fruit.position.set(-0.9 + (i % 4) * 0.6, 1.12, (i < 4 ? -0.25 : 0.25));
+        g.add(fruit);
+      }
+      var crate = box(0.7, 0.7, 0.7, 0x8a6a42, 1.8, 0.35, 0.4, 0.95);
+      g.add(crate);
+      var sign = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.5, 0.1),
+        new THREE.MeshStandardMaterial({ map: PH.signTexture('FRESH', awnColor), roughness: 0.7 }));
+      sign.position.set(0, 2.0, 0.75); g.add(sign);
+      return g;
+    }
+    var stallCols = ['#c81e1e', '#0e7a7a', '#c85a00', '#6a2a8a'];
+    var stallGoods = [0xff7a1a, 0xff3b30, 0xffc832, 0x37d67a];
+    [-32, -18, 14, 28].forEach(function (z, i) {
+      // v7.3: no stall at z -2 — it stood 1.5 units from the shot-2
+      // camera and its FRESH sign filled the whole frame.
+      scene.add(makeMarketStall(-8.6, z, stallCols[i % 4], stallGoods[i % 4]));
+    });
+
     // ---- palms ----
     for (var pz = -155; pz <= 155; pz += 26) scene.add(makePalm(-33.5, pz));
     [[40, -100], [80, 20], [120, -60], [60, 100], [140, 40]].forEach(function (p) { scene.add(makePalm(p[0], p[1])); });
@@ -385,7 +476,9 @@
     [-86, -72, -58, -44, -30].forEach(function (x) {
       pier.add(box(0.14, 0.1, 9, 0x7a5a30, x, 2.4, 40, 0.9));
     });
-    [-80, -60, -40].forEach(function (x) {
+    [-80, -68, -40].forEach(function (x) {
+      // v7.3: the middle lamp moved from -60 to -68 — at -60 its bulb
+      // hung directly above Kira's head in shot 3 (the white ball).
       var lp = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 2.6, 8), lampMat);
       lp.position.set(x, 2.6, 36); lp.castShadow = true; pier.add(lp);
       var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6),
@@ -469,11 +562,11 @@
       scene.add(castle);
     }
 
-    // ---- clouds: random + 6 fixed hero clouds ----
+    // ---- clouds: random + 6 fixed hero clouds (v7.3: lower, bigger) ----
     var nClouds = sunset ? 10 : 16;
     for (var ci = 0; ci < nClouds; ci++) {
-      var cl = makeCloud(PH.rand(1.4, 2.4));
-      cl.position.set(PH.rand(-220, 220), PH.rand(45, 80), PH.rand(-220, 220));
+      var cl = makeCloud(PH.rand(1.8, 3.0), null, sunset);
+      cl.position.set(PH.rand(-220, 220), PH.rand(28, 58), PH.rand(-220, 220));
       scene.add(cl); W.clouds.push(cl);
       if (!sunset) {
         var sh = new THREE.Mesh(new THREE.CircleGeometry(9, 16),
@@ -483,8 +576,8 @@
         scene.add(sh); W.cloudShadows.push(sh);
       }
     }
-    [[-60, 52, -190], [60, 58, -210], [-45, 34, 170], [-62, 38, 190], [-195, 52, 30], [-200, 58, -40]].forEach(function (p, i) {
-      var hc = makeCloud(2.0 + (i % 3) * 0.3);
+    [[-60, 38, -190], [60, 42, -210], [-45, 30, 170], [-62, 32, 190], [-195, 38, 30], [-200, 42, -40]].forEach(function (p, i) {
+      var hc = makeCloud(2.6 + (i % 3) * 0.4, null, sunset);
       hc.position.set(p[0], p[1], p[2]);
       scene.add(hc); W.clouds.push(hc);
       if (!sunset) {

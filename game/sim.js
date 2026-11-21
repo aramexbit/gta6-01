@@ -59,6 +59,13 @@
     inner.add(head);
     var hairM = part(G.sphere, hair, 0.18, 0.12, 0.18, 0, 1.76, -0.02);
     inner.add(hairM);
+    // v7.1 faces: wajah low-poly orisinal — dua mata + mulut simpel di sisi
+    // depan (+Z) kepala, material flat gelap supaya terbaca dari jauh.
+    // Menempel di inner, jadi ikut semua pose (jalan, duduk, berbaring).
+    var faceMat = stdMat(0x17110c, 0.9);
+    inner.add(part(G.sphere, faceMat, 0.022, 0.026, 0.018, -0.068, 1.70, 0.148));
+    inner.add(part(G.sphere, faceMat, 0.022, 0.026, 0.018, 0.068, 1.70, 0.148));
+    inner.add(part(G.box, faceMat, 0.085, 0.018, 0.02, 0, 1.585, 0.15));
     if (opts.cap) {
       var cap = part(G.box, stdMat(0x1d3557), 0.34, 0.08, 0.34, 0, 1.82, 0);
       inner.add(cap);
@@ -780,6 +787,26 @@
       group.updateMatrixWorld(true);
       bbox = new THREE.Box3().setFromObject(group);
       group.position.y -= bbox.min.y;
+    }
+    // v7.1 faces: wajah low-poly orisinal untuk Mateo dan Kira (model yang
+    // sama, di-retint) — dua mata + mulut simpel, ditempel di tulang Head
+    // supaya ikut animasi jalan/idle/aim. Sumbu lokal kepala: +Z menghadap
+    // ke depan model (+X grup), +Y ke atas. Ukuran dihitung dari tinggi
+    // mentah model (size.y) supaya pas di kepala berapa pun skala grupnya.
+    // v7.1 rev2: mata diperbesar (0.012 -> 0.015) dan sedikit dilebarkan
+    // supaya tetap terbaca dari jarak kamera shot 3 (~5-8 unit).
+    var rawH = size.y;
+    var headBone = group.getObjectByName('Head') || (loaded.nodeObjs && loaded.nodeObjs[1]);
+    if (headBone) {
+      var faceMat = new THREE.MeshBasicMaterial({ color: 0x17110c });
+      var eyeGeo = new THREE.SphereGeometry(0.015 * rawH, 10, 8);
+      var eyeL = new THREE.Mesh(eyeGeo, faceMat);
+      eyeL.position.set(-0.024 * rawH, 0.09 * rawH, 0.042 * rawH);
+      var eyeR = new THREE.Mesh(eyeGeo, faceMat);
+      eyeR.position.set(0.024 * rawH, 0.09 * rawH, 0.042 * rawH);
+      var mouth = new THREE.Mesh(new THREE.BoxGeometry(0.045 * rawH, 0.009 * rawH, 0.008 * rawH), faceMat);
+      mouth.position.set(0, 0.045 * rawH, 0.045 * rawH);
+      headBone.add(eyeL); headBone.add(eyeR); headBone.add(mouth);
     }
     return {
       group: group, mixer: mixer, actions: actions,

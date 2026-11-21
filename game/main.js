@@ -158,7 +158,8 @@
     setWanted(0);
     setObjective('PIER HEAT — MEET KIRA', 'Meet Kira at the pier — follow the yellow marker.', -58, 40);
     if (mateo) {
-      mateo.setPos(-10, -4, Math.PI / 2);
+      // v7.1 faces: Mateo menghadap kamera (selatan) supaya wajahnya terbaca.
+      mateo.setPos(-10, -4, -Math.PI / 2);
       mateo.group.visible = true;
       mateo.play('walk');
     }
@@ -191,13 +192,16 @@
     setWanted(0);
     setObjective('PIER HEAT — THE PIER JOB', 'Meet Kira at the pier and hear the plan.', -58, 40);
     if (mateo) {
-      mateo.setPos(-52, 38.5, Math.PI - 0.15);
+      // v7.1 faces rev2: Mateo profil di render pertama (75° dari kamera)
+      // wajahnya tidak terbaca — putar ke barat-daya-selatan (3/4 ke kamera,
+      // 53° dari sumbu kamera) dan Kira lurus ke timur menghadap Mateo.
+      mateo.setPos(-52, 38.5, -1.96);
       mateo.group.position.y = 1.35;
       mateo.group.visible = true;
       mateo.play('idle');
     }
     if (kira) {
-      kira.setPos(-56.5, 38.5, 0.15);
+      kira.setPos(-56.5, 38.5, 0);
       kira.group.position.y = 1.35;
       kira.group.visible = true;
       kira.play('idle');

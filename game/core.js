@@ -13,7 +13,7 @@
 (function () {
   'use strict';
   var PH = window.PH = window.PH || {};
-  PH.VERSION = '7.6';
+  PH.VERSION = '7.7'; // v7.7: hero-car yaw fix + HUD patch (yaw77/hud77/traffic77)
   PH.GAME = 'PIER HEAT — Sunset Bay';
 
   // ---------- seeded random (mulberry32) ----------

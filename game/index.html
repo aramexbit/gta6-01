@@ -242,7 +242,13 @@
     <div id="toast" class="panel"></div>
   </div>
 </div>
+<!-- v7.7 patch scripts: yaw77.js MUST load before three.min.js (it traps
+     the THREE assignment to wrap the renderer); hud77/traffic77 poll for
+     PH and the scene, so they can load anywhere after three.min.js. -->
+<script src="yaw77.js"></script>
 <script src="vendor/three.min.js"></script>
+<script src="hud77.js"></script>
+<script src="traffic77.js"></script>
 <script src="core.js"></script>
 <!-- v7.5 visual systems (written fresh this round, from the real-world
      briefs): sky + clouds, hero-car rear, police heli, boat water,

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="PIER HEAT — Sunset Bay: an original open-world crime game. Drive the Scarlet Arrow, lose the Bay City PD, run the Three Gates.">
+<link rel="icon" href="data:,">
+<title>PIER HEAT — Sunset Bay</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #14101f;
+    font-family: Arial, Helvetica, sans-serif; color: #ffe9b0; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  .panel { background: rgba(16, 10, 28, 0.78); border: 1px solid rgba(255, 233, 176, 0.35);
+    border-radius: 8px; padding: 8px 12px; }
+  #top-left { position: absolute; top: 12px; left: 12px; }
+  #wanted-stars { font-size: 26px; letter-spacing: 3px; color: #ffd23e;
+    text-shadow: 0 0 12px rgba(255, 210, 62, 0.8); }
+  #money { font-size: 22px; font-weight: 900; color: #7CFC00; margin-top: 2px; }
+  #speed { font-size: 13px; color: #9fd8ff; margin-top: 2px; }
+  #mission { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    text-align: center; min-width: 320px; }
+  #mission-name { font-size: 17px; font-weight: 900; letter-spacing: 1px; color: #ffd23e; }
+  #mission-stage { font-size: 13px; color: #ff9a3c; margin-top: 2px; }
+  #mission-timer { font-size: 22px; font-weight: 900; color: #ffffff; margin-top: 2px; }
+  #dispatch { position: absolute; top: 12px; right: 12px; width: 230px; font-size: 12px; }
+  .dhead { font-weight: 900; color: #ff5a5a; letter-spacing: 1px; margin-bottom: 4px; }
+  .drow { display: flex; justify-content: space-between; padding: 2px 0;
+    border-top: 1px solid rgba(255, 233, 176, 0.15); }
+  .drow b { color: #00e5ff; }
+  #bars { position: absolute; left: 12px; bottom: 12px; width: 260px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 11px; font-weight: 900; }
+  .bar-row span { width: 62px; }
+  .bar-track { flex: 1; height: 12px; background: rgba(255, 255, 255, 0.15); border-radius: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; }
+  #health-bar { background: #2eff7a; width: 100%; }
+  #armour-bar { background: #4a8de8; width: 60%; }
+  #respect-bar { background: #ff2e88; width: 100%; }
+  #minimap-wrap { position: absolute; right: 12px; bottom: 12px; text-align: right; }
+  #minimap { border: 2px solid rgba(255, 233, 176, 0.5); border-radius: 8px;
+    background: #14101f; display: block; }
+  #weapon { position: absolute; right: 12px; bottom: 208px; text-align: right; }
+  #weapon-name { font-size: 16px; font-weight: 900; color: #ffe9b0; }
+  #weapon-ammo { font-size: 13px; color: #9fd8ff; }
+  #wheel-hint { font-size: 11px; color: rgba(255, 233, 176, 0.6); margin-top: 2px; }
+  #kira { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    display: flex; gap: 10px; align-items: center; max-width: 560px; }
+  #kira-portrait { width: 96px; height: 96px; border-radius: 8px;
+    border: 2px solid #00e5ff; flex: none; }
+  #kira-text { font-size: 14px; line-height: 1.35; color: #ffffff; }
+  #kira-name { font-size: 11px; font-weight: 900; color: #00e5ff; letter-spacing: 1px; }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+    transform: translate(-50%, -50%); display: none; }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #ffd23e; }
+  #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #crosshair::after { left: 0; top: 10px; width: 22px; height: 2px; }
+  #toast { position: absolute; top: 120px; left: 50%; transform: translateX(-50%);
+    font-size: 15px; font-weight: 900; color: #ffd23e; text-shadow: 0 2px 6px #000; }
+  /* ---- title screen ---- */
+  #title-screen { position: fixed; inset: 0; z-index: 10; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, rgba(20, 8, 40, 0.12) 0%, rgba(20, 8, 40, 0.35) 70%, rgba(20, 8, 40, 0.65) 100%);
+    pointer-events: auto; text-align: center; }
+  #title-screen h1 { font-size: 84px; font-weight: 900; letter-spacing: 4px; line-height: 0.95;
+    color: #ffb347; text-shadow: 0 0 24px rgba(255, 122, 26, 0.9), 0 4px 0 #7a1a3a, 0 8px 18px #000; }
+  #title-screen h2 { font-size: 30px; font-weight: 900; letter-spacing: 10px; color: #00e5ff;
+    text-shadow: 0 0 18px rgba(0, 229, 255, 0.8), 0 3px 8px #000; margin-top: 6px; }
+  #title-sub { margin-top: 10px; font-size: 15px; color: #ffe9b0; text-shadow: 0 2px 6px #000; }
+  #btn-start { margin-top: 26px; pointer-events: auto; cursor: pointer;
+    font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #14101f;
+    background: linear-gradient(180deg, #ffd23e, #ff7a1a); border: none; border-radius: 10px;
+    padding: 14px 44px; box-shadow: 0 0 24px rgba(255, 122, 26, 0.7); }
+  #btn-start:hover { filter: brightness(1.1); }
+  #save-slot { margin-top: 20px; font-size: 14px; background: rgba(16, 10, 28, 0.85);
+    border: 1px solid rgba(255, 233, 176, 0.4); border-radius: 8px; padding: 10px 18px; line-height: 1.5; }
+  #save-slot b { color: #7CFC00; }
+  #controls { margin-top: 16px; font-size: 12px; color: rgba(255, 233, 176, 0.85);
+    line-height: 1.7; text-shadow: 0 2px 4px #000; }
+  #controls b { color: #ffffff; }
+  #title-foot { position: absolute; bottom: 12px; font-size: 11px; color: rgba(255, 233, 176, 0.6); }
+</style>
+</head>
+<body>
+<canvas id="game" width="1280" height="720"></canvas>
+
+<div id="hud">
+  <div id="top-left" class="panel">
+    <div id="wanted-stars">★★★☆☆</div>
+    <div id="money">$15,300</div>
+    <div id="speed">0 km/h</div>
+  </div>
+  <div id="mission" class="panel">
+    <div id="mission-name">M2 — THREE GATES</div>
+    <div id="mission-stage">STAGE 1/3</div>
+    <div id="mission-timer">3:07</div>
+  </div>
+  <div id="dispatch" class="panel">
+    <div class="dhead">BAY CITY PD — DISPATCH</div>
+    <div id="dispatch-board"></div>
+  </div>
+  <div id="bars" class="panel">
+    <div class="bar-row"><span>HEALTH</span><div class="bar-track"><div id="health-bar" class="bar-fill"></div></div></div>
+    <div class="bar-row"><span>ARMOUR</span><div class="bar-track"><div id="armour-bar" class="bar-fill"></div></div></div>
+    <div class="bar-row"><span>RESPECT</span><div class="bar-track"><div id="respect-bar" class="bar-fill"></div></div></div>
+  </div>
+  <div id="minimap-wrap">
+    <canvas id="minimap" width="180" height="180"></canvas>
+  </div>
+  <div id="weapon" class="panel">
+    <div id="weapon-name">Pistol</div>
+    <div id="weapon-ammo">24</div>
+    <div id="wheel-hint">1 Fists · 2 Pistol · 3 SMG · 4 Rifle</div>
+  </div>
+  <div id="kira" class="panel">
+    <canvas id="kira-portrait" width="96" height="96"></canvas>
+    <div>
+      <div id="kira-name">KIRA — NIGHTWAVE 98.3</div>
+      <div id="kira-text">Kira: "Mateo, you're live. Sunset Bay is yours."</div>
+    </div>
+  </div>
+  <div id="crosshair"></div>
+  <div id="toast"></div>
+</div>
+
+<div id="title-screen">
+  <h1>PIER HEAT</h1>
+  <h2>SUNSET BAY</h2>
+  <div id="title-sub">A getaway driver. A city that never cools down. One long sunset.</div>
+  <button id="btn-start">▶ &nbsp;START ENGINE</button>
+  <div id="save-slot">
+    <b>SLOT 1 — CONTINUE</b><br>
+    M2 PIER RUN &nbsp;·&nbsp; $15,300 &nbsp;·&nbsp; Respect 140<br>
+    M1 complete — "First Light" · 3 stars wanted
+  </div>
+  <div id="controls">
+    <b>WASD</b> drive / walk &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp; <b>E</b> enter / exit car<br>
+    <b>Click</b> shoot &nbsp;·&nbsp; <b>F</b> fire &nbsp;·&nbsp; <b>1–4</b> weapons &nbsp;·&nbsp; <b>Space</b> handbrake
+  </div>
+  <div id="title-foot">PIER HEAT — an original game. Sunset Bay, Mateo Vega and Kira are original characters. No Rockstar assets.</div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="core.js"></script>
+<script src="world.js"></script>
+<script src="sim.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

@@ -1,841 +1,1106 @@
-// PIER HEAT — Sunset Bay v7.6
-// main.js — boot, input, save/load, the 4 staged shots, the free-play
-// loop and the minimap update. Wires the procedural Mateo/Kira
-// (mateo.js), the boat chase (boats.js), the street race (races.js)
-// and the canvas portraits (portraits.js). Plain script; uses window.PH.
-// v7.4: shot 3 stages Mateo AT THE HELM of the speedboat on the water
-// (police boats + heli in pursuit), and shot 1 runs both rivals big
-// and close beside the hero.
-// v7.6: shot 3's beach foreground gains the dead man on the sand — a
-// lying figure in dark clothes with dark-red blood pools around it,
-// stylized low-poly, the crime-scene detail the beach mission opens
-// on. Car + character design changes live in herocar.js, mateo.js,
-// portraits.js, sim.js and boats.js (white + teal hero boat).
+// PIER HEAT — Sunset Bay v8.0: game state and the main loop. Boot (loading -> title -> START
+// ENGINE -> play, one authoritative init used by the normal path and any screenshot path),
+// fixed-step physics at 60 steps/second with render interpolation, free play (drive / walk /
+// boat), the three mission stages, wanted + police, shooting, enter/exit car, save/load.
+// Zero console errors is the goal; every system here is reachable by playing, never by teleport.
 (function () {
   'use strict';
   var PH = window.PH;
-  var THREE = window.THREE;
+  var STEP = 1 / 60;
 
-  window.__errors = [];
-  window.__ready = false;
-  window.__mateoLoaded = false;
-  window.addEventListener('error', function (e) { window.__errors.push(String(e.message || e.error)); });
-  window.addEventListener('unhandledrejection', function (e) { window.__errors.push('promise: ' + String(e.reason)); });
+  var WEAPONS = [
+    { name: 'FISTS', dmg: 15, mag: Infinity, reserve: Infinity, magSize: Infinity, rate: 0.35, range: 2.6, auto: false },
+    { name: 'PISTOL', dmg: 34, mag: 12, reserve: 48, magSize: 12, rate: 0.28, range: 60, auto: false },
+    { name: 'SMG', dmg: 18, mag: 30, reserve: 90, magSize: 30, rate: 0.09, range: 55, auto: true },
+    { name: 'SHOTGUN', dmg: 60, mag: 6, reserve: 24, magSize: 6, rate: 0.85, range: 30, auto: false },
+    { name: 'RIFLE', dmg: 45, mag: 30, reserve: 60, magSize: 30, rate: 0.13, range: 90, auto: true },
+    { name: 'BAT', dmg: 25, mag: Infinity, reserve: Infinity, magSize: Infinity, rate: 0.45, range: 2.8, auto: false }
+  ];
 
-  var params = new URLSearchParams(location.search);
-  var shotNum = parseInt(params.get('shot') || '0', 10) || 0;
-  var seed = parseInt(params.get('seed') || '1', 10) || 1;
-  var isShot = shotNum >= 1 && shotNum <= 4;
-  var mode = (shotNum === 1 || shotNum === 4) ? 'sunset' : 'day';
-  PH.seed(seed);
-
-  // ---------- renderer ----------
-  var renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.domElement.className = 'webgl';
-  document.getElementById('app').prepend(renderer.domElement);
-
-  var scene = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 1200);
-
-  // ---------- world + sim ----------
-  var world = PH.buildWorld(scene, mode);
-  var traffic = new PH.Traffic(scene);
-  var cityCrowd = new PH.CityCrowd(scene);
-  var beachCrowd = new PH.BeachCrowd(scene);
-  var police = new PH.Police(scene);
-  var heli = PH.makeHeli();
-  scene.add(heli);
-  var hero = PH.makeCar({ kind: 'hero' });
-  scene.add(hero);
-  var flash = new PH.MuzzleFlash(scene);
-  // v7.3 systems: boat chase on the water + street race on the roads
-  var boatChase = new PH.BoatChase(scene);
-  var race = new PH.Race(scene);
-  // crew cards (canvas portraits) are built once the HUD exists
-  if (PH.buildCrewCards) PH.buildCrewCards();
-
-  // ---------- game state ----------
-  var S = {
-    wanted: 0, health: 100, armor: 80, ammo: 12, money: 24750,
-    speed: 0, // units/s of the hero car
-    onFoot: false, heading: 0, // hero heading (radians, 0 = +Z south)
-    heroPos: new THREE.Vector3(-20, 0, 8),
-    mateoPos: new THREE.Vector3(-10, 0, -4),
-    mateoHeading: 0, // face direction: 0 = south (+Z), PI/2 = east, -PI/2 = north; procedural rig faces +Z, offset 0
-    objective: { x: -58, z: 40 },
-    radio: 'NIGHTWAVE 98.3 — SUNSET DRIVE',
-    started: false, time: 0, frames: 0
+  var game = {
+    state: 'loading', // loading | title | play | paused
+    mode: 'driving',  // driving | onfoot | boat
+    paused: false,
+    time: 0,
+    missionTime: 0,
+    stage: 1,         // 1 meet Kira, 2 race, 3 boat, 4 done
+    raceSub: 'toStart', // toStart | racing
+    money: 250,
+    wantedPts: 0,
+    lastCrimeT: -99,
+    player: { x: -14, z: 3, heading: Math.PI / 2, health: 100, armor: 50, speed: 0 },
+    car: null,        // driven car state {group,name,isHero,x,z,heading,speed,damage}
+    heroCar: null,
+    heroDamage: 0,
+    mateo: null,
+    kira: null,
+    kiraOnBoat: false,
+    boat: { x: 8, z: 152, heading: 0, speed: 0, boarded: false },
+    weaponIdx: 1,
+    weapons: null,
+    fireCooldown: 0,
+    keys: {},
+    camOrbit: 0,
+    camPos: new THREE.Vector3(0, 6, -14),
+    marker: null,
+    muzzle: null,
+    particles: [],
+    shootables: [],
+    raycaster: new THREE.Raycaster(),
+    acc: 0,
+    prevCar: { x: 0, z: 0, heading: 0 },
+    prevPlayer: { x: 0, z: 0, heading: 0 },
+    prevBoat: { x: 0, z: 0, heading: 0 },
+    dialogTimer: null,
+    saveExists: false,
+    perf: { frames: 0, startT: 0, times: [], fps: 0, fpsLow: 0 }
   };
-  var mateo = null, kira = null;
-
-  // ---------- shot-3 beach foreground (round 2) ----------
-  // The v7.4 shot 3 frame was half empty sand: the boat sat 38 units
-  // away and the bottom of the frame was bare beach. The new camera
-  // sits ~15 units from the boat, and this foreground fills the sand
-  // between lens and boat — one umbrella, towels, sunbathers and a
-  // sandcastle, all LOW (lying / flat) except the umbrella, which
-  // frames the left edge instead of covering the boat.
-  function beachForeground3() {
-    var g = new THREE.Group();
-    var cols = [0xff3b30, 0xffc832, 0x2a9df4, 0xff6ab0];
-    function umbrella(x, z, color, scale) {
-      var ug = new THREE.Group(); ug.position.set(x, 0, z);
-      ug.scale.setScalar(scale || 1);
-      var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.6, 6),
-        new THREE.MeshStandardMaterial({ color: 0xd8d0c0, roughness: 0.7 }));
-      pole.position.y = 1.3; ug.add(pole);
-      var canopy = new THREE.Mesh(new THREE.ConeGeometry(2.1, 0.9, 10),
-        new THREE.MeshStandardMaterial({ color: color, roughness: 0.7 }));
-      canopy.position.y = 2.8; canopy.castShadow = true; ug.add(canopy);
-      g.add(ug);
-    }
-    function towel(x, z, color, ry) {
-      var tw = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.0),
-        new THREE.MeshStandardMaterial({ color: color, roughness: 0.95 }));
-      tw.rotation.x = -Math.PI / 2; tw.rotation.z = ry || 0;
-      tw.position.set(x, 0.08, z); g.add(tw);
-    }
-    function sunbather(x, z, ry, shirt) {
-      var p = PH.makePerson({ shirt: shirt });
-      p.group.position.set(x, 0, z);
-      p.group.rotation.y = ry;
-      p.setPose('lying', 0, 5);
-      g.add(p.group);
-      towel(x, z, 0xffc832, ry);
-    }
-    function sandcastle(x, z) {
-      var c = new THREE.Group(); c.position.set(x, 0, z);
-      var base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, 0.9, 8),
-        new THREE.MeshStandardMaterial({ color: 0xd8b878, roughness: 1 }));
-      base.position.y = 0.45; c.add(base);
-      var tower = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.2, 8),
-        new THREE.MeshStandardMaterial({ color: 0xd8b878, roughness: 1 }));
-      tower.position.set(0.3, 1.0, 0.2); c.add(tower);
-      var flag = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.7, 0.05),
-        new THREE.MeshStandardMaterial({ color: 0xff3b30, roughness: 0.8 }));
-      flag.position.set(0.3, 1.9, 0.2); c.add(flag);
-      g.add(c);
-    }
-    // round 2b: every foreground prop sits OFF the lens-to-boat line
-    // (the first layout put the umbrella + cooler dead centre and hid
-    // the boat). The umbrella frames the left edge, the sunbathers lie
-    // low left, the cooler + bag sit at the far left edge.
-    umbrella(-109, 47, cols[0], 0.8);
-    towel(-106, 42, cols[1], 0.4);
-    towel(-105, 45, cols[2], -0.3);
-    sunbather(-106, 41.5, 0.6, 0xd83a2a);
-    sunbather(-105, 44.5, -0.4, 0x0e7a7a);
-    sandcastle(-104, 41);
-    // a cooler + beach bag at the towel line, so the foreground has
-    // small props as well as people
-    var cooler = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.55),
-      new THREE.MeshStandardMaterial({ color: 0x2a9df4, roughness: 0.6 }));
-    cooler.position.set(-109, 0.25, 48.5); g.add(cooler);
-    var bag = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.3),
-      new THREE.MeshStandardMaterial({ color: 0xff6ab0, roughness: 0.9 }));
-    bag.position.set(-107, 0.3, 49.5); bag.rotation.y = 0.5; g.add(bag);
-    // v7.6 — the dead man on the sand (pengguna 21 Nov 21:18 WIB):
-    // the figure lying here is NOT sunbathing, it is a BODY. A lying
-    // figure in dark clothes, head toward the water, with dark-red
-    // blood pools on the sand around the torso and head, a blood trail
-    // along the body and a stain on the chest — stylized flat discs in
-    // the game's low-poly language, not photorealistic, but unmistakable
-    // as a beach crime scene. Dark clothes (grey/black) so the figure
-    // reads as a body, never as another sunbather.
-    // v7.6 rev 2: render pass 1 put the body at (-102, 45.5) — crammed
-    // into the bottom-right corner, half under the speedometer HUD,
-    // and the pools were oversized (one big red splat). Moved 1.5 left
-    // so the whole body clears the HUD, pools shrunk to read as pools.
-    // v7.6 rev 3: pass 2 hid the body BEHIND the Kira dialog panel —
-    // the (-103.5, 45.0) spot projects to (752, 561), inside the dialog
-    // rect. The spot is now (-103.5, 43): camera projection puts the
-    // body at screen (825, 471)-(876, 526), clear of every HUD panel
-    // (dialog, minimap, speedometer) and ~2 units from the sandcastle,
-    // so the body AND the blood read in the open sand.
-    var victim = PH.makePerson({ shirt: 0x3a3a3a, pants: 0x2a2a2a, skin: 0xd8b89a });
-    victim.group.position.set(-103.5, 0, 43.0);
-    victim.group.rotation.y = 0.9;
-    victim.setPose('lying', 0, 5);
-    g.add(victim.group);
-    var bloodMat = new THREE.MeshStandardMaterial({ color: 0x7a0e0e, roughness: 0.9 });
-    function bloodPool(x, z, r, sx, sz, rz) {
-      var p = new THREE.Mesh(new THREE.CircleGeometry(r, 14), bloodMat);
-      p.rotation.x = -Math.PI / 2; p.rotation.z = rz || 0;
-      p.scale.set(sx || 1, sz || 1, 1);
-      p.position.set(x, 0.06, z);
-      g.add(p);
-    }
-    bloodPool(-104.3, 42.35, 0.55);            // main pool, by the torso
-    bloodPool(-103.5, 43.3, 0.35);             // second pool, by the legs
-    bloodPool(-105.0, 41.9, 0.25);             // small pool, by the head
-    bloodPool(-104.0, 42.6, 0.5, 1.5, 0.7, 0.9); // smeared trail along the body
-    // blood stain on the chest: a flat dark-red patch on top of the
-    // lying torso, so the wound reads even at a glance
-    var stain = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 0.5), bloodMat);
-    stain.rotation.x = -Math.PI / 2; stain.rotation.z = 0.9;
-    stain.position.set(-104.3, 0.12, 42.35);
-    g.add(stain);
-    scene.add(g);
-    return g;
-  }
-
-  // Push any beach NPC that would drift into the shot-3 frame (within
-  // `radius` of the camera) out of the way: swimmers go further west
-  // into deep water, land NPCs go east up the beach. Staged shots only.
-  function clearBeachNearCamera(camPos, radius) {
-    beachCrowd.members.forEach(function (m) {
-      var pos = m.p.group.position;
-      var dx = pos.x - camPos.x, dz = pos.z - camPos.z;
-      if (dx * dx + dz * dz < radius * radius) {
-        if (m.pose === 'swim' || m.pose === 'surf') { pos.x = -150; pos.z = PH.clamp(pos.z + 40, -120, 120); }
-        else { pos.x = -60; pos.z = PH.clamp(pos.z - 30, -130, 130); }
-        m.home.copy(pos);
-      }
-    });
-  }
-
-  // ---------- foreground prop sets (frame edges, hero + action stay clear) ----
-  function foregroundSet(n) {
-    var g = new THREE.Group();
-    function crate(x, y, z, s) {
-      var c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s),
-        new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 0.95 }));
-      c.position.set(x, y + s / 2, z); c.rotation.y = PH.rand(0, 1); c.castShadow = true;
-      g.add(c);
-    }
-    function bin(x, z) {
-      var b = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.38, 1.0, 10),
-        new THREE.MeshStandardMaterial({ color: 0x2a4a2a, roughness: 0.7, metalness: 0.3 }));
-      b.position.set(x, 0.5, z); b.castShadow = true; g.add(b);
-    }
-    function hydrant(x, z) {
-      var h = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 8),
-        new THREE.MeshStandardMaterial({ color: 0xc02020, roughness: 0.6 }));
-      h.position.set(x, 0.45, z); g.add(h);
-    }
-    function bench(x, z, ry) {
-      var b = new THREE.Group(); b.position.set(x, 0, z); b.rotation.y = ry || 0;
-      var seat = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.12, 0.6),
-        new THREE.MeshStandardMaterial({ color: 0x7a5a30, roughness: 0.9 }));
-      seat.position.y = 0.55; b.add(seat);
-      g.add(b);
-    }
-    function cart(x, z, ry) {
-      // tipped fruit cart — v7.4: the fruit stays IN the tray and in
-      // two crates beside it; the v7.3 scatter of 14 loose fruit read
-      // as litter across the road
-      var c = new THREE.Group(); c.position.set(x, 0, z); c.rotation.y = ry || 0;
-      var tray = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.12, 1.0),
-        new THREE.MeshStandardMaterial({ color: 0x8a4a20, roughness: 0.9 }));
-      tray.position.y = 0.5; tray.rotation.z = 0.9; c.add(tray);
-      var wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.1, 10),
-        new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 }));
-      wheel.rotation.x = Math.PI / 2; wheel.position.set(0.7, 0.35, 0); c.add(wheel);
-      g.add(c);
-      var fruitCols = [0xff7a1a, 0xff3b30, 0xffc832, 0x37d67a];
-      for (var i = 0; i < 4; i++) {
-        var f = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6),
-          new THREE.MeshStandardMaterial({ color: fruitCols[i % 4], roughness: 0.5 }));
-        f.position.set(x + PH.rand(-0.5, 0.5), 0.62, z + PH.rand(-0.3, 0.3));
-        g.add(f);
-      }
-      [-1.2, 1.2].forEach(function (dx) {
-        var crate = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.7),
-          new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 0.95 }));
-        crate.position.set(x + dx, 0.25, z + 0.8); g.add(crate);
-        for (var j = 0; j < 3; j++) {
-          var cf = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6),
-            new THREE.MeshStandardMaterial({ color: fruitCols[(i + j) % 4], roughness: 0.5 }));
-          cf.position.set(x + dx - 0.18 + (j % 2) * 0.36, 0.55, z + 0.8 + (j < 2 ? -0.15 : 0.15));
-          g.add(cf);
-        }
-      });
-    }
-    function towelSurf(x, z) {
-      var tw = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.0),
-        new THREE.MeshStandardMaterial({ color: 0xff3b30, roughness: 0.95 }));
-      tw.rotation.x = -Math.PI / 2; tw.position.set(x, 0.08, z); g.add(tw);
-      var bd = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.55, 2.6, 8),
-        new THREE.MeshStandardMaterial({ color: 0x2a9df4, roughness: 0.5 }));
-      bd.scale.z = 0.28; bd.position.set(x + 1.6, 1.1, z); g.add(bd);
-    }
-    function bucket(x, z) {
-      var b = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.22, 0.45, 10),
-        new THREE.MeshStandardMaterial({ color: 0xc02020, roughness: 0.7 }));
-      b.position.set(x, 0.22, z); g.add(b);
-    }
-    function edgeWalkers(n, spots) {
-      for (var i = 0; i < n; i++) {
-        var sp = spots[i % spots.length];
-        var p = PH.makePerson({});
-        p.group.position.set(sp[0] + PH.rand(-1, 1), sp[2] || 0, sp[1] + PH.rand(-1, 1));
-        p.group.rotation.y = PH.rand(0, Math.PI * 2);
-        p.setPose('walk', 0, 6);
-        g.add(p.group);
-      }
-    }
-    if (n === 1) { // chase: cart + crate + bin + hydrant + bench + 3 walkers, road edge
-      cart(-27.5, 14, 0.4); crate(-28.6, 0, 17, 0.9); bin(-11.8, 16); hydrant(-28.4, 10); bench(-12, 18, 0.2);
-      edgeWalkers(3, [[-28.8, 12, 0], [-11.5, 13, 0], [-28.8, 20, 0]]);
-    } else if (n === 2) { // on foot: props + 6 walkers along the frame EDGES of the east sidewalk, 9-13 units out (rev 5: at 3-6 units they filled half the frame)
-      cart(-14.2, -10, -0.3); crate(-5.6, -12, 0.9); bin(-14.2, -12); bench(-5.6, -9, 0); hydrant(-14.2, -8.5);
-      edgeWalkers(6, [[-14.5, -9, 0], [-14.5, -12, 0], [-5.5, -10, 0], [-5.5, -13, 0], [-14.5, -11, 0], [-5.5, -8.5, 0]]);
-    } else if (n === 3) { // mission: pier end — props on the NEAR rail
-      // (z 43.4, the rail closest to the shot-3 camera) and the west
-      // deck end, so the bottom-right wood is dressed, not bare
-      crate(-78, 1.35, 43.4, 0.9); towelSurf(-84, 43.4); bin(-86, 43.4); bucket(-72, 43.4);
-      edgeWalkers(5, [[-76, 43.4, 1.35], [-68, 43.4, 1.35], [-72, 37, 1.35], [-80, 37, 1.35], [-66, 43.4, 1.35]]);
-    } else { // combat: cart + crate + bin + hydrant + 5 walkers/runners, road edges only (rev 3: the old mid-road walker at (-20,24) stood 1.5 units from the lens)
-      cart(-27.5, 28, 0.5); crate(-28.6, 0, 24, 0.9); bin(-11.8, 30); hydrant(-28.4, 33);
-      edgeWalkers(5, [[-28.8, 26, 0], [-11.5, 28, 0], [-27, 33, 0], [-28.8, 38, 0], [-11.5, 36, 0]]);
-    }
-    scene.add(g);
-    return g;
-  }
-
-  // ---------- HUD helpers ----------
-  function applyHUD(cfg) {
-    PH.hud.setObjective(cfg.objective);
-    PH.hud.setWanted(cfg.wanted);
-    PH.hud.setMoney(cfg.money);
-    PH.hud.setHealth(cfg.health);
-    PH.hud.setArmor(cfg.armor);
-    PH.hud.setAmmo(cfg.ammo, 12);
-    PH.hud.setSpeed(cfg.speedKmh || 0);
-    PH.hud.setCar(cfg.carStatus);
-    PH.hud.setRadio(cfg.radio);
-    PH.hud.setDispatch(cfg.dispatch || null);
-    PH.hud.setWeapon('pistol');
-    if (cfg.ammoSmg != null) { var s = document.getElementById('ammo-smg'); if (s) s.textContent = cfg.ammoSmg + '/30'; }
-    if (cfg.ammoRifle != null) { var r = document.getElementById('ammo-rifle'); if (r) r.textContent = cfg.ammoRifle + '/24'; }
-    if (cfg.ammoShotgun != null) { var sg = document.getElementById('ammo-shotgun'); if (sg) sg.textContent = cfg.ammoShotgun + '/6'; }
-    if (cfg.carName) PH.hud.setCarName(cfg.carName, cfg.carCond);
-    if (cfg.race) { PH.hud.setRace(cfg.race.pos, cfg.race.total, cfg.race.lap, cfg.race.laps, cfg.race.countdown); PH.hud.setRaceGap(cfg.race.gap); }
-    else { PH.hud.setRace(0, 0, 0, 0, null); PH.hud.setRaceGap(null); }
-    if (cfg.boat) PH.hud.setBoat(cfg.boat.speedKn, cfg.boat.dist, cfg.boat.police, cfg.boat.pos, cfg.boat.total);
-    if (cfg.crew) cfg.crew.forEach(function (c) { PH.hud.setCrew(c.who, c.status); });
-    if (cfg.dialog) PH.hud.setDialog(cfg.dialog.who, cfg.dialog.name, cfg.dialog.text);
-    else PH.hud.setDialog(null);
-  }
-
-  // Keep staged shots clear: push any crowd walker that would drift in
-  // front of the lens (within `radius` of the camera) 40 units along its
-  // lane. Walkers move ~2 u/s and the screenshot comes ~5 s after staging,
-  // so a 14-unit radius keeps the frame clear. Free play is untouched.
-  function clearCrowdNearCamera(camPos, radius) {
-    cityCrowd.people.forEach(function (w) {
-      var pos = w.p.group.position;
-      var dx = pos.x - camPos.x, dz = pos.z - camPos.z;
-      if (dx * dx + dz * dz < radius * radius) {
-        if (w.lane.axis === 'z') pos.z = PH.clamp(pos.z + (pos.z > camPos.z ? 40 : -40), -165, 165);
-        else pos.x = PH.clamp(pos.x + (pos.x > camPos.x ? 40 : -40), -8, 165);
-      }
-    });
-    cityCrowd.pier.forEach(function (w) {
-      var pos = w.p.group.position;
-      var dx = pos.x - camPos.x, dz = pos.z - camPos.z;
-      if (dx * dx + dz * dz < 36) pos.x = PH.clamp(pos.x - 20, -84, -32);
-    });
-  }
-
-  // ---------- staging ----------
-  function stageShot() {
-    var cfg;
-    if (shotNum === 1) {
-      // COVER — sunset chase, wanted 3
-      S.wanted = 3; S.health = 100; S.armor = 80; S.ammo = 12; S.money = 24750;
-      S.speed = 26; S.onFoot = false; S.objective = { x: -58, z: 40 };
-      S.heroPos.set(-20, 0, 8); S.heading = THREE.MathUtils.degToRad(198);
-      hero.position.copy(S.heroPos); hero.rotation.y = S.heading;
-      var cruisers1 = [[-16.5, -2], [-23.5, -8], [-16.5, -18]];
-      police.cruisers.forEach(function (c, i) {
-        c.position.set(cruisers1[i][0], 0, cruisers1[i][1]);
-        c.rotation.y = Math.PI; // facing south
-      });
-      police.officers.forEach(function (o, i) { o.group.position.set(-30 + i * 3, 0, -30); });
-      traffic.freeze([
-        { x: -23.5, z: -30, heading: 0 }, { x: -16.5, z: -42, heading: 0 },
-        { x: 8, z: -40, heading: Math.PI / 2 }, { x: 30, z: -40, heading: Math.PI / 2 }
-      ]);
-      heli.position.set(-30, 11, -25); heli.rotation.y = THREE.MathUtils.degToRad(135);
-      camera.fov = 46; camera.updateProjectionMatrix();
-      camera.position.set(-15, 3.2, 21);
-      camera.lookAt(-20, 1.6, -2);
-      foregroundSet(1);
-      // v7.3: street race is live in shot 1 — the next checkpoint gate
-      // arches over the road ahead and a rival car runs alongside.
-      race.stageShot();
-      // v7.5: wet-road taillight streaks (wetroad.js) — the hero's red
-      // lamps and the cruisers' lights smear on the wet asphalt
-      // toward the camera. Hero rear = hero (-20,8) minus 2.4 along
-      // forward (sin 198°, cos 198°); cruisers face south, so their
-      // rears sit 2.4 north of their positions.
-      if (PH.carWetStreak) {
-        PH.carWetStreak(scene, -19.3, 10.3, 0xff2a1a);
-        PH.carWetStreak(scene, -16.5, 0.4, 0xff5040);
-        PH.carWetStreak(scene, -23.5, -5.6, 0xff5040);
-        PH.carWetStreak(scene, -16.5, -15.6, 0xff5040);
-      }
-      cfg = {
-        objective: { title: 'PIER HEAT — STREET RACE', stage: 'STAGE 2/3 — LOSE THE HEAT', progress: 66, timer: '02:41', text: 'Beat the rival through the checkpoints and lose the PD.', next: 'NEXT: Checkpoint 3/14 — follow the amber gate' },
-        wanted: 3, money: 24750, health: 100, armor: 80, ammo: 12, speedKmh: 96,
-        carStatus: 'SCARLET ARROW — READY', carName: 'SCARLET ARROW', carCond: 98,
-        radio: 'NIGHTWAVE 98.3 — SUNSET DRIVE',
-        race: { pos: 2, total: 4, lap: 1, laps: 2, countdown: null, gap: 0.4 },
-        crew: [
-          { who: 'mateo', status: 'RACING' },
-          { who: 'kira', status: 'ON THE RADIO' },
-          { who: 'dario', status: 'IN THE PIT' },
-          { who: 'lena', status: 'ON CALL' }
-        ],
-        dispatch: [
-          { tactic: 'PURSUIT', unit: 'PD-104', role: 'CRUISER', dist: 42 },
-          { tactic: 'RAMMING', unit: 'PD-111', role: 'CRUISER', dist: 68 },
-          { tactic: 'SPOTLIGHT', unit: 'HELI-1', role: 'AIR UNIT', dist: 91 },
-          { tactic: 'ROADBLOCK', unit: 'PD-125', role: 'CRUISER', dist: 120 },
-          { tactic: 'PURSUIT', unit: 'PD-130', role: 'CRUISER', dist: 155 },
-          { tactic: 'SPOTLIGHT', unit: 'HELI-2', role: 'AIR UNIT', dist: 210 }
-        ]
-      };
-    } else if (shotNum === 2) {
-      // ON FOOT — day, Mateo faces the camera, big in frame
-      S.wanted = 0; S.health = 100; S.armor = 80; S.ammo = 12; S.money = 48250;
-      S.onFoot = true; S.objective = { x: -58, z: 40 };
-      S.mateoPos.set(-10, 0, -4); S.mateoHeading = 0; // facing south, toward the camera (camera is south of Mateo)
-      hero.position.set(-20, 0, -30); hero.rotation.y = Math.PI;
-      police.cruisers.forEach(function (c, i) { c.position.set(-60 + i * 6, 0, -60); c.rotation.y = Math.PI; });
-      police.officers.forEach(function (o, i) { o.group.position.set(-40 + i * 3, 0, -70); });
-      traffic.freeze([
-        { x: -23.5, z: -34, heading: 0 }, { x: -16.5, z: -52, heading: 0 },
-        { x: -23.5, z: 12, heading: 0 }
-      ]);
-      heli.position.set(-27, 8, -38); heli.rotation.y = THREE.MathUtils.degToRad(108); // round 2: pulled in + down (was (-30,9,-42)) — the rotor brushed the top frame edge in the v7.4 shot; now the whole heli sits inside the frame with margin
-      camera.fov = 50; camera.updateProjectionMatrix();
-      camera.position.set(-10, 2.0, -0.5);
-      camera.lookAt(-10, 1.5, -6); // camera restored to the v7.2 spot; the lamp pole that blocked it is skipped in world.js instead
-      // v7.5: Mateo's heading is derived from the camera, not a
-      // constant, so he can never face away again if the camera moves
-      // — he looks straight down the lens. (The v7.4 render already
-      // showed his face; this makes it structural, not luck.)
-      S.mateoHeading = Math.atan2(camera.position.x - S.mateoPos.x, camera.position.z - S.mateoPos.z);
-      foregroundSet(2);
-      cfg = {
-        objective: { title: 'PIER HEAT — MEET KIRA', stage: 'STAGE 1/3 — MEET KIRA', progress: 33, timer: '', text: 'Meet Kira at the pier — follow the yellow marker.', next: 'NEXT: Meet Kira at the pier — follow the yellow marker' },
-        wanted: 0, money: 48250, health: 100, armor: 80, ammo: 12, speedKmh: 0,
-        carStatus: 'ON FOOT — MATEO VEGA', carName: 'MATEO VEGA', carCond: null,
-        radio: 'NEON STREETS', dispatch: null,
-        crew: [
-          { who: 'mateo', status: 'ON FOOT' },
-          { who: 'kira', status: 'WAITING AT PIER' },
-          { who: 'dario', status: 'IN THE PIT' },
-          { who: 'lena', status: 'ON CALL' }
-        ]
-      };
-    } else if (shotNum === 3) {
-      // MISSION — day, ON THE WATER (v7.4): Mateo stands AT THE HELM
-      // of the speedboat in his life vest, both hands on the wheel,
-      // wake behind him and two police boats + the heli in pursuit.
-      // Kira stays on the pier end, waving him off. The boat chase is
-      // the shot now — a gameplay scene the top entries do not show.
-      S.wanted = 0; S.health = 100; S.armor = 80; S.ammo = 12; S.money = 36900;
-      S.onFoot = true; S.objective = { x: -112, z: 40 };
-      boatChase.stageShot();
-      var deck = boatChase.deckPos();
-      S.mateoPos.set(deck.x, deck.y, deck.z); S.mateoHeading = deck.heading; // facing the bow (east), hands on the helm
-      hero.position.set(-20, 0, 60); hero.rotation.y = Math.PI;
-      police.cruisers.forEach(function (c, i) { c.position.set(-60 + i * 6, 0, 80); c.rotation.y = Math.PI; });
-      police.officers.forEach(function (o, i) { o.group.position.set(-40 + i * 3, 0, 90); });
-      traffic.freeze([
-        { x: -23.5, z: 30, heading: 0 }, { x: -16.5, z: 44, heading: 0 }
-      ]);
-      // heli over the water, spotlight toward the boats — round 2b:
-      // lowered to y 7 so the whole heli AND its rotor sit inside the
-      // closer shot-3 frame instead of brushing its top edge
-      // v7.5: lowered again, 7 -> 5.2 — the v7.4 render still had the
-      // rotor blades ~60 px from the top edge, so the heli drops until
-      // the whole disc has clear sky above it.
-      heli.position.set(-114, 5.2, 30); heli.rotation.y = THREE.MathUtils.degToRad(144);
-      camera.fov = 50; camera.updateProjectionMatrix();
-      // round 2: the camera moves in from 38 units to ~15, so the boat
-      // + Mateo fill a third of the frame instead of a tenth — and the
-      // sand between lens and boat is dressed with beachgoers, not bare
-      camera.position.set(-99, 3.0, 50);
-      camera.lookAt(-111, 1.0, 40.5);
-      foregroundSet(3);
-      beachForeground3();
-      clearBeachNearCamera(camera.position, 22);
-      cfg = {
-        objective: { title: 'PIER HEAT — THE BOAT JOB', stage: 'STAGE 1/3 — THE BOAT JOB', progress: 20, timer: '', text: 'You are at the helm — police boats are already on the water. Cut across the bay and don\'t look back.', next: 'NEXT: Outrun the police boats across the bay' },
-        wanted: 0, money: 36900, health: 100, armor: 80, ammo: 12, speedKmh: 0,
-        carStatus: 'AT THE HELM — SPEEDBOAT', carName: 'SPEEDBOAT', carCond: 100,
-        radio: 'PIER LIGHTS', dispatch: null,
-        boat: { speedKn: 32, dist: 120, police: 38, pos: 1, total: 2 },
-        crew: [
-          { who: 'mateo', status: 'AT THE HELM' },
-          { who: 'kira', status: 'ON THE BOAT' },
-          { who: 'dario', status: 'FUELLED THE BOAT' },
-          { who: 'lena', status: 'ON CALL' }
-        ],
-        dialog: { who: 'kira', name: 'KIRA — HANDLER', text: 'Hold on — police boats closing in from behind. Keep her straight and don\'t look back.' }
-      };
-    } else {
-      // COMBAT — sunset, wanted 5, Mateo shooting
-      S.wanted = 5; S.health = 82; S.armor = 65; S.ammo = 9; S.money = 84300;
-      S.speed = 0; S.onFoot = true; S.objective = { x: -20, z: 40 };
-      S.mateoPos.set(-19.5, 0, 31); S.mateoHeading = 0; // facing south (back to camera)
-      hero.position.set(-24, 0, 34); hero.rotation.y = Math.PI;
-      var cruisers4 = [[-23.5, 43], [-16.5, 49], [-23.5, 57]];
-      police.cruisers.forEach(function (c, i) {
-        c.position.set(cruisers4[i][0], 0, cruisers4[i][1]);
-        c.rotation.y = Math.PI;
-      });
-      var offs = [[-21.5, 39], [-18, 41.5], [-23, 36.5]];
-      police.officers.forEach(function (o, i) {
-        o.group.position.set(offs[i][0], 0, offs[i][1]);
-        // round 2: officers face SOUTH (rotation 0) — toward Mateo and
-        // the camera — so their white helmets, hi-vis vests and faces
-        // read. The old rotation (PI, facing north) showed only their
-        // dark backs, and they read as black blobs.
-        o.group.rotation.y = 0;
-        o.setPose('aim', 0, 5);
-      });
-      traffic.freeze([
-        { x: -16.5, z: 12, heading: 0 }, { x: -23.5, z: -2, heading: 0 }
-      ]);
-      heli.position.set(-26, 7, 58); heli.rotation.y = THREE.MathUtils.degToRad(126);
-      camera.fov = 50; camera.updateProjectionMatrix();
-      camera.position.set(-17.5, 2.8, 25.5);
-      camera.lookAt(-20.5, 1.5, 36);
-      foregroundSet(4);
-      // v7.5: wet-road taillight streaks (wetroad.js) — the hero and
-      // the three cruisers all face north (heading PI), so their rears
-      // sit 2.4 south of their positions and the red smears run toward
-      // the camera, which stands north of them.
-      if (PH.carWetStreak) {
-        PH.carWetStreak(scene, -24, 36.4, 0xff2a1a);
-        PH.carWetStreak(scene, -23.5, 45.4, 0xff5040);
-        PH.carWetStreak(scene, -16.5, 51.4, 0xff5040);
-        PH.carWetStreak(scene, -23.5, 59.4, 0xff5040);
-      }
-      cfg = {
-        objective: { title: 'PIER HEAT — HOLD THE LINE', stage: 'STAGE 3/3 — HOLD THE LINE', progress: 85, timer: '01:12', text: 'The Bay City PD wants the Scarlet Arrow. Hold the line.', next: 'NEXT: Hold the line — protect the Scarlet Arrow' },
-        wanted: 5, money: 84300, health: 82, armor: 65, ammo: 9, speedKmh: 0,
-        carStatus: 'SCARLET ARROW — BATTLE-WORN', carName: 'SCARLET ARROW', carCond: 76,
-        radio: 'SIRENS', ammoSmg: 0, ammoRifle: 0, ammoShotgun: 0,
-        crew: [
-          { who: 'mateo', status: 'HOLDING THE LINE' },
-          { who: 'kira', status: 'ON THE RADIO' },
-          { who: 'dario', status: 'IN THE PIT' },
-          { who: 'lena', status: 'ON CALL' }
-        ],
-        dispatch: [
-          { tactic: 'RAMMING', unit: 'PD-104', role: 'CRUISER', dist: 18 },
-          { tactic: 'PURSUIT', unit: 'PD-111', role: 'CRUISER', dist: 24 },
-          { tactic: 'PURSUIT', unit: 'PD-118', role: 'CRUISER', dist: 31 },
-          { tactic: 'SPOTLIGHT', unit: 'HELI-1', role: 'AIR UNIT', dist: 55 },
-          { tactic: 'ROADBLOCK', unit: 'PD-122', role: 'CRUISER', dist: 74 },
-          { tactic: 'K9', unit: 'PD-127', role: 'K9 UNIT', dist: 96 }
-        ]
-      };
-    }
-    clearCrowdNearCamera(camera.position, 14);
-    applyHUD(cfg);
-    return cfg;
-  }
-
-  // ---------- Mateo + Kira loading ----------
-  function placeMateo() {
-    if (!mateo) return;
-    mateo.root.position.copy(S.mateoPos);
-    mateo.root.rotation.y = S.mateoHeading + (mateo.forwardOffset || 0);
-    if (shotNum === 3) {
-      // v7.4: Mateo stands at the helm of the speedboat, life vest on,
-      // both hands on the wheel — the drive pose, not idle
-      mateo.setBoatGear(true);
-      mateo.setAnim('drive');
-    } else {
-      mateo.setBoatGear(false);
-      if (shotNum === 2) mateo.setAnim('walk');
-      else if (shotNum === 4) mateo.setAnim('aim');
-      else mateo.setAnim('idle');
-    }
-  }
-  function placeKira() {
-    if (!kira) return;
-    if (shotNum === 3) {
-      // v7.4 rev 2: Kira rides along on the stern bench, life vest on,
-      // facing back toward the police boats — the pier-end spot put
-      // her behind the minimap, so she joins the boat instead
-      var stern = boatChase.sternPos();
-      kira.root.position.set(stern.x, stern.y, stern.z);
-      kira.root.rotation.y = stern.heading + (kira.forwardOffset || 0);
-      kira.setBoatGear(true);
-      kira.setAnim('point'); // round 2: Kira points at the police boats closing in, instead of waving — the chase reads as a chase
-    } else {
-      kira.root.position.set(-14, 0, -60);
-      kira.root.rotation.y = (kira.forwardOffset || 0);
-      kira.setAnim('idle');
-    }
-  }
-  PH.loadMateo(scene, { MateoJacket: 0xff7a1a }, function (api) {
-    mateo = api;
-    window.__mateoLoaded = api.loaded;
-    placeMateo();
-    if (shotNum === 4) flash.place(S.mateoPos, S.mateoHeading, true);
-  });
-  PH.loadMateo(scene, { MateoJacket: 0x0e7a7a, MateoTee: 0x222831, MateoHair: 0x2a1a12 }, function (api) {
-    kira = api;
-    placeKira();
+  PH.game = game;
+  game.weapons = WEAPONS.map(function (w) {
+    return { name: w.name, dmg: w.dmg, mag: w.mag, reserve: w.reserve, magSize: w.magSize, rate: w.rate, range: w.range, auto: w.auto };
   });
 
-  // ---------- input (free play) ----------
-  var keys = {};
-  addEventListener('keydown', function (e) {
-    keys[e.code] = true;
-    if (e.code === 'KeyM') PH.Audio.toggleMute();
-    if (e.code === 'KeyP' && !isShot) saveGame();
-    if (e.code === 'KeyF' && !isShot) toggleFoot();
-  });
-  addEventListener('keyup', function (e) { keys[e.code] = false; });
-  addEventListener('mousedown', function () {
-    PH.Audio.init();
-    if (!isShot && S.onFoot && S.ammo > 0) shoot();
-  });
-  document.getElementById('mute-btn').addEventListener('click', function () {
-    PH.Audio.init(); PH.Audio.toggleMute();
-  });
-  document.getElementById('start-btn').addEventListener('click', function () {
-    PH.Audio.init();
-    document.getElementById('title-screen').style.display = 'none';
-    S.started = true;
-    PH.hud.toast('Engine started — lose the heat, reach the pier.');
-  });
+  // ---------------- boot ----------------
+  function buildAll() {
+    PH.world.build();
+    PH.sim.initTraffic();
+    PH.sim.initPeds();
+    PH.race.buildGates();
+    PH.sky.init();
+    PH.heli.init();
+    PH.water.init();
+    PH.facades.apply();
+    PH.wetroad.init();
+    PH.boats.init();
+    // hero car
+    var hero = PH.buildHeroCar();
+    var s = PH.world.spawns.heroCar;
+    hero.position.set(s.x, 0, s.z);
+    hero.rotation.y = s.heading;
+    PH.scene.add(hero);
+    game.heroCar = hero;
+    game.car = {
+      group: hero, name: 'SCARLET ARROW', isHero: true,
+      x: s.x, z: s.z, heading: s.heading, speed: 0, damage: 0
+    };
+    game.prevCar = { x: s.x, z: s.z, heading: s.heading };
+    // Mateo
+    var mateo = PH.buildMateo();
+    mateo.userData.baseY = 0;
+    var ps = PH.world.spawns.playerStart;
+    mateo.position.set(ps.x, 0, ps.z);
+    mateo.rotation.y = ps.heading;
+    mateo.visible = false; // starts inside the car
+    PH.scene.add(mateo);
+    game.mateo = mateo;
+    game.player.x = ps.x; game.player.z = ps.z; game.player.heading = ps.heading;
+    game.prevPlayer = { x: ps.x, z: ps.z, heading: ps.heading };
+    // Kira on the pier
+    var kira = PH.buildCrewMember('kira');
+    var ks = PH.world.spawns.kira;
+    kira.position.set(ks.x, 1.2, ks.z);
+    kira.rotation.y = Math.PI; // facing the city
+    PH.scene.add(kira);
+    game.kira = kira;
+    // Dario + Lena waiting near the pier mouth (crew, ambient)
+    var dario = PH.buildCrewMember('dario');
+    dario.position.set(-8, 0, 102); dario.rotation.y = 1.2; PH.scene.add(dario);
+    game.dario = dario;
+    var lena = PH.buildCrewMember('lena');
+    lena.position.set(8, 0, 102); lena.rotation.y = -1.2; PH.scene.add(lena);
+    game.lena = lena;
+    // objective marker: floating diamond
+    var marker = new THREE.Mesh(new THREE.OctahedronGeometry(0.9),
+      new THREE.MeshStandardMaterial({ color: 0xffb347, emissive: 0xff8a00, emissiveIntensity: 1.4 }));
+    marker.visible = true;
+    PH.scene.add(marker);
+    game.marker = marker;
+    // muzzle flash light + a visible flash cone (the light alone is invisible
+    // in bright sunlight — the cone is what the player actually sees)
+    var muzzle = new THREE.PointLight(0xffc860, 0, 18);
+    PH.scene.add(muzzle);
+    game.muzzle = muzzle;
+    var flashGeo = new THREE.ConeGeometry(0.24, 0.85, 8);
+    flashGeo.rotateX(Math.PI / 2); // cone axis -> +Z, so lookAt() aims the flash forward
+    var flash = new THREE.Mesh(flashGeo,
+      new THREE.MeshBasicMaterial({ color: 0xfff6c0, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    flash.visible = false;
+    PH.scene.add(flash);
+    game.muzzleFlash = flash;
+    // a small additive core ball so the flash reads from any angle, not just head-on
+    var core = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    core.visible = false;
+    PH.scene.add(core);
+    game.muzzleCore = core;
+    // shootable registry (bounded list, never the whole scene)
+    game.shootables = [];
+    PH.sim.peds.forEach(function (p) { p.group.userData.shootable = { kind: 'ped', ref: p }; game.shootables.push(p.group); });
+    PH.sim.cars.forEach(function (c) { c.group.userData.shootable = { kind: 'traffic', ref: c }; game.shootables.push(c.group); });
+    PH.sim.policeCars.forEach(function (c) { c.group.userData.shootable = { kind: 'police', ref: c }; game.shootables.push(c.group); });
+    // portraits into crew cards
+    PH.portraits.drawInto(document.getElementById('portrait-kira'), 'kira');
+    PH.portraits.drawInto(document.getElementById('portrait-dario'), 'dario');
+    PH.portraits.drawInto(document.getElementById('portrait-lena'), 'lena');
+    // continue button if a save exists
+    try {
+      if (localStorage.getItem('pierheat-v8-save')) {
+        game.saveExists = true;
+        document.getElementById('btn-continue').style.display = 'inline-block';
+      }
+    } catch (e) {}
+  }
 
-  function toggleFoot() {
-    S.onFoot = !S.onFoot;
-    if (S.onFoot) {
-      S.mateoPos.copy(S.heroPos);
-      S.mateoHeading = S.heading;
-      if (mateo) { mateo.root.position.copy(S.mateoPos); mateo.root.rotation.y = S.mateoHeading + (mateo.forwardOffset || 0); }
-      PH.hud.setCar('ON FOOT — MATEO VEGA • HP ' + Math.round(S.health) + '%');
-    } else {
-      S.heroPos.copy(S.mateoPos);
-      hero.position.copy(S.heroPos);
-      PH.hud.setCar('SCARLET ARROW • 98%');
+  // One authoritative init: used by the normal START ENGINE path and any screenshot path.
+  function startPlay(opts) {
+    opts = opts || {};
+    PH.audio.resume();
+    PH.audio.startMusic();
+    PH.audio.setRadio('NIGHTWAVE 98.3');
+    document.getElementById('loading-overlay').classList.add('hidden');
+    document.getElementById('title-screen').classList.add('hidden');
+    document.getElementById('hud').classList.add('on');
+    game.state = 'play';
+    game.paused = false;
+    if (opts.loadSave) loadGame();
+    updateMissionHUD();
+    PH.hud.setMoney(game.money);
+    PH.hud.setHealth(game.player.health);
+    PH.hud.setArmor(game.player.armor);
+    PH.hud.setWanted(wantedStars());
+    PH.hud.setWeaponSel(game.weaponIdx);
+    updateAmmoHUD();
+    PH.hud.toast('PIER HEAT — meet Kira on the pier');
+  }
+
+  // ---------------- input ----------------
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Escape') { togglePause(); return; }
+    game.keys[e.code] = true;
+    if (game.state !== 'play' || game.paused) return;
+    if (e.code === 'KeyE') tryInteract();
+    if (e.code === 'KeyR') reloadWeapon();
+    if (e.code === 'KeyP') saveGame();
+    if (e.code === 'KeyL') loadGame();
+    if (e.code === 'KeyM') { PH.audio.musicOn = !PH.audio.musicOn; PH.hud.toast(PH.audio.musicOn ? 'NIGHTWAVE 98.3 — ON' : 'RADIO OFF'); }
+    if (e.code >= 'Digit1' && e.code <= 'Digit6') selectWeapon(Number(e.code.slice(5)) - 1);
+    if (e.code === 'KeyF') shoot();
+  });
+  window.addEventListener('keyup', function (e) { game.keys[e.code] = false; });
+  var dragging = false, lastMX = 0, lastMY = 0;
+  var canvas = document.getElementById('game');
+  canvas.addEventListener('pointerdown', function (e) { dragging = true; lastMX = e.clientX; lastMY = e.clientY; });
+  window.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    game.camOrbit = PH.clamp(game.camOrbit + (e.clientX - lastMX) * 0.004, -1.4, 1.4);
+    lastMX = e.clientX; lastMY = e.clientY;
+  });
+  window.addEventListener('pointerup', function () { dragging = false; });
+  canvas.addEventListener('click', function () {
+    if (game.state === 'play' && !game.paused && game.mode === 'onfoot') shoot();
+  });
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  document.getElementById('btn-start').addEventListener('click', function () { startPlay({}); });
+  document.getElementById('btn-continue').addEventListener('click', function () { startPlay({ loadSave: true }); });
+  document.getElementById('btn-respawn').addEventListener('click', respawn);
+  document.getElementById('btn-save').addEventListener('click', function () { saveGame(); });
+  document.getElementById('btn-load').addEventListener('click', function () { loadGame(); });
+  document.getElementById('btn-resume').addEventListener('click', togglePause);
+
+  function togglePause() {
+    if (game.state !== 'play') return;
+    game.paused = !game.paused;
+    document.getElementById('pause-menu').classList.toggle('on', game.paused);
+  }
+
+  // ---------------- wanted ----------------
+  function wantedStars() {
+    return PH.clamp(Math.floor(game.wantedPts / 25), 0, 5);
+  }
+  function addCrime(pts, reason) {
+    game.wantedPts = PH.clamp(game.wantedPts + pts, 0, 125);
+    game.lastCrimeT = game.time;
+    if (reason) PH.hud.toast(reason);
+  }
+  PH.events.on('police-ram', function () {
+    if (game.mode === 'onfoot') {
+      hurtPlayer(12, 'Police rammed you');
+    } else if (game.mode === 'driving') {
+      game.car.damage = PH.clamp(game.car.damage + 8, 0, 100);
+      game.car.speed *= 0.6;
+      PH.audio.crash();
+      PH.hud.toast('Police rammed your car');
     }
+  });
+  function hurtPlayer(dmg, why) {
+    var p = game.player;
+    if (p.armor > 0) {
+      var absorbed = Math.min(p.armor, dmg);
+      p.armor -= absorbed; dmg -= absorbed;
+    }
+    p.health = Math.max(0, p.health - dmg);
+    PH.hud.setHealth(p.health);
+    PH.hud.setArmor(p.armor);
+    if (why) PH.hud.toast(why);
+    if (p.health <= 0) {
+      document.getElementById('downed-overlay').classList.add('on');
+    }
+  }
+  function respawn() {
+    var p = game.player;
+    p.health = 100; p.armor = 50;
+    game.money = Math.max(0, game.money - 50);
+    game.wantedPts = 0;
+    p.x = -14; p.z = 3; p.heading = Math.PI / 2;
+    game.mode = 'onfoot';
+    game.mateo.visible = true;
+    document.getElementById('downed-overlay').classList.remove('on');
+    PH.hud.setHealth(100); PH.hud.setArmor(50); PH.hud.setMoney(game.money); PH.hud.setWanted(0);
+    PH.hud.toast('Back on your feet. The job is still on.');
+  }
+
+  // ---------------- weapons ----------------
+  function selectWeapon(i) {
+    if (i < 0 || i >= WEAPONS.length) return;
+    game.weaponIdx = i;
+    PH.hud.setWeaponSel(i);
+    updateAmmoHUD();
+  }
+  function updateAmmoHUD() {
+    var w = game.weapons[game.weaponIdx];
+    var label = w.name + ' — ' + (w.mag === Infinity ? '∞' : w.mag + ' / ' + (w.reserve === Infinity ? '∞' : w.reserve));
+    PH.hud.setAmmo(label);
+  }
+  function reloadWeapon() {
+    var w = game.weapons[game.weaponIdx];
+    if (w.mag === Infinity || w.reserve <= 0 || w.mag >= w.magSize) return;
+    var need = w.magSize - w.mag;
+    var take = Math.min(need, w.reserve);
+    w.mag += take; w.reserve -= take;
+    PH.audio.reload();
+    updateAmmoHUD();
   }
   function shoot() {
-    S.ammo = Math.max(0, S.ammo - 1);
-    PH.hud.setAmmo(S.ammo, 12);
-    if (mateo) flash.place(S.mateoPos, S.mateoHeading, false);
-    PH.Audio.gunshot();
-    setTimeout(function () { flash.hide(); }, 120);
+    if (game.state !== 'play' || game.paused) return;
+    if (game.mode !== 'onfoot') return;
+    if (game.player.health <= 0) return;
+    var w = game.weapons[game.weaponIdx];
+    var now = game.time;
+    if (game.fireCooldown > now) return;
+    game.fireCooldown = now + w.rate;
+    if (w.mag !== Infinity) {
+      if (w.mag <= 0) { PH.hud.toast('Press R to reload'); return; }
+      w.mag--;
+      updateAmmoHUD();
+    }
+    PH.audio.shot();
+    // muzzle flash at the player's hand: light + visible cone, pointing forward
+    game.muzzle.position.set(
+      game.player.x + Math.sin(game.player.heading) * 0.8,
+      1.4,
+      game.player.z + Math.cos(game.player.heading) * 0.8);
+    game.muzzle.intensity = 4;
+    game.muzzleFlash.position.copy(game.muzzle.position);
+    game.muzzleFlash.lookAt(
+      game.player.x + Math.sin(game.player.heading) * 4,
+      1.4,
+      game.player.z + Math.cos(game.player.heading) * 4);
+    game.muzzleFlash.scale.set(0.8 + Math.random() * 0.5, 0.8 + Math.random() * 0.5, 0.8 + Math.random() * 0.5);
+    game.muzzleFlash.material.opacity = 1;
+    game.muzzleFlash.visible = true;
+    game.muzzleCore.position.copy(game.muzzle.position);
+    game.muzzleCore.material.opacity = 1;
+    game.muzzleCore.visible = true;
+    // raycast from the camera through the screen centre
+    game.raycaster.setFromCamera(new THREE.Vector2(0, 0), PH.camera);
+    game.raycaster.far = w.range;
+    var hits = game.raycaster.intersectObjects(game.shootables, true);
+    var nearPolice = false;
+    PH.sim.policeCars.forEach(function (c) {
+      if (PH.dist2d(c.x, c.z, game.player.x, game.player.z) < 25) nearPolice = true;
+    });
+    addCrime(8 + (nearPolice ? 12 : 0), null);
+    if (hits.length > 0) {
+      var hit = hits[0];
+      var obj = hit.object;
+      while (obj && !obj.userData.shootable) obj = obj.parent;
+      var sp = new THREE.Vector3();
+      sp.copy(hit.point).project(PH.camera);
+      var sx = (sp.x * 0.5 + 0.5) * window.innerWidth;
+      var sy = (-sp.y * 0.5 + 0.5) * window.innerHeight;
+      spawnImpact(hit.point);
+      PH.hud.hitmarker();
+      if (obj && obj.userData.shootable) {
+        var s = obj.userData.shootable;
+        PH.hud.damageNumber(sx, sy, '-' + w.dmg, '#ffe14a');
+        if (s.kind === 'ped') {
+          s.ref.health -= w.dmg;
+          s.ref.fleeing = 6;
+          addCrime(15, 'Civilian hit — wanted up');
+          if (s.ref.health <= 0) {
+            s.ref.group.rotation.x = -Math.PI / 2 + 0.05;
+            s.ref.group.position.y = 0.15;
+          }
+        } else if (s.kind === 'police') {
+          s.ref.hp = (s.ref.hp === undefined ? 100 : s.ref.hp) - w.dmg;
+          addCrime(30, 'You shot at the police!');
+          if (s.ref.hp <= 0) { s.ref.speed = 0; s.ref.maxSpeed = 0; }
+        } else if (s.kind === 'traffic') {
+          addCrime(4, null);
+        }
+      }
+    }
+  }
+  function spawnImpact(point) {
+    for (var i = 0; i < 8; i++) {
+      var m = new THREE.Mesh(PH.boxGeo(0.09, 0.09, 0.09),
+        new THREE.MeshBasicMaterial({ color: 0xffd27a }));
+      m.position.copy(point);
+      PH.scene.add(m);
+      game.particles.push({
+        mesh: m, life: 0.5,
+        vel: new THREE.Vector3(PH.rand(-2, 2), PH.rand(1, 3.5), PH.rand(-2, 2))
+      });
+    }
   }
 
-  // ---------- save / load ----------
-  function saveGame() {
+  // ---------------- enter / exit car & boat ----------------
+  function nearestCar(maxDist) {
+    var best = null, bestD = maxDist;
+    var cands = [];
+    // the last driven car is only "already driven" while the player is in it
+    var heroBusy = game.mode === 'driving' && game.car && game.car.isHero;
+    if (game.heroCar) cands.push({ group: game.heroCar, state: heroBusy ? null : { name: 'SCARLET ARROW', isHero: true, group: game.heroCar, damage: game.heroDamage || 0 } });
+    PH.sim.cars.forEach(function (c) { cands.push({ group: c.group, state: { name: 'SEDAN', isHero: false, group: c.group, trafficRef: c } }); });
+    var i, d;
+    for (i = 0; i < cands.length; i++) {
+      var g = cands[i].group;
+      if (cands[i].state === null) continue; // already the driven car
+      d = PH.dist2d(game.player.x, game.player.z, g.position.x, g.position.z);
+      if (d < bestD) { bestD = d; best = cands[i].state; best._d = d; }
+    }
+    return best;
+  }
+  function enterCar(st) {
+    // if it was a traffic car, take it out of the traffic sim
+    if (st.trafficRef) {
+      var idx = PH.sim.cars.indexOf(st.trafficRef);
+      if (idx >= 0) PH.sim.cars.splice(idx, 1);
+      var sidx = game.shootables.indexOf(st.trafficRef.group);
+      if (sidx >= 0) game.shootables.splice(sidx, 1);
+    }
+    // park the previous driven car back into traffic (unless it is the hero car)
+    if (game.car && !game.car.isHero && game.car.trafficRef) {
+      var old = game.car.trafficRef;
+      old.x = game.car.x; old.z = game.car.z; old.heading = game.car.heading; old.speed = 0;
+      PH.sim.cars.push(old);
+      game.shootables.push(old.group);
+    }
+    game.car = {
+      group: st.group, name: st.name, isHero: !!st.isHero,
+      x: st.group.position.x, z: st.group.position.z,
+      heading: st.group.rotation.y, speed: 0,
+      damage: st.damage || 0, trafficRef: st.trafficRef || null
+    };
+    game.prevCar = { x: game.car.x, z: game.car.z, heading: game.car.heading };
+    game.mode = 'driving';
+    game.mateo.visible = false;
+    PH.hud.setCar(game.car.name, 100 - game.car.damage);
+    PH.hud.toast('Driving the ' + game.car.name);
+    if (game.stage === 2 && game.raceSub === 'toStart') {
+      PH.hud.toast('Drive to the start line on Sunset Blvd');
+    }
+  }
+  function exitCar() {
+    var c = game.car;
+    if (c.isHero) game.heroDamage = c.damage;
+    // place Mateo safely beside the car, on the right side
+    var rx = Math.cos(c.heading), rz = -Math.sin(c.heading);
+    var px = c.x + rx * 2.4, pz = c.z + rz * 2.4;
+    var col = PH.collideCircle(px, pz, 0.5);
+    game.player.x = col.x; game.player.z = col.z;
+    game.player.heading = c.heading;
+    game.mode = 'onfoot';
+    game.mateo.visible = true;
+    game.mateo.position.set(game.player.x, PH.world.groundHeight(game.player.x, game.player.z), game.player.z);
+    game.mateo.rotation.y = game.player.heading;
+    game.prevPlayer = { x: game.player.x, z: game.player.z, heading: game.player.heading };
+    PH.hud.setCar('ON FOOT', 100 - c.damage);
+  }
+  function tryInteract() {
+    if (game.player.health <= 0) return;
+    if (game.mode === 'driving') { exitCar(); return; }
+    if (game.mode === 'boat') { exitBoat(); return; }
+    // on foot
+    if (game.stage === 1) {
+      var ks = PH.world.spawns.kira;
+      if (PH.dist2d(game.player.x, game.player.z, ks.x, ks.z) < 3.2) {
+        talkToKira();
+        return;
+      }
+    }
+    if (game.stage === 3 || game.stage === 4) {
+      var bs = PH.world.spawns.boat;
+      if (PH.dist2d(game.player.x, game.player.z, bs.x, bs.z) < 4.5) { boardBoat(); return; }
+    }
+    var car = nearestCar(2.5);
+    if (car) { enterCar(car); return; }
+    if (game.stage === 2) {
+      var bs2 = PH.world.spawns.boat;
+      if (PH.dist2d(game.player.x, game.player.z, bs2.x, bs2.z) < 4) {
+        PH.hud.toast('Finish the race first — the boat comes after');
+      }
+    }
+  }
+  function talkToKira() {
+    showDialog('kira', 'KIRA',
+      'Mateo. The Scarlet Arrow is warmed up and the street is ours tonight. Win the race down ' +
+      'Sunset Boulevard — RICO, SABLE and VOLT are already lining up — and then we vanish by boat. ' +
+      'Drive to the start line and show them what Sunset Bay is made of.');
+    game.stage = 2;
+    game.raceSub = 'toStart';
+    updateMissionHUD();
+    saveGame(true);
+  }
+  function boardBoat() {
+    if (game.stage === 2) { PH.hud.toast('Finish the race first — the boat comes after'); return; }
+    var b = game.boat;
+    b.boarded = true;
+    game.mode = 'boat';
+    game.mateo.visible = true;
+    game.prevBoat = { x: b.x, z: b.z, heading: b.heading };
+    // Kira rides along: she is waiting by the boat
+    game.kiraOnBoat = true;
+    game.kira.position.set(b.x + 0.45, 1.0, b.z - 1.6);
+    game.kira.rotation.y = b.heading;
+    PH.boats.spawnPoliceBoat();
+    showDialog('kira', 'KIRA', 'Go, Mateo! Across the bay, to the far end of the bridge — and don\'t let the marine unit catch us.');
+    updateMissionHUD();
+    PH.hud.show('boat-panel', true);
+    saveGame(true);
+  }
+  function exitBoat() {
+    var b = game.boat;
+    // step out onto the nearest land: bridge deck, pier, or beach
+    var onBridge = Math.abs(b.x + 155) < 9 && b.z > 105;
+    var nearPier = Math.abs(b.x) < 12 && b.z < 175;
+    if (onBridge) {
+      game.player.x = PH.clamp(b.x, -159, -151);
+      game.player.z = PH.clamp(b.z, 106, 209);
+    } else if (nearPier) {
+      game.player.x = 0; game.player.z = 158;
+    } else {
+      game.player.x = PH.clamp(b.x, -140, 140);
+      game.player.z = 118;
+    }
+    game.player.heading = 0;
+    b.boarded = false;
+    game.mode = 'onfoot';
+    game.mateo.visible = true;
+    game.mateo.position.set(game.player.x, PH.world.groundHeight(game.player.x, game.player.z), game.player.z);
+    game.prevPlayer = { x: game.player.x, z: game.player.z, heading: game.player.heading };
+    if (game.kiraOnBoat) {
+      game.kiraOnBoat = false;
+      game.kira.position.set(10, 1.2, 158);
+      game.kira.rotation.y = Math.PI;
+    }
+    PH.hud.show('boat-panel', false);
+  }
+
+  // ---------------- dialogs ----------------
+  function showDialog(person, name, text) {
+    PH.hud.setDialog(true, name, text, PH.portraits.urlFor(person));
+    clearTimeout(game.dialogTimer);
+    game.dialogTimer = setTimeout(function () { PH.hud.setDialog(false); }, 8000);
+  }
+
+  // ---------------- missions / HUD ----------------
+  function updateMissionHUD() {
+    var st = game.stage;
+    if (st === 1) PH.hud.setObjective('PIER HEAT', 'STAGE 1/3 — MEET KIRA', 'Meet Kira on the pier at the end of Sunset Bay.', 'NEXT: Street race down Sunset Blvd');
+    else if (st === 2) PH.hud.setObjective('PIER HEAT', 'STAGE 2/3 — STREET RACE', game.raceSub === 'toStart' ? 'Drive to the start line on Sunset Blvd.' : 'Race! Pass every gate before RICO, SABLE and VOLT.', 'NEXT: Boat escape across the bay');
+    else if (st === 3) PH.hud.setObjective('PIER HEAT', 'STAGE 3/3 — BOAT ESCAPE', 'Board the speedboat at the pier and reach the far end of the bridge.', 'NEXT: Finish the job, get paid');
+    else PH.hud.setObjective('PIER HEAT', 'JOB DONE', 'Sunset Bay is yours. Free roam, or replay the story from the pause menu.', 'NEXT: Free roam');
+  }
+  function missionMarkerPos() {
+    if (game.stage === 1) { var ks = PH.world.spawns.kira; return { x: ks.x, z: ks.z, y: 3.4 }; }
+    if (game.stage === 2) {
+      if (game.raceSub === 'toStart') return { x: -130, z: 0, y: 3 };
+      var g = PH.race.gates[PH.race.currentGate];
+      if (g) return { x: g.x, z: g.z, y: 7.5 };
+      return null;
+    }
+    if (game.stage === 3) {
+      if (game.mode === 'boat') { var t = PH.world.spawns.boatTarget; return { x: t.x, z: t.z, y: 3 }; }
+      var bs = PH.world.spawns.boat; return { x: bs.x, z: bs.z, y: 3 };
+    }
+    return null;
+  }
+
+  // ---------------- fixed-step physics ----------------
+  function stepPhysics(dt) {
+    game.time += dt;
+    if (game.stage <= 3) game.missionTime += dt;
+    var k = game.keys;
+    // --- driving ---
+    if (game.mode === 'driving' && game.car) {
+      var c = game.car;
+      game.prevCar = { x: c.x, z: c.z, heading: c.heading };
+      var racing = game.stage === 2 && PH.race.state === 'countdown';
+      var throttle = racing ? 0 : ((k.KeyW || k.ArrowUp) ? 1 : 0) - ((k.KeyS || k.ArrowDown) ? 0.7 : 0);
+      var steer = ((k.KeyA || k.ArrowLeft) ? 1 : 0) - ((k.KeyD || k.ArrowRight) ? 1 : 0);
+      var brake = k.Space ? 1 : 0;
+      var maxSpeed = 32 * (1 - c.damage / 200);
+      if (throttle > 0) c.speed += 14 * throttle * dt;
+      if (throttle < 0) c.speed += 10 * throttle * dt;
+      if (brake) c.speed -= Math.sign(c.speed) * 26 * dt;
+      c.speed -= c.speed * 0.35 * dt; // drag
+      if (Math.abs(c.speed) < 0.05 && throttle === 0) c.speed = 0;
+      c.speed = PH.clamp(c.speed, -9, maxSpeed);
+      // speed-sensitive steering + straight-line stability (no steer input = no heading change)
+      var turn = steer * (2.2 / (1 + Math.abs(c.speed) * 0.12)) * PH.clamp(Math.abs(c.speed) / 3, 0, 1);
+      c.heading += turn * Math.sign(c.speed) * dt;
+      c.x += Math.sin(c.heading) * c.speed * dt;
+      c.z += Math.cos(c.heading) * c.speed * dt;
+      // world bounds: the city ends — no driving off into the void
+      if (c.x < -250) { c.x = -250; c.speed *= 0.5; }
+      if (c.x > 250) { c.x = 250; c.speed *= 0.5; }
+      if (c.z < -200) { c.z = -200; c.speed *= 0.5; }
+      if (c.z > 210) { c.z = 210; c.speed *= 0.5; }
+      var col = PH.collideCarCircle(c.x, c.z, 1.7);
+      if (col.hit) {
+        if (Math.abs(c.speed) > 12) { PH.audio.crash(); c.damage = PH.clamp(c.damage + Math.abs(c.speed) * 0.5, 0, 100); }
+        c.speed *= 0.55;
+        c.x = col.x; c.z = col.z;
+      }
+      c.group.position.set(c.x, 0, c.z);
+      c.group.rotation.y = c.heading;
+      var wheels = c.group.userData.wheels || [];
+      for (var wi = 0; wi < wheels.length; wi++) wheels[wi].rotation.x += c.speed * dt * 2.4;
+      // race start line
+      if (game.stage === 2 && game.raceSub === 'toStart' && PH.dist2d(c.x, c.z, -130, 0) < 12) {
+        game.raceSub = 'racing';
+        PH.race.start();
+        updateMissionHUD();
+      }
+      PH.audio.setEngine(Math.abs(c.speed) / 32);
+    } else {
+      PH.audio.setEngine(0);
+    }
+    // --- on foot ---
+    if (game.mode === 'onfoot') {
+      var p = game.player;
+      game.prevPlayer = { x: p.x, z: p.z, heading: p.heading };
+      var sprint = k.ShiftLeft || k.ShiftRight;
+      var speed = sprint ? 7 : 4;
+      var mx = ((k.KeyD || k.ArrowRight) ? 1 : 0) - ((k.KeyA || k.ArrowLeft) ? 1 : 0);
+      var mz = ((k.KeyW || k.ArrowUp) ? 1 : 0) - ((k.KeyS || k.ArrowDown) ? 1 : 0);
+      var moving = (mx !== 0 || mz !== 0);
+      if (moving && p.health > 0) {
+        // move relative to the camera: W walks away from the camera, A/D strafe
+        var moveYaw = p.heading + game.camOrbit;
+        var fx = Math.sin(moveYaw), fz = Math.cos(moveYaw);
+        var rx2 = Math.cos(moveYaw), rz2 = -Math.sin(moveYaw);
+        var dx = fx * mz + rx2 * mx, dz = fz * mz + rz2 * mx;
+        var dl = Math.sqrt(dx * dx + dz * dz) || 1;
+        dx /= dl; dz /= dl;
+        p.x += dx * speed * dt;
+        p.z += dz * speed * dt;
+        p.heading = Math.atan2(dx, dz);
+        var col2 = PH.collideCircle(p.x, p.z, 0.45);
+        p.x = col2.x; p.z = col2.z;
+        p.speed = speed;
+      } else p.speed = 0;
+      var gy = PH.world.groundHeight(p.x, p.z);
+      game.mateo.position.set(p.x, gy, p.z);
+      game.mateo.rotation.y = p.heading;
+      PH.animateCharacter(game.mateo, game.time, p.speed / 7, moving);
+      // Kira idle
+      PH.animateCharacter(game.kira, game.time, 0, false);
+    }
+    // --- boat ---
+    if (game.mode === 'boat') {
+      var b = game.boat;
+      game.prevBoat = { x: b.x, z: b.z, heading: b.heading };
+      var bThrottle = ((k.KeyW || k.ArrowUp) ? 1 : 0) - ((k.KeyS || k.ArrowDown) ? 0.5 : 0);
+      var bSteer = ((k.KeyA || k.ArrowLeft) ? 1 : 0) - ((k.KeyD || k.ArrowRight) ? 1 : 0);
+      if (bThrottle > 0) b.speed += 10 * dt;
+      if (bThrottle < 0) b.speed -= 6 * dt;
+      b.speed -= b.speed * 0.25 * dt;
+      b.speed = PH.clamp(b.speed, -4, 24);
+      var bTurn = bSteer * (1.6 / (1 + Math.abs(b.speed) * 0.06)) * PH.clamp(Math.abs(b.speed) / 2, 0, 1);
+      b.heading += bTurn * Math.sign(b.speed) * dt;
+      b.x += Math.sin(b.heading) * b.speed * dt;
+      b.z += Math.cos(b.heading) * b.speed * dt;
+      // shoreline + world bounds
+      if (b.z < 127.5) { b.z = 127.5; b.speed *= 0.6; }
+      b.z = PH.clamp(b.z, 127.5, 262);
+      b.x = PH.clamp(b.x, -215, 215);
+      var col3 = PH.collideCircle(b.x, b.z, 2.2);
+      b.x = col3.x; b.z = col3.z;
+      PH.boats.hero.position.set(b.x, 0.05 + Math.sin(game.time * 2) * 0.06, b.z);
+      PH.boats.hero.rotation.y = b.heading;
+      PH.boats.hero.rotation.z = PH.clamp(-bTurn * 0.4, -0.1, 0.1);
+      // Mateo at the helm, Kira aboard on the stern bench (local seat coords -> world)
+      game.mateo.position.set(
+        b.x + Math.sin(b.heading) * 0.2 - Math.cos(b.heading) * 0.45,
+        0.9,
+        b.z + Math.cos(b.heading) * 0.2 + Math.sin(b.heading) * 0.45);
+      game.mateo.rotation.y = b.heading;
+      game.mateo.rotation.x = 0;
+      game.kira.position.set(
+        b.x - Math.sin(b.heading) * 1.6 + Math.cos(b.heading) * 0.45,
+        1.0,
+        b.z - Math.cos(b.heading) * 1.6 - Math.sin(b.heading) * 0.45);
+      game.kira.rotation.y = b.heading;
+      PH.audio.setBoatEngine(Math.abs(b.speed) / 24);
+      // boat completion
+      var tgt = PH.world.spawns.boatTarget;
+      if (game.stage === 3 && PH.dist2d(b.x, b.z, tgt.x, tgt.z) < 12) {
+        game.stage = 4;
+        game.money += 3000;
+        PH.hud.setMoney(game.money);
+        PH.hud.show('boat-panel', false);
+        showDialog('kira', 'KIRA', 'We did it, Mateo. Three thousand, clean, and the bay behind us. Sunset Bay is ours now.');
+        PH.hud.toast('BOAT ESCAPE COMPLETE — +$3,000');
+        updateMissionHUD();
+        saveGame(true);
+      }
+      // second police boat halfway there
+      if (PH.boats.policeBoats.length === 1 && PH.dist2d(b.x, b.z, tgt.x, tgt.z) < 90) PH.boats.spawnPoliceBoat();
+    } else {
+      PH.audio.setBoatEngine(0);
+    }
+    // --- sim ---
+    PH.sim.updateTraffic(dt);
+    PH.sim.updatePeds(dt, game.mode === 'onfoot' ? game.player : (game.car || game.player));
+    PH.sim.updatePolice(dt, {
+      x: game.mode === 'boat' ? game.boat.x : (game.mode === 'driving' ? game.car.x : game.player.x),
+      z: game.mode === 'boat' ? game.boat.z : (game.mode === 'driving' ? game.car.z : game.player.z),
+      mode: game.mode,
+      heading: game.mode === 'driving' ? game.car.heading : game.player.heading,
+      carSpeed: game.mode === 'driving' ? Math.abs(game.car.speed) : 0
+    }, wantedStars());
+    PH.boats.update(dt, game.time, game.mode === 'boat' ? game.boat : null);
+    // --- race ---
+    if (game.stage === 2) {
+      var racePlayer = game.mode === 'driving' ? game.car : game.player;
+      PH.race.update(dt, racePlayer);
+    }
+    // --- wanted decay ---
+    if (game.time - game.lastCrimeT > 6) {
+      var nearest = 999;
+      PH.sim.policeCars.forEach(function (c) {
+        nearest = Math.min(nearest, PH.dist2d(c.x, c.z, game.player.x, game.player.z));
+      });
+      if (nearest > 45) game.wantedPts = Math.max(0, game.wantedPts - 2.5 * dt);
+    }
+    // --- particles ---
+    for (var pi = game.particles.length - 1; pi >= 0; pi--) {
+      var pt = game.particles[pi];
+      pt.life -= dt;
+      if (pt.life <= 0) { PH.scene.remove(pt.mesh); game.particles.splice(pi, 1); continue; }
+      pt.mesh.position.x += pt.vel.x * dt;
+      pt.mesh.position.y += pt.vel.y * dt;
+      pt.mesh.position.z += pt.vel.z * dt;
+      pt.vel.y -= 6 * dt;
+      pt.mesh.material.transparent = true;
+      pt.mesh.material.opacity = pt.life * 2;
+    }
+    if (game.muzzle.intensity > 0) game.muzzle.intensity = Math.max(0, game.muzzle.intensity - dt * 40);
+    if (game.muzzleFlash.visible) {
+      game.muzzleFlash.material.opacity -= dt * 2.5; // ~0.38 s of visible flash
+      if (game.muzzleFlash.material.opacity <= 0) game.muzzleFlash.visible = false;
+    }
+    if (game.muzzleCore.visible) {
+      game.muzzleCore.material.opacity -= dt * 2.5;
+      if (game.muzzleCore.material.opacity <= 0) game.muzzleCore.visible = false;
+    }
+    // --- objective marker bob ---
+    var mp = missionMarkerPos();
+    if (mp && game.marker) {
+      game.marker.visible = true;
+      game.marker.position.set(mp.x, mp.y + Math.sin(game.time * 2.4) * 0.4, mp.z);
+      game.marker.rotation.y += dt * 1.5;
+    } else if (game.marker) game.marker.visible = false;
+    // --- interact / exit prompts (driven by authoritative state, never by UI text) ---
+    var showInteract = false, interactText = '';
+    var showExit = false, exitText = '';
+    if (game.mode === 'onfoot' && game.player.health > 0) {
+      if (game.stage === 1 && PH.dist2d(game.player.x, game.player.z, PH.world.spawns.kira.x, PH.world.spawns.kira.z) < 3.2) {
+        showInteract = true; interactText = 'Talk to Kira';
+      } else if ((game.stage === 3 || game.stage === 4) && PH.dist2d(game.player.x, game.player.z, PH.world.spawns.boat.x, PH.world.spawns.boat.z) < 4.5) {
+        showInteract = true; interactText = 'Board the speedboat';
+      } else {
+        var nc = nearestCar(2.5);
+        if (nc) { showInteract = true; interactText = 'Drive the ' + nc.name; }
+      }
+    }
+    if (game.mode === 'driving') { showExit = true; exitText = 'Exit car'; }
+    if (game.mode === 'boat') { showExit = true; exitText = 'Step off the boat'; }
+    PH.hud.show('interact-prompt', showInteract);
+    if (showInteract) PH.hud.text('interact-prompt-text', interactText);
+    PH.hud.show('exit-prompt', showExit);
+    if (showExit) PH.hud.text('exit-prompt-text', exitText);
+    PH.hud.show('crosshair', game.mode === 'onfoot');
+  }
+
+  // ---------------- camera + render loop ----------------
+  var clock = { last: performance.now() };
+  var hudT = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    var nowMs = performance.now();
+    var dtReal = (nowMs - clock.last) / 1000;
+    var dtRaw = Math.min(0.1, dtReal);
+    clock.last = nowMs;
+    var now = nowMs / 1000;
+    // perf ring buffer records REAL frame time (unclamped), not the clamped physics dt
+    var pf = game.perf;
+    pf.frames++;
+    pf.times.push(dtReal * 1000);
+    if (pf.times.length > 600) pf.times.shift();
+    // title backdrop: the city lives behind the title card, slow orbit over the boulevard
+    if (game.state === 'title') {
+      PH.sim.updateTraffic(dtRaw);
+      PH.sim.updatePeds(dtRaw, { x: 0, z: 0 });
+      PH.sky.update(now, dtRaw);
+      PH.water.update(now, dtRaw);
+      var ta = now * 0.05;
+      PH.camera.position.set(Math.sin(ta) * 60, 26, Math.cos(ta) * 60 - 10);
+      PH.camera.lookAt(0, 2, 0);
+    }
+    if (game.state === 'play' && !game.paused) {
+      game.acc += dtRaw;
+      var steps = 0;
+      while (game.acc >= STEP && steps < 5) {
+        stepPhysics(STEP);
+        game.acc -= STEP;
+        steps++;
+      }
+      if (steps === 5) game.acc = 0;
+      var alpha = game.acc / STEP;
+      // render interpolation for the main subjects
+      if (game.mode === 'driving' && game.car) {
+        game.car.group.position.x = PH.lerp(game.prevCar.x, game.car.x, alpha);
+        game.car.group.position.z = PH.lerp(game.prevCar.z, game.car.z, alpha);
+        game.car.group.rotation.y = PH.angleLerp(game.prevCar.heading, game.car.heading, alpha);
+      }
+      if (game.mode === 'onfoot') {
+        game.mateo.position.x = PH.lerp(game.prevPlayer.x, game.player.x, alpha);
+        game.mateo.position.z = PH.lerp(game.prevPlayer.z, game.player.z, alpha);
+      }
+      if (game.mode === 'boat') {
+        PH.boats.hero.position.x = PH.lerp(game.prevBoat.x, game.boat.x, alpha);
+        PH.boats.hero.position.z = PH.lerp(game.prevBoat.z, game.boat.z, alpha);
+      }
+      // camera follow
+      var target, heading, dist, height;
+      if (game.mode === 'driving' && game.car) {
+        target = game.car.group.position; heading = game.car.heading; dist = 10; height = 4.2;
+      } else if (game.mode === 'boat') {
+        target = PH.boats.hero.position; heading = game.boat.heading; dist = 13; height = 5.5;
+      } else {
+        target = game.mateo.position; heading = game.player.heading; dist = 6.5; height = 3.0;
+      }
+      var camAngle = heading + Math.PI + game.camOrbit;
+      var cx = target.x + Math.sin(camAngle) * dist;
+      var cz = target.z + Math.cos(camAngle) * dist;
+      var cy = target.y + height;
+      var k2 = 1 - Math.exp(-7 * dtRaw);
+      game.camPos.x = PH.lerp(game.camPos.x, cx, k2);
+      game.camPos.y = PH.lerp(game.camPos.y, cy, k2);
+      game.camPos.z = PH.lerp(game.camPos.z, cz, k2);
+      PH.camera.position.copy(game.camPos);
+      PH.camera.lookAt(target.x + Math.sin(heading) * 4, target.y + 1.4, target.z + Math.cos(heading) * 4);
+      // sun shadow follows the player
+      PH.sun.position.set(target.x - 140, 62, target.z - 55);
+      PH.sun.target.position.set(target.x, 0, target.z);
+      PH.sun.target.updateMatrixWorld();
+      // throttled visual hooks (~15-30 Hz, never every frame)
+      PH.sky.update(now, dtRaw);
+      PH.heli.update(now, dtRaw, { x: target.x, z: target.z }, wantedStars());
+      PH.water.update(now, dtRaw);
+      PH.wetroad.update(now, PH.camera);
+      // throttled HUD
+      hudT += dtRaw;
+      if (hudT > 0.12) {
+        hudT = 0;
+        PH.hud.setWanted(wantedStars());
+        PH.hud.setTimer(game.missionTime);
+        PH.hud.setMoney(game.money);
+        if (game.mode === 'driving' && game.car) {
+          PH.hud.setSpeed(Math.abs(game.car.speed) * 3.6);
+          PH.hud.setCar(game.car.name, 100 - game.car.damage);
+        } else if (game.mode === 'boat') {
+          PH.hud.setSpeed(Math.abs(game.boat.speed) * 1.94);
+          PH.hud.setCar('SPEEDBOAT', 100);
+          PH.hud.text('boat-speed', Math.round(Math.abs(game.boat.speed) * 1.94) + ' KN');
+          var tgt = PH.world.spawns.boatTarget;
+          PH.hud.text('boat-objective', 'Reach the far pier — ' + Math.round(PH.dist2d(game.boat.x, game.boat.z, tgt.x, tgt.z)) + ' m');
+        } else {
+          PH.hud.setSpeed(Math.abs(game.player.speed || 0) * 3.6);
+          PH.hud.setCar('ON FOOT', 100 - (game.car ? game.car.damage : 0));
+        }
+        // dispatch panel: REAL active police units with live distance
+        var w = wantedStars();
+        PH.hud.show('dispatch-panel', w > 0 || game.mode === 'boat');
+        if (w > 0 || game.mode === 'boat') {
+          var px = game.mode === 'boat' ? game.boat.x : (game.mode === 'driving' ? game.car.x : game.player.x);
+          var pz = game.mode === 'boat' ? game.boat.z : (game.mode === 'driving' ? game.car.z : game.player.z);
+          var lines = '';
+          PH.sim.policeCars.forEach(function (c) {
+            lines += c.callsign + ' — ' + c.state.toUpperCase() + ' — ' + Math.round(PH.dist2d(c.x, c.z, px, pz)) + ' m<br>';
+          });
+          if (PH.heli.active) lines += 'AIR-1 HELI — OVERWATCH — ' + Math.round(PH.dist2d(PH.heli.mesh.position.x, PH.heli.mesh.position.z, px, pz)) + ' m<br>';
+          PH.boats.policeBoats.forEach(function (b) {
+            lines += b.callsign + ' — MARINE PURSUIT — ' + Math.round(PH.dist2d(b.x, b.z, px, pz)) + ' m<br>';
+          });
+          if (!lines) lines = 'No active units.';
+          PH.hud.setDispatch(lines);
+        }
+        PH.audio.siren(w >= 2);
+        // minimap (core throttles to 0.15 s)
+        var cars = [];
+        PH.sim.cars.forEach(function (c) { cars.push({ x: c.x, z: c.z }); });
+        var pol = [];
+        PH.sim.policeCars.forEach(function (c) { pol.push({ x: c.x, z: c.z }); });
+        var boats = [];
+        PH.boats.policeBoats.forEach(function (b) { boats.push({ x: b.x, z: b.z }); });
+        if (game.mode === 'boat') boats.push({ x: game.boat.x, z: game.boat.z });
+        var mp = missionMarkerPos();
+        PH.minimap.draw(now, {
+          player: {
+            x: game.mode === 'boat' ? game.boat.x : (game.mode === 'driving' ? game.car.x : game.player.x),
+            z: game.mode === 'boat' ? game.boat.z : (game.mode === 'driving' ? game.car.z : game.player.z),
+            heading: game.mode === 'driving' ? game.car.heading : (game.mode === 'boat' ? game.boat.heading : game.player.heading)
+          },
+          cars: cars, police: pol, boats: boats,
+          marker: mp ? { x: mp.x, z: mp.z } : null
+        });
+      }
+    }
+    PH.renderer.render(PH.scene, PH.camera);
+  }
+
+  // ---------------- save / load ----------------
+  var SAVE_KEY = 'pierheat-v8-save';
+  function saveGame(silent) {
     try {
-      localStorage.setItem('pierheat-save-v69', JSON.stringify({
-        pos: [S.heroPos.x, S.heroPos.z], heading: S.heading, wanted: S.wanted,
-        health: S.health, armor: S.armor, ammo: S.ammo, onFoot: S.onFoot
-      }));
-      PH.hud.toast('Progress saved.');
-    } catch (e) {}
+      var data = {
+        version: 8,
+        mode: game.mode,
+        player: { x: game.player.x, z: game.player.z, heading: game.player.heading, health: game.player.health, armor: game.player.armor },
+        car: game.car ? { x: game.car.x, z: game.car.z, heading: game.car.heading, damage: game.car.damage, name: game.car.name, isHero: game.car.isHero } : null,
+        boat: { x: game.boat.x, z: game.boat.z, heading: game.boat.heading, boarded: game.boat.boarded },
+        money: game.money,
+        stage: game.stage,
+        raceSub: game.raceSub,
+        raceGate: PH.race.currentGate,
+        missionTime: game.missionTime,
+        wantedPts: game.wantedPts,
+        weaponIdx: game.weaponIdx,
+        ammo: game.weapons.map(function (w) { return { mag: w.mag, reserve: w.reserve }; })
+      };
+      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+      game.saveExists = true;
+      document.getElementById('btn-continue').style.display = 'inline-block';
+      if (!silent) PH.hud.saveToast('Game saved');
+      return true;
+    } catch (e) { return false; }
   }
   function loadGame() {
     try {
-      var raw = localStorage.getItem('pierheat-save-v69');
-      if (!raw) return;
+      var raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) { PH.hud.toast('No save found'); return false; }
       var d = JSON.parse(raw);
-      S.heroPos.set(d.pos[0], 0, d.pos[1]);
-      S.heading = d.heading || 0;
-      S.wanted = d.wanted || 0; S.health = d.health || 100;
-      S.armor = d.armor || 0; S.ammo = d.ammo != null ? d.ammo : 12;
-      S.onFoot = !!d.onFoot;
-    } catch (e) {}
-  }
-
-  // ---------- boot ----------
-  var shotCfg = null;
-  if (isShot) {
-    shotCfg = stageShot();
-    // v7.3: characters load synchronously now (procedural, no fetch),
-    // so the loader callbacks ran BEFORE stageShot set the shot
-    // positions — re-place both characters (and the shot-4 flash)
-    // here, after staging, or Mateo stands at the default spawn.
-    placeMateo();
-    placeKira();
-    if (shotNum === 4) flash.place(S.mateoPos, S.mateoHeading, true);
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('hud').style.display = 'block';
-    S.started = true;
-  } else {
-    loadGame();
-    hero.position.copy(S.heroPos);
-    hero.rotation.y = S.heading;
-    police.cruisers.forEach(function (c, i) {
-      c.position.set(-16.5 - (i % 2) * 7, 0, -20 - i * 25);
-      c.rotation.y = Math.PI;
-    });
-    police.officers.forEach(function (o, i) { o.group.position.set(-30 + i * 4, 0, -40); });
-    heli.position.set(-30, 34, -20);
-    applyHUD({
-      objective: { title: 'PIER HEAT — MEET KIRA', stage: 'STAGE 1/3 — MEET KIRA', progress: 33, timer: '', text: 'Meet Kira at the pier — follow the yellow marker.', next: 'NEXT: Meet Kira at the pier — follow the yellow marker' },
-      wanted: S.wanted, money: S.money, health: S.health, armor: S.armor, ammo: S.ammo,
-      speedKmh: 0, carStatus: S.onFoot ? 'ON FOOT — MATEO VEGA • HP 100%' : 'SCARLET ARROW • 98%',
-      radio: 'NIGHTWAVE 98.3 — SUNSET DRIVE', dispatch: null
-    });
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('hud').style.display = 'block';
-    document.getElementById('title-screen').style.display = 'flex';
-    if (mateo) placeMateo();
-  }
-
-  // ---------- free-play update ----------
-  function freePlay(dt) {
-    if (!S.started) return;
-    var accel = 0;
-    if (keys.KeyW || keys.ArrowUp) accel += 1;
-    if (keys.KeyS || keys.ArrowDown) accel -= 0.6;
-    if (keys.Space) accel -= Math.sign(S.speed) * 1.6;
-    if (!S.onFoot) {
-      var steer = 0;
-      if (keys.KeyA || keys.ArrowLeft) steer += 1;
-      if (keys.KeyD || keys.ArrowRight) steer -= 1;
-      S.speed = PH.clamp(S.speed + accel * 14 * dt, -10, 30);
-      S.speed *= (1 - 0.4 * dt);
-      if (Math.abs(S.speed) > 0.2) S.heading += steer * 1.6 * dt * Math.sign(S.speed);
-      S.heroPos.x += Math.sin(S.heading) * S.speed * dt;
-      S.heroPos.z += Math.cos(S.heading) * S.speed * dt;
-      S.heroPos.x = PH.clamp(S.heroPos.x, -100, 168);
-      S.heroPos.z = PH.clamp(S.heroPos.z, -168, 168);
-      hero.position.copy(S.heroPos);
-      hero.rotation.y = S.heading;
-      PH.hud.setSpeed(Math.abs(S.speed) * 3.6);
-      PH.Audio.setEngine(Math.abs(S.speed) / 30);
-      // chase camera: 9 back, 4.2 up, look 8 ahead
-      var bx = S.heroPos.x - Math.sin(S.heading) * 9;
-      var bz = S.heroPos.z - Math.cos(S.heading) * 9;
-      camera.position.set(bx, 4.2, bz);
-      camera.lookAt(S.heroPos.x + Math.sin(S.heading) * 8, 1.5, S.heroPos.z + Math.cos(S.heading) * 8);
-      // wanted: rises near police, falls when far
-      var near = police.cruisers.some(function (c) {
-        return c.position.distanceTo(S.heroPos) < 18;
+      if (d.version !== 8) { PH.hud.toast('Save is from an older version'); return false; }
+      // ACTIVE position: on-foot position when walking, car position when driving
+      game.player.x = d.player.x; game.player.z = d.player.z; game.player.heading = d.player.heading;
+      game.player.health = d.player.health; // health 0 stays 0 — never reset to 100
+      game.player.armor = d.player.armor;
+      game.money = d.money;
+      game.stage = d.stage;
+      game.raceSub = d.raceSub || 'toStart';
+      game.missionTime = d.missionTime || 0;
+      game.wantedPts = d.wantedPts || 0;
+      game.weaponIdx = d.weaponIdx === undefined ? 1 : d.weaponIdx;
+      if (d.ammo) d.ammo.forEach(function (a, i) {
+        if (game.weapons[i]) { game.weapons[i].mag = a.mag; game.weapons[i].reserve = a.reserve; }
       });
-      if (near && S.wanted < 5) { S.wanted = Math.min(5, S.wanted + dt * 0.2); }
-      else if (!near && S.wanted > 0) { S.wanted = Math.max(0, S.wanted - dt * 0.08); }
-      var w = Math.round(S.wanted);
-      PH.hud.setWanted(w);
-      PH.Audio.startSiren(w >= 2);
-      // heli orbits the hero
-      var ha = S.time * 0.25;
-      heli.position.set(S.heroPos.x + Math.cos(ha) * 26, 34 + Math.sin(S.time * 0.5) * 1.5, S.heroPos.z + Math.sin(ha) * 26);
-      heli.rotation.y = -ha;
-    } else {
-      var mv = (keys.ShiftLeft || keys.ShiftRight) ? 6 : 3.2;
-      var fx = 0, fz = 0;
-      if (keys.KeyW || keys.ArrowUp) fz += 1;
-      if (keys.KeyS || keys.ArrowDown) fz -= 1;
-      if (keys.KeyA || keys.ArrowLeft) fx -= 1;
-      if (keys.KeyD || keys.ArrowRight) fx += 1;
-      var moving = fx !== 0 || fz !== 0;
-      if (moving) {
-        var len = Math.hypot(fx, fz);
-        S.mateoHeading = Math.atan2(fx / len, fz / len);
-        S.mateoPos.x += Math.sin(S.mateoHeading) * mv * dt;
-        S.mateoPos.z += Math.cos(S.mateoHeading) * mv * dt;
-        S.mateoPos.x = PH.clamp(S.mateoPos.x, -100, 168);
-        S.mateoPos.z = PH.clamp(S.mateoPos.z, -168, 168);
+      if (d.car) {
+        game.car.x = d.car.x; game.car.z = d.car.z; game.car.heading = d.car.heading;
+        game.car.damage = d.car.damage || 0;
+        if (d.car.isHero) game.heroDamage = game.car.damage;
+        game.car.group.position.set(d.car.x, 0, d.car.z);
+        game.car.group.rotation.y = d.car.heading;
       }
-      if (mateo) {
-        mateo.root.position.copy(S.mateoPos);
-        mateo.root.rotation.y = S.mateoHeading + (mateo.forwardOffset || 0);
-        mateo.setAnim(moving ? ((keys.ShiftLeft || keys.ShiftRight) ? 'run' : 'walk') : 'idle');
+      if (d.boat) {
+        game.boat.x = d.boat.x; game.boat.z = d.boat.z; game.boat.heading = d.boat.heading;
+        PH.boats.hero.position.set(d.boat.x, 0.05, d.boat.z);
+        PH.boats.hero.rotation.y = d.boat.heading;
       }
-      PH.hud.setSpeed(0);
-      var cx = S.mateoPos.x - Math.sin(S.mateoHeading) * 6;
-      var cz = S.mateoPos.z - Math.cos(S.mateoHeading) * 6;
-      camera.position.set(cx, 3.2, cz);
-      camera.lookAt(S.mateoPos.x + Math.sin(S.mateoHeading) * 6, 1.5, S.mateoPos.z + Math.cos(S.mateoHeading) * 6);
+      if (d.mode === 'driving') {
+        game.mode = 'driving';
+        game.mateo.visible = false;
+      } else if (d.mode === 'boat') {
+        game.mode = 'boat';
+        game.boat.boarded = true;
+        game.mateo.visible = true;
+      } else {
+        game.mode = 'onfoot';
+        game.mateo.visible = true;
+        game.mateo.position.set(game.player.x, PH.world.groundHeight(game.player.x, game.player.z), game.player.z);
+        game.mateo.rotation.y = game.player.heading;
+      }
+      game.prevPlayer = { x: game.player.x, z: game.player.z, heading: game.player.heading };
+      game.prevCar = game.car ? { x: game.car.x, z: game.car.z, heading: game.car.heading } : game.prevCar;
+      if (d.raceGate !== undefined && d.stage === 2) PH.race.currentGate = d.raceGate;
+      updateMissionHUD();
+      PH.hud.setMoney(game.money);
+      PH.hud.setHealth(game.player.health);
+      PH.hud.setArmor(game.player.armor);
+      PH.hud.setWanted(wantedStars());
+      PH.hud.setWeaponSel(game.weaponIdx);
+      updateAmmoHUD();
+      if (game.player.health <= 0) {
+        document.getElementById('downed-overlay').classList.add('on');
+      } else {
+        document.getElementById('downed-overlay').classList.remove('on');
+      }
+      PH.hud.saveToast('Game loaded');
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
     }
   }
 
-  // ---------- main loop ----------
-  // Debug handle for headless probes (scene inspection, no gameplay effect).
-  window.__PH_DEBUG = { scene: scene, camera: camera, state: S, boats: boatChase, race: race, get mateo() { return mateo; }, get kira() { return kira; } };
-  var clock = new THREE.Clock();
-  var minimap = document.getElementById('minimap');
-  function animate() {
-    requestAnimationFrame(animate);
-    var dt = Math.min(clock.getDelta(), 0.05);
-    S.time += dt;
-    world.update(dt, S.time);
-    if (!isShot) {
-      traffic.update(dt);
-      freePlay(dt);
-    } else {
-      // staged shots: keep the world alive but frozen in place.
-      // Race rivals and boats are staged statically — their live
-      // update would drive them out of frame before the screenshot.
-      if (shotNum === 4) flash.update(S.time);
-      if (shotNum === 2 && mateo) mateo.setAnim('walk');
-      if (shotNum === 3) {
-        // only the foam wakes shimmer; the boats hold their marks
-        boatChase.wake.update(0.5);
-        boatChase.policeWake.update(0.5);
-        // v7.4 rev 2: the outboard hums under the staged boat shot
-        // (no-op until the player enables audio with a gesture)
-        PH.Audio.startBoatEngine();
-        PH.Audio.setBoatEngine(0.6);
-      }
-    }
-    var threat = S.wanted >= 1 ? { active: true, x: S.onFoot ? S.mateoPos.x : S.heroPos.x, z: S.onFoot ? S.mateoPos.z : S.heroPos.z } : null;
-    cityCrowd.update(dt, S.time, threat);
-    beachCrowd.update(dt, S.time, threat);
-    police.update(dt, S.time, S.wanted);
-    if (heli.userData.rotor) heli.userData.rotor.rotation.y += dt * 22;
-    if (heli.userData.tailRotor) heli.userData.tailRotor.rotation.x += dt * 30;
-    // v7.5: per-frame hooks for the new visual systems — the wet-road
-    // ribbons strengthen as the camera drops and always point toward
-    // the camera, the sunset sky's sunbeams and cloud rims breathe,
-    // and the police heli's rotor disc leans into its motion.
-    if (PH.updateWetReflections) PH.updateWetReflections(camera.position.y);
-    if (PH.orientWetReflections) PH.orientWetReflections(camera.position.x, camera.position.z);
-    if (PH.updateSunsetSky) PH.updateSunsetSky(S.time);
-    if (PH.poseHeli75) PH.poseHeli75(heli);
-    if (mateo) mateo.update(dt);
-    if (kira) kira.update(dt);
-    // minimap (v7.3: boats + race rivals ride along with police dots)
-    var playerPos = S.onFoot ? S.mateoPos : S.heroPos;
-    var playerHeading = S.onFoot ? S.mateoHeading : S.heading;
-    PH.drawMinimap(minimap, {
-      time: S.time, wanted: Math.round(S.wanted), objective: S.objective,
-      player: { x: playerPos.x, z: playerPos.z, heading: playerHeading },
-      police: police.cruisers.map(function (c) { return { x: c.position.x, z: c.position.z }; }),
-      boats: shotNum === 3 ? boatChase.policeBoats.map(function (pb) { return { x: pb.mesh.position.x, z: pb.mesh.position.z }; }) : null,
-      raceGate: shotNum === 1 ? { x: -20, z: -6 } : null,
-      rivals: shotNum === 1 ? race.rivals.map(function (r) { return { x: r.pos.x, z: r.pos.z }; }) : null
-    });
-    renderer.render(scene, camera);
-    S.frames++;
-    if (S.frames === 5) {
-      window.__ready = true;
-      var ld = document.getElementById('loading');
-      if (ld) ld.style.display = 'none';
-    }
-  }
-  animate();
-
-  addEventListener('resize', function () {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
+  // ---------------- race events ----------------
+  PH.events.on('race-complete', function (ev) {
+    game.money += PH.race.reward;
+    game.stage = 3;
+    game.raceSub = 'toStart';
+    PH.hud.setMoney(game.money);
+    showDialog('kira', 'KIRA',
+      'You did it, Mateo — ' + ev.position + ' place in ' + PH.fmtRaceTime(ev.time) + '! The boat is waiting at the pier. ' +
+      'Get down there before the PD locks the harbour down. +$' + PH.race.reward);
+    PH.hud.toast('RACE WON — +$' + PH.race.reward);
+    // Kira waits by the boat now
+    game.kira.position.set(10, 1.2, 158);
+    game.kira.rotation.y = Math.PI;
+    updateMissionHUD();
+    saveGame(true);
   });
+
+  // ---------------- perf stats for probes ----------------
+  PH.perf = {
+    stats: function () {
+      var t = game.perf.times.slice().sort(function (a, b) { return a - b; });
+      if (!t.length) return { fps: 0, avgMs: 0, p95Ms: 0, low1: 0, drawCalls: 0, triangles: 0 };
+      var avg = t.reduce(function (a, b) { return a + b; }, 0) / t.length;
+      var p95 = t[Math.floor(t.length * 0.95)] || t[t.length - 1];
+      var worst = t.slice(0, Math.max(1, Math.floor(t.length * 0.01)));
+      var low1 = worst.reduce(function (a, b) { return a + b; }, 0) / worst.length;
+      return {
+        fps: 1000 / avg, avgMs: avg, p95Ms: p95, low1Fps: 1000 / low1,
+        drawCalls: PH.renderer.info.render.calls, triangles: PH.renderer.info.render.triangles
+      };
+    },
+    reset: function () { game.perf.times = []; }
+  };
+
+  // ---------------- debug / test hooks (probes and screenshot staging only) ----------------
+  PH.debug = {
+    start: function (opts) { startPlay(opts || {}); },
+    state: function () {
+      return {
+        state: game.state, mode: game.mode, stage: game.stage,
+        player: { x: game.player.x, z: game.player.z, heading: game.player.heading, health: game.player.health, armor: game.player.armor },
+        car: game.car ? { x: game.car.x, z: game.car.z, heading: game.car.heading, speed: game.car.speed, damage: game.car.damage, name: game.car.name } : null,
+        boat: { x: game.boat.x, z: game.boat.z, heading: game.boat.heading, speed: game.boat.speed, boarded: game.boat.boarded },
+        wanted: wantedStars(), wantedPts: game.wantedPts, money: game.money,
+        race: { state: PH.race.state, gate: PH.race.currentGate, time: PH.race.raceTime },
+        police: PH.sim.policeCars.map(function (c) { return { callsign: c.callsign, x: c.x, z: c.z, state: c.state, speed: c.speed }; }),
+        heliActive: PH.heli.active,
+        traffic: PH.sim.cars.length, peds: PH.sim.peds.length,
+        errors: window.__phErrors || []
+      };
+    },
+    setWanted: function (pts) { game.wantedPts = pts; game.lastCrimeT = game.time; },
+    setPlayer: function (x, z) { game.player.x = x; game.player.z = z; game.prevPlayer = { x: x, z: z, heading: game.player.heading }; },
+    setCar: function (x, z, heading) {
+      if (!game.car) return;
+      game.car.x = x; game.car.z = z;
+      if (heading !== undefined) game.car.heading = heading;
+      game.car.speed = 0;
+      game.prevCar = { x: x, z: z, heading: game.car.heading };
+    },
+    setBoat: function (x, z, heading) {
+      game.boat.x = x; game.boat.z = z;
+      if (heading !== undefined) game.boat.heading = heading;
+      game.boat.speed = 0;
+    },
+    interact: function () { tryInteract(); },
+    enterCar: function () { var c = nearestCar(60); if (c) enterCar(c); },
+    exitCar: function () { exitCar(); },
+    shootAt: function (x, y, z) {
+      // same raycast path as a mouse click, aimed at a world point
+      var v = new THREE.Vector3(x, y, z).project(PH.camera);
+      game.raycaster.setFromCamera(new THREE.Vector2(v.x, v.y), PH.camera);
+      game.raycaster.far = 120;
+      var hits = game.raycaster.intersectObjects(game.shootables, true);
+      if (!hits.length) return { hit: false };
+      var obj = hits[0].object;
+      while (obj && !obj.userData.shootable) obj = obj.parent;
+      if (!obj || !obj.userData.shootable) return { hit: false };
+      var s = obj.userData.shootable;
+      var w = game.weapons[game.weaponIdx];
+      if (s.kind === 'ped') { s.ref.health -= w.dmg; s.ref.fleeing = 6; addCrime(15, null); }
+      if (s.kind === 'police') { s.ref.hp = (s.ref.hp === undefined ? 100 : s.ref.hp) - w.dmg; addCrime(30, null); }
+      if (s.kind === 'traffic') addCrime(4, null);
+      spawnImpact(hits[0].point);
+      PH.hud.hitmarker();
+      return { hit: true, kind: s.kind, health: s.ref.health, point: [hits[0].point.x, hits[0].point.y, hits[0].point.z] };
+    },
+    key: function (code, down) { game.keys[code] = !!down; },
+    // Fast-forward: run N seconds of fixed-step physics synchronously (no rendering).
+    // Probes only — the shipped game never calls this; it lets logic tests run at full
+    // speed on a machine whose software renderer is slow.
+    ff: function (seconds) {
+      var n = Math.round(seconds * 60), i;
+      for (i = 0; i < n; i++) stepPhysics(STEP);
+      return this.state();
+    },
+    save: function () { return saveGame(); },
+    load: function () { return loadGame(); },
+    setHealth: function (hp) { game.player.health = hp; PH.hud.setHealth(hp); },
+    racePosition: function () { return PH.race.position(game.mode === 'driving' ? game.car : game.player); },
+    perf: function () { return PH.perf.stats(); }
+  };
+
+  // ---------------- go ----------------
+  window.addEventListener('error', function (e) {
+    (window.__phErrors = window.__phErrors || []).push(String(e.message || e.error));
+  });
+  window.addEventListener('load', function () {
+    try {
+      buildAll();
+    } catch (e) {
+      console.error(e);
+      (window.__phErrors = window.__phErrors || []).push(String(e && e.message));
+    }
+    document.getElementById('loading-overlay').classList.add('hidden');
+    document.getElementById('title-screen').classList.remove('hidden');
+    game.state = 'title';
+    animate();
+  });
+  // If load already fired (script at end of body), boot now.
+  if (document.readyState === 'complete') {
+    try { buildAll(); } catch (e) { console.error(e); }
+    document.getElementById('loading-overlay').classList.add('hidden');
+    game.state = 'title';
+    animate();
+  }
 })();

@@ -1,272 +1,211 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="game-version" content="7.5">
-<link rel="icon" href="data:,">
 <title>PIER HEAT — Sunset Bay</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0e16;
-    font-family: Arial, Helvetica, sans-serif; color: #fff; }
-  #app { position: fixed; inset: 0; }
-  canvas.webgl { display: block; width: 100%; height: 100%; }
-  .panel { background: rgba(8, 12, 22, 0.72); border: 1px solid rgba(255,255,255,0.55);
-    border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(2px);
-    text-shadow: 0 1px 2px #000; }
-  .gold { color: #ffd23c; }
-  /* loading + title */
-  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    background: #0b0e16; z-index: 40; font-size: 26px; font-weight: 900; letter-spacing: 3px; }
-  #title-screen { position: absolute; inset: 0; z-index: 30; display: none;
-    align-items: center; justify-content: center; flex-direction: column; gap: 14px;
-    background: linear-gradient(180deg, rgba(10,10,30,0.55), rgba(40,16,4,0.78)); text-align: center; }
-  #title-screen h1 { font-family: "Arial Black", Arial, sans-serif; font-size: 64px; letter-spacing: 4px;
-    color: #ff7a1a; text-shadow: 0 3px 0 #7a2a00, 0 6px 18px #000; }
-  #title-screen h2 { font-size: 26px; letter-spacing: 10px; color: #ffd23c; }
-  #title-screen p { max-width: 560px; font-size: 15px; line-height: 1.5; color: #e8e8e8; }
-  #title-screen .keys { font-size: 13px; color: #cfe3ff; line-height: 1.8; }
-  #start-btn { font-family: "Arial Black", Arial, sans-serif; font-size: 20px; letter-spacing: 2px;
-    background: #ff7a1a; color: #fff; border: 2px solid #fff; border-radius: 10px;
-    padding: 12px 34px; cursor: pointer; text-shadow: 0 1px 2px #000; }
-  #start-btn:hover { background: #ff8c33; }
-  /* HUD corners */
-  #hud { position: absolute; inset: 0; pointer-events: none; z-index: 20; display: none; }
-  #obj-panel { position: absolute; top: 12px; left: 12px; width: 330px; }
-  #obj-title { font-family: "Arial Black", Arial, sans-serif; font-size: 17px; color: #ffd23c; letter-spacing: 1px; }
-  #obj-stage { font-size: 12px; color: #9fd8ff; margin-top: 2px; font-weight: bold; }
-  .barwrap { height: 8px; background: rgba(255,255,255,0.18); border-radius: 4px; margin: 6px 0 4px; overflow: hidden; }
-  .barfill { height: 100%; background: #ffd23c; border-radius: 4px; }
-  #obj-timer { font-size: 12px; color: #ffd23c; font-weight: bold; }
-  #obj-text { font-size: 13px; line-height: 1.35; margin-top: 3px; }
-  #obj-next { font-size: 12px; color: #8fe3a0; margin-top: 4px; }
-  #wanted-panel { position: absolute; top: 12px; right: 12px; width: 240px; text-align: right; }
-  #wanted-panel.hot { border-color: #ff5a4a; box-shadow: 0 0 14px rgba(255,60,40,0.55); }
-  #stars { font-size: 22px; letter-spacing: 3px; }
-  #stars span { color: rgba(255,255,255,0.25); }
-  #stars span.lit { color: #ffd23c; text-shadow: 0 0 8px #ff9d00; }
-  #money { font-size: 36px; font-weight: 900; color: #7dff8a; margin-top: 2px;
-    text-shadow: 0 2px 4px #000; letter-spacing: 1px; }
-  #wanted-label { font-size: 11px; letter-spacing: 3px; color: #cfe3ff; }
-  /* v7.3: crew cards with canvas portraits, right side — one horizontal
-     row under the wanted panel (a vertical stack collided with the
-     minimap in v7.3 rev 1). Dispatch sits below the row. */
-  #crew-cards { position: absolute; top: 112px; right: 12px; width: 300px;
-    display: flex; flex-direction: row; gap: 6px; }
-  .crew-card { flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; align-items: center;
-    text-align: center; background: rgba(8,12,22,0.72); border: 1px solid rgba(255,255,255,0.55);
-    border-radius: 10px; padding: 5px 2px; text-shadow: 0 1px 2px #000; }
-  .crew-face { width: 48px; height: 48px; border-radius: 8px; border: 2px solid #fff; flex: none; }
-  .crew-name { font-size: 10px; font-weight: 900; letter-spacing: 0.5px; }
-  .crew-role { font-size: 9px; color: #9fd8ff; font-weight: bold; }
-  .crew-status { font-size: 9px; color: #7dff8a; font-weight: bold; }
-  /* v7.3: race position + countdown, top centre */
-  #race-panel { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-    display: none; text-align: center; padding: 8px 22px; }
-  #race-pos { font-family: "Arial Black", Arial, sans-serif; font-size: 30px; color: #ffd23c; line-height: 1; }
-  #race-lap { font-size: 12px; font-weight: 900; color: #cfe3ff; letter-spacing: 2px; }
-  #race-gap { font-size: 11px; font-weight: 900; color: #8fe3a0; letter-spacing: 1px; margin-top: 2px; }
-  #race-countdown { font-family: "Arial Black", Arial, sans-serif; font-size: 54px; color: #ff7a1a;
-    display: none; text-shadow: 0 3px 0 #7a2a00, 0 6px 18px #000; }
-  /* v7.3: boat readout, bottom centre-left — round 2 adds the police
-     distance and the chase position, so the boat job reads the heat */
-  #boat-panel { position: absolute; left: 12px; bottom: 150px; display: none; padding: 8px 14px; }
-  #boat-panel h3 { color: #9fd8ff; font-size: 12px; letter-spacing: 1px; }
-  #boat-speed { font-family: "Arial Black", Arial, sans-serif; font-size: 26px; color: #fff; }
-  #boat-dist { font-size: 12px; color: #ffd23c; font-weight: 900; }
-  #boat-police { font-size: 12px; color: #ff6a5a; font-weight: 900; }
-  #boat-pos { font-size: 12px; color: #8fe3a0; font-weight: 900; }
-  #dispatch-panel { position: absolute; top: 216px; right: 12px; width: 300px; display: none; }
-  #dispatch-panel h3 { color: #ff6a5a; font-size: 13px; letter-spacing: 1px; margin-bottom: 6px; }
-  .drow { display: flex; gap: 6px; align-items: center; font-size: 11px; padding: 2px 0;
-    border-top: 1px solid rgba(255,255,255,0.12); }
-  .chip { background: #c81e1e; color: #fff; font-size: 10px; font-weight: 900; padding: 2px 6px; border-radius: 4px; }
-  .dunit { font-weight: 900; }
-  .drole { color: #cfe3ff; flex: 1; }
-  .ddist { color: #ffd23c; font-weight: 900; }
-  /* bottom left: weapons + vitals */
-  #bl { position: absolute; left: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
-  #weapons { display: flex; gap: 8px; }
-  .wslot { width: 74px; padding: 6px 4px 5px; text-align: center; border-radius: 8px;
-    background: rgba(8,12,22,0.72); border: 1px solid rgba(255,255,255,0.4); }
-  .wslot.active { border: 2px solid #ffd23c; box-shadow: 0 0 10px rgba(255,210,60,0.5); }
-  .wslot svg { display: block; margin: 0 auto 2px; }
-  .wslot .wname { font-size: 10px; font-weight: 900; letter-spacing: 1px; }
-  .wslot .wammo { font-size: 11px; color: #9fd8ff; }
-  #vitals { width: 320px; }
-  .vrow { display: flex; align-items: center; gap: 8px; margin: 3px 0; font-size: 12px; font-weight: 900; }
-  .vrow .vlabel { width: 52px; }
-  .vbar { flex: 1; height: 10px; background: rgba(255,255,255,0.18); border-radius: 5px; overflow: hidden; }
-  .vbar > div { height: 100%; }
-  #health-bar { background: #37d67a; }
-  #armor-bar { background: #3b82f6; }
-  .vnum { width: 30px; text-align: right; }
-  /* bottom right: minimap + speed */
-  #br { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column;
-    align-items: flex-end; gap: 6px; }
-  #minimap { width: 200px; height: 200px; border-radius: 50%; border: 3px solid #fff;
-    background: #101826; box-shadow: 0 0 16px rgba(0,0,0,0.6); }
-  #speed-box { text-align: right; }
-  #speed-num { font-family: "Arial Black", Arial, sans-serif; font-size: 54px; line-height: 1;
-    text-shadow: 0 2px 4px #000; }
-  #speed-unit { font-size: 13px; font-weight: 900; color: #cfe3ff; }
-  #car-status { font-size: 12px; color: #ffd23c; font-weight: 900; }
-  #car-name { font-size: 15px; font-weight: 900; letter-spacing: 1px; color: #fff; }
-  .condwrap { height: 7px; background: rgba(255,255,255,0.18); border-radius: 4px; margin: 3px 0; overflow: hidden; }
-  #car-cond-bar { height: 100%; background: #ff7a1a; border-radius: 4px; }
-  #car-cond { font-size: 12px; color: #ffd23c; font-weight: 900; }
-  #radio-row { display: flex; gap: 8px; align-items: center; font-size: 12px; font-weight: 900; }
-  #mute-btn { pointer-events: auto; background: rgba(8,12,22,0.8); color: #fff; border: 1px solid #fff;
-    border-radius: 6px; padding: 3px 10px; cursor: pointer; font-weight: 900; }
-  /* dialog + toast — v7.4: the dialog rides ABOVE the weapon wheel
-     (bottom 148px, narrower) so all six weapon slots stay visible;
-     the v7.3 dialog at bottom 24px covered the shotgun/sniper slots.
-     v7.4 rev 2: explicit z-index so the dialog never sinks under the
-     weapon row on a narrow viewport */
-  #dialog { position: absolute; left: 50%; bottom: 148px; transform: translateX(-50%);
-    display: none; align-items: center; gap: 12px; width: 500px; max-width: 60vw; z-index: 25; }
-  .portrait { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 8px;
-    border: 2px solid #fff; display: block; }
-  .portrait.kira { box-shadow: 0 0 0 2px #0e7a7a; }
-  .portrait.mateo { box-shadow: 0 0 0 2px #ff7a1a; }
-  #dialog-name { color: #ffd23c; font-size: 13px; font-weight: 900; letter-spacing: 1px; }
-  #dialog-text { font-size: 14px; line-height: 1.4; margin-top: 2px; }
-  #toast { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
-    font-size: 15px; font-weight: 900; padding: 8px 18px; opacity: 0; transition: opacity 0.3s; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1210; font-family: "Segoe UI", Arial, sans-serif; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; display: none; z-index: 5; }
+  #hud.on { display: block; }
+  .panel { background: rgba(12, 10, 14, 0.62); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(2px); }
+  #mission-panel { position: absolute; top: 14px; left: 14px; width: 330px; }
+  #mission-name { font-size: 19px; font-weight: 800; letter-spacing: 1px; color: #ffb347; text-transform: uppercase; }
+  #mission-stage { font-size: 12px; color: #ffd9a0; letter-spacing: 2px; margin-top: 2px; }
+  #mission-objective { font-size: 14px; margin-top: 6px; line-height: 1.35; }
+  #mission-timer { font-size: 13px; color: #9fd8ff; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  #mission-next { font-size: 12px; color: #c9c9c9; margin-top: 4px; font-style: italic; }
+  #wanted-stars { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 30px; letter-spacing: 6px; color: #ffd94a; text-shadow: 0 0 10px rgba(0,0,0,0.8); }
+  #wanted-stars .off { color: rgba(255,255,255,0.22); }
+  #money { position: absolute; top: 14px; right: 14px; font-size: 22px; font-weight: 800; color: #7dff9e; text-shadow: 0 1px 3px #000; }
+  #radio-name { position: absolute; top: 46px; right: 14px; font-size: 12px; color: #ffb347; letter-spacing: 1px; text-shadow: 0 1px 2px #000; }
+  #minimap-wrap { position: absolute; right: 14px; top: 74px; width: 220px; height: 220px; }
+  #minimap { width: 220px; height: 220px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.35); box-shadow: 0 0 18px rgba(0,0,0,0.6); background: #20242c; }
+  #speed-box { position: absolute; right: 14px; bottom: 16px; text-align: right; }
+  #speed { font-size: 44px; font-weight: 800; line-height: 1; text-shadow: 0 2px 6px #000; font-variant-numeric: tabular-nums; }
+  #speed-unit { font-size: 13px; color: #ddd; }
+  #car-name { font-size: 15px; font-weight: 700; color: #ffb347; }
+  #car-condition { font-size: 12px; color: #ccc; }
+  #vitals { position: absolute; left: 14px; bottom: 16px; width: 260px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 12px; font-weight: 700; }
+  .bar { flex: 1; height: 10px; background: rgba(255,255,255,0.18); border-radius: 5px; overflow: hidden; }
+  .bar > div { height: 100%; border-radius: 5px; }
+  #health-fill { background: #37d67a; width: 100%; }
+  #armor-fill { background: #4aa8ff; width: 50%; }
+  #weapons { display: flex; gap: 6px; margin-top: 9px; }
+  .wpn { width: 34px; height: 34px; border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .wpn.sel { border-color: #ffb347; background: rgba(255,179,71,0.25); }
+  #ammo { font-size: 13px; margin-top: 6px; color: #ffe9b0; }
+  #crew-cards { position: absolute; left: 14px; bottom: 150px; display: flex; gap: 8px; }
+  .crew { width: 92px; text-align: center; font-size: 11px; }
+  .crew canvas { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.4); background: #333; }
+  .crew .cname { font-weight: 800; margin-top: 2px; }
+  .crew .crole { color: #ffd9a0; }
+  #dialog { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); width: 560px; display: none; align-items: flex-start; gap: 12px; }
+  #dialog.on { display: flex; }
+  #dialog-portrait { width: 84px; height: 84px; border-radius: 8px; border: 2px solid rgba(255,179,71,0.7); background: #222; flex: none; }
+  #dialog-name { font-weight: 800; color: #ffb347; font-size: 15px; }
+  #dialog-text { font-size: 15px; line-height: 1.45; margin-top: 3px; }
+  #dispatch-panel { position: absolute; left: 14px; top: 210px; width: 300px; display: none; }
+  #dispatch-panel.on { display: block; }
+  #dispatch-panel h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: 2px; color: #ff9d9d; }
+  #dispatch-list { font-size: 13px; line-height: 1.5; }
+  #race-panel { position: absolute; top: 70px; left: 50%; transform: translateX(-50%); text-align: center; display: none; }
+  #race-panel.on { display: block; }
+  #race-position { font-size: 30px; font-weight: 800; color: #ffb347; text-shadow: 0 2px 5px #000; }
+  #race-gap, #race-lap, #race-time { font-size: 14px; text-shadow: 0 1px 3px #000; }
+  #boat-panel { position: absolute; top: 70px; left: 50%; transform: translateX(-50%); text-align: center; display: none; }
+  #boat-panel.on { display: block; }
+  #boat-speed { font-size: 28px; font-weight: 800; color: #7dd8ff; text-shadow: 0 2px 5px #000; }
+  #boat-objective { font-size: 14px; text-shadow: 0 1px 3px #000; }
+  #exit-prompt, #interact-prompt { position: absolute; left: 50%; bottom: 170px; transform: translateX(-50%); font-size: 16px; font-weight: 700; background: rgba(0,0,0,0.65); border: 1px solid rgba(255,179,71,0.8); border-radius: 8px; padding: 8px 16px; display: none; }
+  #exit-prompt.on, #interact-prompt.on { display: block; }
+  #exit-prompt b, #interact-prompt b { color: #ffb347; }
+  #hitmarker { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; display: none; }
+  #hitmarker.on { display: block; }
+  #hitmarker:before, #hitmarker:after { content: ""; position: absolute; background: #fff; }
+  #hitmarker:before { left: 12px; top: 0; width: 2px; height: 26px; }
+  #hitmarker:after { left: 0; top: 12px; width: 26px; height: 2px; }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border: 2px solid rgba(255,255,255,0.85); border-radius: 50%; display: none; }
+  #crosshair.on { display: block; }
+  #damage-layer { position: absolute; inset: 0; overflow: hidden; }
+  .dmg { position: absolute; font-size: 18px; font-weight: 800; color: #ffe14a; text-shadow: 0 1px 3px #000; }
+  #toast { position: absolute; top: 150px; left: 50%; transform: translateX(-50%); font-size: 17px; font-weight: 700; background: rgba(0,0,0,0.7); padding: 8px 18px; border-radius: 8px; display: none; }
+  #toast.on { display: block; }
+  #save-toast { position: absolute; bottom: 200px; left: 50%; transform: translateX(-50%); font-size: 14px; background: rgba(0,0,0,0.7); padding: 6px 14px; border-radius: 8px; display: none; }
+  #save-toast.on { display: block; }
+  #countdown { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%); font-size: 110px; font-weight: 900; color: #ffb347; text-shadow: 0 4px 18px #000; display: none; }
+  #countdown.on { display: block; }
+  #title-screen { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, rgba(30,10,4,0.55), rgba(10,10,30,0.45)); }
+  #title-screen.hidden { display: none; }
+  #title-card { text-align: center; color: #fff; max-width: 640px; padding: 30px; }
+  #title-card h1 { font-size: 64px; margin: 0; letter-spacing: 6px; color: #ffb347; text-shadow: 0 4px 24px rgba(0,0,0,0.9); }
+  #title-card h2 { font-size: 24px; margin: 4px 0 18px; letter-spacing: 10px; color: #ffe9b0; }
+  #title-card p { font-size: 15px; line-height: 1.5; color: #eee; }
+  #btn-start, #btn-continue { pointer-events: auto; cursor: pointer; font-size: 20px; font-weight: 800; letter-spacing: 2px; color: #1a1210; background: #ffb347; border: none; border-radius: 10px; padding: 14px 34px; margin: 8px 6px 0; }
+  #btn-continue { background: #7dd8ff; display: none; }
+  #controls-list { font-size: 13px; color: #ddd; margin-top: 20px; line-height: 1.7; text-align: left; display: inline-block; }
+  #loading-overlay { position: fixed; inset: 0; z-index: 30; background: #1a1210; color: #ffb347; display: flex; align-items: center; justify-content: center; font-size: 22px; letter-spacing: 3px; }
+  #loading-overlay.hidden { display: none; }
+  #downed-overlay { position: fixed; inset: 0; z-index: 25; background: rgba(40,0,0,0.72); color: #fff; display: none; align-items: center; justify-content: center; flex-direction: column; }
+  #downed-overlay.on { display: flex; }
+  #downed-overlay h1 { color: #ff5a5a; font-size: 52px; letter-spacing: 6px; margin: 0; }
+  #downed-overlay p { font-size: 16px; }
+  #btn-respawn { pointer-events: auto; cursor: pointer; font-size: 18px; font-weight: 800; background: #ff5a5a; color: #fff; border: none; border-radius: 10px; padding: 12px 28px; }
+  #pause-menu { position: fixed; inset: 0; z-index: 22; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; }
+  #pause-menu.on { display: flex; }
+  #pause-menu .panel { width: 320px; text-align: center; }
+  #pause-menu button { pointer-events: auto; cursor: pointer; display: block; width: 100%; margin-top: 10px; font-size: 16px; font-weight: 700; padding: 10px; border-radius: 8px; border: none; background: #ffb347; color: #1a1210; }
 </style>
 </head>
 <body>
-<div id="app">
-  <div id="loading">LOADING SUNSET BAY&hellip;</div>
-
-  <div id="title-screen">
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="mission-panel" class="panel">
+    <div id="mission-name">PIER HEAT</div>
+    <div id="mission-stage">FREE ROAM</div>
+    <div id="mission-objective">Explore Sunset Bay. Find Kira on the pier.</div>
+    <div id="mission-timer">00:00</div>
+    <div id="mission-next">NEXT: Meet Kira on the pier</div>
+  </div>
+  <div id="wanted-stars"><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span></div>
+  <div id="money">$250</div>
+  <div id="radio-name">NIGHTWAVE 98.3</div>
+  <div id="minimap-wrap"><canvas id="minimap" width="220" height="220"></canvas></div>
+  <div id="speed-box">
+    <div id="speed">0</div>
+    <div id="speed-unit">KM/H</div>
+    <div id="car-name">SCARLET ARROW</div>
+    <div id="car-condition">CONDITION 100%</div>
+  </div>
+  <div id="vitals">
+    <div class="bar-row"><span>HP</span><div class="bar"><div id="health-fill"></div></div><span id="health-num">100</span></div>
+    <div class="bar-row"><span>ARMOR</span><div class="bar"><div id="armor-fill"></div></div><span id="armor-num">50</span></div>
+    <div id="weapons">
+      <div class="wpn sel" id="wpn-0">&#9994;</div>
+      <div class="wpn" id="wpn-1">&#128405;</div>
+      <div class="wpn" id="wpn-2">&#128299;</div>
+      <div class="wpn" id="wpn-3">&#9830;</div>
+      <div class="wpn" id="wpn-4">&#127919;</div>
+      <div class="wpn" id="wpn-5">&#127952;</div>
+    </div>
+    <div id="ammo">PISTOL — 24</div>
+  </div>
+  <div id="crew-cards">
+    <div class="crew"><canvas id="portrait-kira" width="64" height="64"></canvas><div class="cname">KIRA</div><div class="crole">RADIO</div></div>
+    <div class="crew"><canvas id="portrait-dario" width="64" height="64"></canvas><div class="cname">DARIO</div><div class="crole">DRIVER</div></div>
+    <div class="crew"><canvas id="portrait-lena" width="64" height="64"></canvas><div class="cname">LENA</div><div class="crole">LOOKOUT</div></div>
+  </div>
+  <div id="dialog" class="panel">
+    <canvas id="dialog-portrait" width="84" height="84"></canvas>
+    <div><div id="dialog-name">KIRA</div><div id="dialog-text"></div></div>
+  </div>
+  <div id="dispatch-panel" class="panel">
+    <h3>DISPATCH — SUNSET BAY PD</h3>
+    <div id="dispatch-list"></div>
+  </div>
+  <div id="race-panel">
+    <div id="race-position">4th of 4</div>
+    <div id="race-gap">GAP +0.0s</div>
+    <div id="race-lap">LAP 1/1</div>
+    <div id="race-time">0:00.0</div>
+  </div>
+  <div id="boat-panel">
+    <div id="boat-speed">0 KN</div>
+    <div id="boat-objective">Reach the far pier</div>
+  </div>
+  <div id="exit-prompt"><b>[E]</b> <span id="exit-prompt-text">Exit car</span></div>
+  <div id="interact-prompt"><b>[E]</b> <span id="interact-prompt-text">Talk to Kira</span></div>
+  <div id="hitmarker"></div>
+  <div id="crosshair"></div>
+  <div id="damage-layer"></div>
+  <div id="toast"></div>
+  <div id="save-toast">Game saved</div>
+  <div id="countdown">3</div>
+</div>
+<div id="title-screen">
+  <div id="title-card">
     <h1>PIER HEAT</h1>
     <h2>SUNSET BAY</h2>
-    <p>Mateo Vega, getaway driver. Kira on the radio. The Bay City PD wants the
-    Scarlet Arrow — lose the heat, reach the pier, and hold the line.
-    v7.5: race the rivals on Sunset Blvd, then take the speedboat across the bay.</p>
-    <div class="keys">WASD / ARROWS — drive &nbsp;•&nbsp; SPACE — brake &nbsp;•&nbsp; SHIFT — run<br>
-    F — enter / exit car &nbsp;•&nbsp; CLICK — shoot on foot &nbsp;•&nbsp; P — save &nbsp;•&nbsp; M — mute</div>
-    <button id="start-btn">START ENGINE</button>
-  </div>
-
-  <div id="hud">
-    <div id="obj-panel" class="panel">
-      <div id="obj-title">PIER HEAT</div>
-      <div id="obj-stage">STAGE 1/3</div>
-      <div class="barwrap"><div id="obj-bar" class="barfill" style="width:33%"></div></div>
-      <div id="obj-timer"></div>
-      <div id="obj-text"></div>
-      <div id="obj-next"></div>
+    <p>Mateo Vega, getaway driver. One golden-hour job: meet Kira on the pier, win the street race down Sunset Boulevard, then vanish across the bay by boat — with the whole Sunset Bay PD on your tail.</p>
+    <button id="btn-start">START ENGINE</button>
+    <button id="btn-continue">CONTINUE</button>
+    <div id="controls-list">
+      <b>W A S D</b> drive / walk &nbsp;·&nbsp; <b>Mouse</b> look &amp; aim &nbsp;·&nbsp; <b>Click / F</b> shoot &nbsp;·&nbsp; <b>R</b> reload<br>
+      <b>E</b> enter / exit car &amp; boat, talk &nbsp;·&nbsp; <b>1–6</b> weapons &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>Space</b> brake<br>
+      <b>P</b> save &nbsp;·&nbsp; <b>L</b> load &nbsp;·&nbsp; <b>Esc</b> pause &nbsp;·&nbsp; <b>M</b> radio on/off
     </div>
-
-    <div id="wanted-panel" class="panel">
-      <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
-      <div id="money">$24,750</div>
-      <div id="wanted-label">BAY CITY PD</div>
-    </div>
-
-    <div id="dispatch-panel" class="panel">
-      <h3>DISPATCH — BAY CITY PD</h3>
-      <div id="dispatch-rows"></div>
-    </div>
-
-    <div id="crew-cards"></div>
-
-    <div id="race-panel" class="panel">
-      <div id="race-pos">P2/4</div>
-      <div id="race-lap">LAP 1/2</div>
-      <div id="race-gap"></div>
-      <div id="race-countdown"></div>
-    </div>
-
-    <div id="boat-panel" class="panel">
-      <h3>SPEEDBOAT — BAY CHASE</h3>
-      <span id="boat-speed">24 KN</span>
-      <div id="boat-dist">180m TO PIER</div>
-      <div id="boat-police"></div>
-      <div id="boat-pos"></div>
-    </div>
-
-    <div id="bl">
-      <div id="weapons">
-        <div class="wslot" data-slot="fists">
-          <svg width="26" height="26" viewBox="0 0 24 24"><path d="M7 11V5a2 2 0 1 1 4 0v4h1V4a2 2 0 1 1 4 0v5h1V6a2 2 0 1 1 4 0v7c0 5-3 8-7 8s-6-2-7-6l-1-3c-.3-1 .8-2 1.7-1.4L7 11z" fill="#fff"/></svg>
-          <div class="wname">FISTS</div><div class="wammo">—</div>
-        </div>
-        <div class="wslot active" data-slot="pistol">
-          <svg width="26" height="26" viewBox="0 0 24 24"><path d="M2 8h16l4 2-1 3h-6l-1 6h-3l1-6H8l-1 4H4l1-4H2z" fill="#fff"/></svg>
-          <div class="wname">PISTOL</div><div class="wammo" id="ammo-pistol">12/12</div>
-        </div>
-        <div class="wslot" data-slot="smg">
-          <svg width="26" height="26" viewBox="0 0 24 24"><path d="M2 9h18l3 2-2 3h-4l-1 5h-3l1-5H6l-1 3H2l1-3H1z" fill="#fff"/></svg>
-          <div class="wname">SMG</div><div class="wammo" id="ammo-smg">0/30</div>
-        </div>
-        <div class="wslot" data-slot="rifle">
-          <svg width="26" height="26" viewBox="0 0 24 24"><path d="M1 8h20l3 2-2 3h-5l-1 6h-3l1-6H5l-1 3H1l1-3H1z" fill="#fff"/></svg>
-          <div class="wname">RIFLE</div><div class="wammo" id="ammo-rifle">0/24</div>
-        </div>
-        <div class="wslot" data-slot="shotgun">
-          <svg width="26" height="26" viewBox="0 0 24 24"><path d="M2 7h14l5 2-1 4h-4l-1 6h-3l1-6H8l-1 4H4l1-4H2z" fill="#fff"/></svg>
-          <div class="wname">SHOTGUN</div><div class="wammo" id="ammo-shotgun">0/6</div>
-        </div>
-        <div class="wslot" data-slot="sniper">
-          <svg width="26" height="26" viewBox="0 0 24 24"><path d="M1 9h22l2 2-2 2H9l-1 5H5l1-5H3l-1 3H1l1-3H1z" fill="#fff"/></svg>
-          <div class="wname">SNIPER</div><div class="wammo" id="ammo-sniper">0/5</div>
-        </div>
-      </div>
-      <div id="vitals" class="panel">
-        <div class="vrow"><span class="vlabel">HEALTH</span><div class="vbar"><div id="health-bar" style="width:100%"></div></div><span class="vnum" id="health-num">100</span></div>
-        <div class="vrow"><span class="vlabel">ARMOR</span><div class="vbar"><div id="armor-bar" style="width:80%"></div></div><span class="vnum" id="armor-num">80</span></div>
-      </div>
-    </div>
-
-    <div id="br">
-      <canvas id="minimap" width="200" height="200"></canvas>
-      <div id="speed-box" class="panel">
-        <span id="speed-num">0</span> <span id="speed-unit">KM/H</span>
-        <div id="car-name">SCARLET ARROW</div>
-        <div class="condwrap"><div id="car-cond-bar" style="width:98%"></div></div>
-        <div><span id="car-status">SCARLET ARROW • 98%</span> <span id="car-cond">98%</span></div>
-        <div id="radio-row"><span id="radio-text">NIGHTWAVE 98.3 — SUNSET DRIVE</span>
-        <button id="mute-btn">MUTE [M]</button></div>
-      </div>
-    </div>
-
-    <div id="dialog" class="panel">
-      <canvas id="dialog-portrait" class="portrait kira" width="64" height="64"></canvas>
-      <div><div id="dialog-name">KIRA — HANDLER</div><div id="dialog-text"></div></div>
-    </div>
-
-    <div id="toast" class="panel"></div>
   </div>
 </div>
-<!-- v7.7 patch scripts: yaw77.js MUST load before three.min.js (it traps
-     the THREE assignment to wrap the renderer); hud77/traffic77 poll for
-     PH and the scene, so they can load anywhere after three.min.js. -->
-<script src="yaw77.js"></script>
+<div id="downed-overlay">
+  <h1>YOU'RE DOWN</h1>
+  <p>Mateo is out cold on the streets of Sunset Bay.</p>
+  <button id="btn-respawn">GET BACK UP — $50 hospital fee</button>
+</div>
+<div id="pause-menu">
+  <div class="panel">
+    <h2 style="margin:0;color:#ffb347">PAUSED</h2>
+    <button id="btn-save">SAVE GAME (P)</button>
+    <button id="btn-load">LOAD GAME (L)</button>
+    <button id="btn-resume">RESUME</button>
+  </div>
+</div>
+<div id="loading-overlay">LOADING SUNSET BAY…</div>
 <script src="vendor/three.min.js"></script>
-<script src="hud77.js"></script>
-<script src="traffic77.js"></script>
 <script src="core.js"></script>
-<!-- v7.5 visual systems (written fresh this round, from the real-world
-     briefs): sky + clouds, hero-car rear, police heli, boat water,
-     reflective facades, wet road. They load before world.js / sim.js /
-     boats.js, which call them when present and keep their old visuals
-     as fallback when they are not. -->
-<script src="sky.js"></script>
+<script src="world.js"></script>
+<script src="sim.js"></script>
 <script src="herocar.js"></script>
+<script src="mateo.js"></script>
+<script src="portraits.js"></script>
+<script src="boats.js"></script>
+<script src="races.js"></script>
+<script src="sky.js"></script>
 <script src="heli.js"></script>
 <script src="waterfx.js"></script>
 <script src="facades.js"></script>
 <script src="wetroad.js"></script>
-<script src="world.js"></script>
-<script src="sim.js"></script>
-<script src="mateo.js"></script>
-<script src="boats.js"></script>
-<script src="races.js"></script>
-<script src="portraits.js"></script>
 <script src="audio.js"></script>
 <script src="main.js"></script>
 </body>

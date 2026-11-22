@@ -1,280 +1,194 @@
-// PIER HEAT — Sunset Bay v7.4
-// races.js — street racing on the city road graph: a loop of gates
-// (checkpoint arches) along Sunset Blvd and the cross streets, rival
-// cars that follow the same loop with their own pace, a start countdown
-// and a live race position. Position is computed from checkpoint order
-// first, then distance to the next gate — so a rival one gate ahead
-// always ranks above the player, however close the gap looks.
-// v7.4: in shot 1 the rivals run BIG and CLOSE, one in each lane
-// beside the hero, so the frame reads as a race at a glance.
-// Plain script; uses window.PH.
+// PIER HEAT — Sunset Bay v8.0: the street race. Countdown, a chain of checkpoint gates down
+// Sunset Boulevard, rival cars on a racing line with rubber-banding (they catch up when behind,
+// ease off when far ahead), laps, live position and gap to the car ahead, and an explicit
+// race-complete event with a reward.
 (function () {
   'use strict';
   var PH = window.PH;
-  var THREE = window.THREE;
 
-  // The loop: down Sunset Blvd south, east along Z 120, back north on
-  // the east avenue, west along Z -120. Gates sit at the corners and
-  // mid-straights so the player always sees the next arch.
-  PH.RACE_LOOP = [
-    { x: -20, z: -100 }, { x: -20, z: -40 }, { x: -20, z: 20 },
-    { x: -20, z: 80 }, { x: -20, z: 120 }, { x: 40, z: 120 },
-    { x: 100, z: 120 }, { x: 140, z: 120 }, { x: 140, z: 60 },
-    { x: 140, z: 0 }, { x: 140, z: -60 }, { x: 140, z: -120 },
-    { x: 80, z: -120 }, { x: 20, z: -120 }
-  ];
+  PH.race = {
+    state: 'idle', // idle | countdown | racing | done
+    gates: [],
+    gateMeshes: [],
+    rivals: [],
+    currentGate: 0,
+    lap: 1,
+    laps: 1,
+    raceTime: 0,
+    countdownT: 0,
+    progress: 0, // player progress along the course, for position math
+    reward: 1500,
+    startedAt: 0,
 
-  function std(color, rough, metal) {
-    return new THREE.MeshStandardMaterial({
-      color: color, roughness: rough == null ? 0.6 : rough, metalness: metal || 0
-    });
-  }
+    gatePositions: [
+      { x: -120, z: 0 }, { x: -60, z: 0 }, { x: 0, z: 0 },
+      { x: 60, z: 0 }, { x: 120, z: 0 }
+    ],
 
-  // Checkpoint gate: two striped poles + a glowing amber banner across
-  // the road, with a floating number board so the gate reads from far.
-  PH.makeRaceGate = function (index, total) {
-    var g = new THREE.Group();
-    var poleMat = std(0x1a1a1a, 0.6, 0.3);
-    [-4.2, 4.2].forEach(function (x) {
-      var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 6.4, 8), poleMat);
-      pole.position.set(x, 3.2, 0); pole.castShadow = true; g.add(pole);
-      var base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.3, 0.9), std(0xffc832, 0.6));
-      base.position.set(x, 0.15, 0); g.add(base);
-    });
-    var bannerTex = PH.canvasTex(512, 96, function (ctx, w, h) {
-      ctx.fillStyle = '#14181c'; ctx.fillRect(0, 0, w, h);
-      for (var i = 0; i < 16; i++) {
-        ctx.fillStyle = i % 2 ? '#f2f2f2' : '#14181c';
-        ctx.fillRect(i * 32, 0, 32, 14);
-        ctx.fillRect(i * 32, h - 14, 32, 14);
+    buildGates: function () {
+      var i, g;
+      for (i = 0; i < this.gatePositions.length; i++) {
+        g = this.gatePositions[i];
+        var mesh = new THREE.Group();
+        var postMat = new THREE.MeshStandardMaterial({ color: 0xffb347, emissive: 0xff8a00, emissiveIntensity: 0.9 });
+        var pL = new THREE.Mesh(PH.boxGeo(0.5, 7, 0.5), postMat);
+        pL.position.set(-6.5, 3.5, 0); mesh.add(pL);
+        var pR = pL.clone(); pR.position.x = 6.5; mesh.add(pR);
+        var banner = new THREE.Mesh(new THREE.PlaneGeometry(13.4, 1.4),
+          new THREE.MeshBasicMaterial({ map: PH.labelTexture('GATE ' + (i + 1), { bg: '#1d1a24', fg: '#ffb347', size: 60 }), side: THREE.DoubleSide }));
+        banner.position.set(0, 6.4, 0); mesh.add(banner);
+        mesh.position.set(g.x, 0, g.z);
+        mesh.visible = false;
+        PH.scene.add(mesh);
+        this.gateMeshes.push(mesh);
+        this.gates.push({ x: g.x, z: g.z, passed: false });
       }
-      // round 2: 44px, not 56 — "CHECKPOINT 3/14" at 56px overflowed
-      // the 512px board and the "4" was clipped in shot 1
-      ctx.fillStyle = '#ffd23c'; ctx.font = '900 44px Arial, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('CHECKPOINT ' + (index + 1) + '/' + total, w / 2, h / 2 + 2);
-    });
-    var banner = new THREE.Mesh(new THREE.BoxGeometry(9.2, 1.6, 0.2),
-      new THREE.MeshStandardMaterial({ map: bannerTex, roughness: 0.6, emissive: 0x332200, emissiveIntensity: 0.4 }));
-    banner.position.y = 5.6; g.add(banner);
-    // amber glow strip under the banner
-    var glow = new THREE.Mesh(new THREE.BoxGeometry(9.0, 0.12, 0.12),
-      new THREE.MeshStandardMaterial({ color: 0xffc832, emissive: 0xffb030, emissiveIntensity: 1.6 }));
-    glow.position.y = 4.7; g.add(glow);
-    // countdown lamps: three red lamps under the banner that light up
-    // one by one and turn green on GO — the start line reads as a start
-    var lampMats = [];
-    [-1.2, 0, 1.2].forEach(function (x) {
-      var lm = new THREE.MeshStandardMaterial({ color: 0x402020, emissive: 0xff2020, emissiveIntensity: 0.15 });
-      var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), lm);
-      lamp.position.set(x, 4.1, 0.15);
-      g.add(lamp);
-      lampMats.push(lm);
-      var housing = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.12, 10), std(0x14181c, 0.5, 0.4));
-      housing.rotation.x = Math.PI / 2;
-      housing.position.set(x, 4.1, 0.02);
-      g.add(housing);
-    });
-    g.userData.banner = banner;
-    g.userData.lampMats = lampMats;
-    return g;
-  };
-  // Light the countdown lamps: n = 0..3 lit red, 4 = all green (GO).
-  PH.makeRaceGate.setLights = function (gate, n) {
-    if (!gate || !gate.userData.lampMats) return;
-    gate.userData.lampMats.forEach(function (m, i) {
-      if (n >= 4) { m.color.setHex(0x20ff60); m.emissive.setHex(0x10ff40); m.emissiveIntensity = 2.2; }
-      else if (i < n) { m.color.setHex(0xff2020); m.emissive.setHex(0xff1010); m.emissiveIntensity = 2.2; }
-      else { m.color.setHex(0x402020); m.emissive.setHex(0xff2020); m.emissiveIntensity = 0.15; }
-    });
-  };
+    },
 
-  // --- race state machine ---
-  PH.Race = function (scene) {
-    this.scene = scene;
-    this.gates = [];
-    this.rivals = [];
-    this.nextGate = 0;
-    this.lap = 1;
-    this.totalLaps = 2;
-    this.position = 1;
-    this.countdown = -1; // seconds left; -1 = not racing
-    this.countdownT = 0;
-    this.racing = false;
-    this.raceTime = 0;
-    this.playerGate = 0;
-    this.playerProgress = 0;
-    var self = this;
-    PH.RACE_LOOP.forEach(function (pt, i) {
-      var gate = PH.makeRaceGate(i, PH.RACE_LOOP.length);
-      gate.position.set(pt.x, 0, pt.z);
-      // gates face along the loop: heading to the next gate
-      var nx = PH.RACE_LOOP[(i + 1) % PH.RACE_LOOP.length];
-      gate.rotation.y = Math.atan2(nx.x - pt.x, nx.z - pt.z);
-      gate.visible = false;
-      scene.add(gate);
-      self.gates.push(gate);
-    });
-    // three rivals now, distinct colours AND distinct bodies (v7.4):
-    // a blue hatch, a red pickup and a green coupe — round 2 adds the
-    // coupe so the race is a three-car fight, not a duel
-    var colors = [0x2a6fd8, 0xd83a2a, 0x37a05a];
-    var bodies = ['hatch', 'pickup', 'coupe'];
-    var names = ['AZUL', 'ROJA', 'VERDE'];
-    colors.forEach(function (c, i) {
-      var car = PH.makeCar({ kind: 'traffic', color: c, bodyType: bodies[i] });
-      car.position.set(-20 + (i === 0 ? 4 : -4), 0, -104 + i * 4);
-      scene.add(car);
-      self.rivals.push({
-        mesh: car, gate: 0, speed: 15 + i * 1.2, color: c, name: names[i],
-        pos: new THREE.Vector3(-20 + (i === 0 ? 4 : -4), 0, -104 + i * 4)
-      });
-    });
-    this.gap = 0; // seconds (approx) behind the car ahead of the player
-  };
-  PH.Race.prototype.showGates = function (on) {
-    this.gates.forEach(function (g) { g.visible = on; });
-  };
-  // Reset a finished (or staged) race back to the start line: gates
-  // cleared, lap and clock zeroed, rivals back to their grid spots.
-  PH.Race.prototype.reset = function () {
-    this.nextGate = 0; this.lap = 1; this.raceTime = 0;
-    this.playerGate = 0; this.position = 1; this.gap = 0;
-    this.countdown = -1; this.countdownT = 0; this.racing = false;
-    this.gates.forEach(function (g) { PH.makeRaceGate.setLights(g, 0); });
-    this.rivals.forEach(function (r, i) {
-      r.gate = 0;
-      r.pos.set(-20 + (i === 0 ? 4 : -4), 0, -104 + i * 4);
-      r.mesh.position.copy(r.pos);
-      r.mesh.rotation.y = 0;
-    });
-  };
-  PH.Race.prototype.startCountdown = function () {
-    this.countdown = 3;
-    this.countdownT = 0;
-    this.racing = false;
-  };
-  // Rank: most gates cleared wins; ties break by distance to next gate.
-  PH.Race.prototype.computePosition = function (playerPos) {
-    var entries = [];
-    var next = PH.RACE_LOOP[this.playerGate % PH.RACE_LOOP.length];
-    var pd = Math.hypot(playerPos.x - next.x, playerPos.z - next.z);
-    entries.push({ who: 'player', gates: this.playerGate, dist: pd });
-    this.rivals.forEach(function (r, i) {
-      var ng = PH.RACE_LOOP[r.gate % PH.RACE_LOOP.length];
-      entries.push({
-        who: 'rival' + i, gates: r.gate,
-        dist: Math.hypot(r.pos.x - ng.x, r.pos.z - ng.z)
-      });
-    });
-    entries.sort(function (a, b) {
-      if (b.gates !== a.gates) return b.gates - a.gates;
-      return a.dist - b.dist;
-    });
-    for (var i = 0; i < entries.length; i++) {
-      if (entries[i].who === 'player') {
-        this.position = i + 1;
-        // gap to the car ahead, in seconds at ~16 u/s — the number the
-        // HUD shows next to the position, so P2 always has a chase target
-        var ahead = entries[i - 1];
-        this.gap = ahead ? Math.max(0, (ahead.dist - entries[i].dist) / 16) : 0;
-        break;
+    start: function () {
+      var i;
+      this.state = 'countdown';
+      this.countdownT = 3.2;
+      this.currentGate = 0;
+      this.lap = 1;
+      this.raceTime = 0;
+      this.progress = 0;
+      for (i = 0; i < this.gates.length; i++) {
+        this.gates[i].passed = false;
+        this.gateMeshes[i].visible = true;
+        this.gateMeshes[i].children[0].material.emissiveIntensity = 0.9;
       }
+      // rivals line up on the boulevard beside the player
+      this._spawnRivals();
+      PH.events.emit('race-start', {});
+    },
+
+    _spawnRivals: function () {
+      var names = ['RICO', 'SABLE', 'VOLT'];
+      var colors = [0x9a2a8a, 0x2a8a5a, 0x2a5a8a];
+      var i, c;
+      // clear any previous rivals first
+      for (i = 0; i < this.rivals.length; i++) {
+        if (this.rivals[i] && this.rivals[i].group) PH.scene.remove(this.rivals[i].group);
+      }
+      this.rivals = [];
+      for (i = 0; i < 3; i++) {
+        var g = PH.sim.buildCar({ color: colors[i] });
+        var rx = -100 + i * 6, rz = (i - 1) * 3.5;
+        g.position.set(rx, 0, rz);
+        PH.scene.add(g);
+        c = {
+          group: g, name: names[i], x: rx, z: rz, heading: Math.PI / 2,
+          speed: 0, baseSpeed: 19 + i * 1.5, progress: 0, gate: 0,
+          line: this._racingLine()
+        };
+        this.rivals.push(c);
+      }
+    },
+    _racingLine: function () {
+      // racing line down Sunset Blvd with a gentle weave
+      var pts = [], x;
+      for (x = -130; x <= 135; x += 10) pts.push({ x: x, z: Math.sin(x * 0.06) * 2.5 });
+      return pts;
+    },
+
+    _playerProgress: function (player) {
+      // progress = gates passed * 1000 + distance along the boulevard
+      return this.currentGate * 1000 + (player.x + 130);
+    },
+
+    position: function (player) {
+      // rank the player against rivals by progress
+      var entries = [{ name: 'YOU', progress: this._playerProgress(player), isPlayer: true }];
+      var i;
+      for (i = 0; i < this.rivals.length; i++) entries.push({ name: this.rivals[i].name, progress: this.rivals[i].progress });
+      entries.sort(function (a, b) { return b.progress - a.progress; });
+      var pos = 1, gap = 0;
+      for (i = 0; i < entries.length; i++) {
+        if (entries[i].isPlayer) {
+          pos = i + 1;
+          if (i > 0) gap = (entries[i - 1].progress - entries[i].progress) / 10;
+        }
+      }
+      var ord = ['1st', '2nd', '3rd', '4th'];
+      return { pos: pos, label: ord[pos - 1] + ' of 4', gap: gap };
+    },
+
+    update: function (dt, player) {
+      var i, r;
+      if (this.state === 'countdown') {
+        this.countdownT -= dt;
+        var n = Math.ceil(this.countdownT);
+        if (this.countdownT <= 0) {
+          this.state = 'racing';
+          this.startedAt = performance.now();
+          PH.hud.text('countdown', 'GO!');
+          setTimeout(function () { PH.hud.show('countdown', false); }, 600);
+          PH.events.emit('race-go', {});
+        } else {
+          PH.hud.text('countdown', String(n));
+          PH.hud.show('countdown', true);
+        }
+        return;
+      }
+      if (this.state !== 'racing') return;
+      this.raceTime += dt;
+      // gate check: player within 8 units of the current gate
+      var g = this.gates[this.currentGate];
+      if (g && PH.dist2d(player.x, player.z, g.x, g.z) < 9) {
+        g.passed = true;
+        this.gateMeshes[this.currentGate].children[0].material.emissiveIntensity = 0.15;
+        PH.hud.toast('GATE ' + (this.currentGate + 1) + ' / ' + this.gates.length);
+        PH.audio.blip();
+        this.currentGate++;
+        if (this.currentGate >= this.gates.length) { this.complete(player); return; }
+      }
+      // rivals follow the racing line, rubber-banding to the player
+      var pp = this._playerProgress(player);
+      for (i = 0; i < this.rivals.length; i++) {
+        r = this.rivals[i];
+        var behind = pp - r.progress;
+        var target = r.baseSpeed + PH.clamp(behind * 0.06, -2.5, 4.5); // catch up when behind
+        r.speed = PH.lerp(r.speed, target, dt * 0.8);
+        // follow the line: steer toward the next line point ahead
+        var lx = r.x + 14;
+        var targetZ = Math.sin(lx * 0.06) * 2.5;
+        var want = Math.atan2(lx - r.x, targetZ - r.z);
+        r.heading = PH.angleLerp(r.heading, want, dt * 1.8);
+        r.x += Math.sin(r.heading) * r.speed * dt;
+        r.z += Math.cos(r.heading) * r.speed * dt;
+        r.progress = r.gate * 1000 + (r.x + 130);
+        var col = PH.collideCarCircle(r.x, r.z, 1.7);
+        r.x = col.x; r.z = col.z;
+        r.group.position.set(r.x, 0, r.z);
+        r.group.rotation.y = r.heading;
+        var wheels = r.group.userData.wheels;
+        for (var w = 0; w < wheels.length; w++) wheels[w].rotation.x += r.speed * dt * 2.4;
+      }
+      // HUD
+      var pos = this.position(player);
+      PH.hud.show('race-panel', true);
+      PH.hud.text('race-position', pos.label);
+      PH.hud.text('race-gap', pos.pos === 1 ? 'LEADING THE PACK' : 'GAP +' + pos.gap.toFixed(1) + 's');
+      PH.hud.text('race-lap', 'LAP ' + this.lap + '/' + this.laps);
+      PH.hud.text('race-time', PH.fmtRaceTime(this.raceTime));
+    },
+
+    complete: function (player) {
+      this.state = 'done';
+      var i;
+      for (i = 0; i < this.gateMeshes.length; i++) this.gateMeshes[i].visible = false;
+      PH.hud.show('race-panel', false);
+      PH.hud.show('countdown', false);
+      var pos = this.position(player);
+      PH.events.emit('race-complete', { position: pos.pos, time: this.raceTime, reward: this.reward });
+    },
+
+    reset: function () {
+      this.state = 'idle';
+      var i;
+      for (i = 0; i < this.gateMeshes.length; i++) this.gateMeshes[i].visible = false;
+      PH.hud.show('race-panel', false);
     }
-    return this.position;
-  };
-  PH.Race.prototype.update = function (dt, t, playerPos, playerSpeed) {
-    if (this.countdown >= 0) {
-      this.countdownT += dt;
-      var left = 3 - Math.floor(this.countdownT);
-      if (left !== this.countdown) {
-        this.countdown = left;
-        // countdown lamps on the next gate: 3, 2, 1 red, then green GO
-        var gate = this.gates[this.playerGate % this.gates.length];
-        PH.makeRaceGate.setLights(gate, left <= 0 ? 4 : 3 - left);
-        if (left <= 0) { this.racing = true; this.countdown = -1; }
-      }
-    }
-    if (!this.racing) return;
-    this.raceTime += dt;
-    // player gate: within 7 units of the next gate = cleared
-    var next = PH.RACE_LOOP[this.playerGate % PH.RACE_LOOP.length];
-    if (playerPos && Math.hypot(playerPos.x - next.x, playerPos.z - next.z) < 7) {
-      this.playerGate++;
-      if (this.playerGate >= PH.RACE_LOOP.length) {
-        this.playerGate = 0; this.lap++;
-        if (this.lap > this.totalLaps) { this.racing = false; }
-      }
-      PH.hud.toast('CHECKPOINT ' + this.playerGate + ' — LAP ' + this.lap + '/' + this.totalLaps);
-      // round 2: a checkpoint sounds like a checkpoint — a cheer from
-      // the crowd plus dispatch on the radio
-      PH.Audio.crowdCheer();
-      PH.Audio.radioChatter();
-    }
-    // rivals: drive toward their next gate, ease off on sharp turns
-    this.rivals.forEach(function (r) {
-      var target = PH.RACE_LOOP[r.gate % PH.RACE_LOOP.length];
-      var dx = target.x - r.pos.x, dz = target.z - r.pos.z;
-      var d = Math.hypot(dx, dz);
-      if (d < 7) { r.gate++; target = PH.RACE_LOOP[r.gate % PH.RACE_LOOP.length]; dx = target.x - r.pos.x; dz = target.z - r.pos.z; d = Math.hypot(dx, dz); }
-      var want = Math.atan2(dx, dz);
-      var cur = r.mesh.rotation.y;
-      var diff = want - cur;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      var turn = PH.clamp(diff, -1.8 * dt, 1.8 * dt);
-      r.mesh.rotation.y = cur + turn;
-      var cornerSlow = 1 - Math.min(0.45, Math.abs(diff) * 0.4);
-      var sp = r.speed * cornerSlow;
-      r.pos.x += Math.sin(r.mesh.rotation.y) * sp * dt;
-      r.pos.z += Math.cos(r.mesh.rotation.y) * sp * dt;
-      r.mesh.position.copy(r.pos);
-    });
-    this.computePosition(playerPos || { x: -20, z: 8 });
-  };
-  // Frozen hero arrangement for shot 1: the next gate arches over the
-  // road ahead of the hero, and ALL THREE rivals run big and close —
-  // one in the right lane just ahead of the hero's nose, one in the
-  // left lane alongside, the green coupe ahead in the middle — so the
-  // race reads at a glance instead of hiding behind the gate. Round 2:
-  // the gate sits further ahead (z -24, not -18) and its banner text
-  // fits the board, so "CHECKPOINT 3/14" reads whole.
-  PH.Race.prototype.stageShot = function () {
-    this.showGates(true);
-    var gate = this.gates[2];
-    gate.position.set(-20, 0, -24);
-    gate.rotation.y = 0;
-    gate.visible = true;
-    this.gates.forEach(function (g, i) { if (i !== 2) g.visible = false; });
-    PH.makeRaceGate.setLights(gate, 2);
-    var rival = this.rivals[0];
-    rival.mesh.position.set(-16.5, 0, 0);
-    rival.mesh.rotation.y = Math.PI;
-    rival.pos.copy(rival.mesh.position);
-    rival.gate = 2;
-    var rival2 = this.rivals[1];
-    // v7.5: the red pickup moves to (-26,-5) — in v7.4 it sat at
-    // (-23.5,-2), only 0.35 off the camera-to-hero sightline, so it
-    // stacked on the hero's stern in shot 1. A step west and north
-    // breaks the alignment; it stays big and close in the left lane.
-    rival2.mesh.position.set(-26, 0, -5);
-    rival2.mesh.rotation.y = Math.PI;
-    rival2.pos.copy(rival2.mesh.position);
-    rival2.gate = 2;
-    // round 2: the green coupe runs ahead in the middle lane, between
-    // the hero and the gate — three cars deep in the frame
-    var rival3 = this.rivals[2];
-    rival3.mesh.position.set(-20, 0, -10);
-    rival3.mesh.rotation.y = Math.PI;
-    rival3.pos.copy(rival3.mesh.position);
-    rival3.gate = 3;
-    // v7.4 rev 2: the red pickup runs further ahead (z -2, not +3) so
-    // the hero no longer hides it — both rivals stay readable
-    this.playerGate = 2;
-    this.lap = 1;
-    this.racing = true;
-    this.countdown = -1;
-    this.position = 2;
-    this.gap = 0.4;
   };
 })();

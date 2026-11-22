@@ -1,1239 +1,324 @@
-// PIER HEAT — Sunset Bay v7.4
-// world.js — builds Sunset Bay: sky, low sun + long shadows, haze,
-// glare, ground, sea, roads, buildings, street props, palms, beach,
-// pier and volumetric sunset clouds with moving ground shadows.
-// Plain script; uses window.PH.
+// PIER HEAT — Sunset Bay v8.0: the world. Connected road grid, buildings, pier, harbor,
+// beach, Sunset Bay Bridge causeway, palms and props. Every solid registers its footprint
+// in the collider registry at build time (see core.js) — collision never traverses the scene.
 (function () {
   'use strict';
   var PH = window.PH;
-  var THREE = window.THREE;
 
-  // Seeded per-building style roll, so the same building always gets
-  // the same ground floor, crown and sign — no two neighbours match.
-  function styleRoll(seedKey) {
-    var r = PH.mulberry32(seedKey);
-    return function () { return r(); };
-  }
-
-  var SHOP_NAMES = ['ARCADE','TACOS','RECORDS','DANCE HALL','HOTEL OCEAN','CINEMA','BURGERS','PIER CAFE','SURF SHOP','SUNSET MOTEL','NEON BAR','PIZZA BAY','DONUTS','LAUNDROMAT','BOOKS','FLOWERS','BARBER','IRON GYM','SUSHI WAVE','COFFEE ROAST','VINTAGE','TOYS','PHARMACY','BAKERY','SEAFOOD','JUICE BAR','TATTOO','BIKES','CAMERA','PETS','HARDWARE','NAILS','OPTIC','TRAVEL','BANK SUNSET','POST','MARKET','FISH & CHIPS','RAMEN','GELATO','CANDY','MUSIC','SKATE','DIVING','KAYAK','HOTEL PALM','HOSTEL','SPA','KARAOKE','BOWLING','ESCAPE ROOM','GALLERY','THEATER','COMICS','SNEAKERS','WATCHES','JEWELS','LIQUOR','DELI','BUBBLE TEA','NOODLES','CURRY','STEAKHOUSE','BRUNCH','ROOFTOP','LOBSTER','CORNER STORE'];
-  var SIGN_COLORS = ['#b02020','#1a3a6e','#0e7a7a','#c85a00','#6a2a8a','#204060','#8a5a00'];
-  var FACADE_COLORS = [0xf2e3c8, 0xaebfd0, 0xd9a08a, 0xcfe0c0, 0xe8dcc0, 0xb8c8d8, 0xe0b090];
-
-  function mat(color, rough, metal) {
-    return new THREE.MeshStandardMaterial({ color: color, roughness: rough == null ? 0.85 : rough, metalness: metal || 0 });
-  }
-  function box(w, h, d, color, x, y, z, rough, metal) {
-    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color, rough, metal));
-    m.position.set(x, y, z);
-    m.castShadow = true; m.receiveShadow = true;
-    return m;
-  }
-
-  // Window panes (v7.4): every pane rolls its own look from the
-  // building's seed — sky-reflecting (warm gold toward the low sun,
-  // cool blue away from it), dark glass, warm lit interior, or a tiny
-  // interior diorama behind the glass (shelf, table, sign board) that
-  // differs by shop kind. No two panes share one flat colour.
-  // Upper floors sit in bays with a frame, sill, lintel and a curtain
-  // (some half-drawn, some open); a thin dark streak runs down from
-  // some sills, as rain would leave it.
-  var PANE_KINDS = ['skyWarm', 'skyCool', 'dark', 'lit', 'shop'];
-  var SHOP_INTERIORS = {
-    grocery: [0x37d67a, 0xff7a1a, 0xffc832], cafe: [0x8a5a30, 0xf2e3c8, 0xc85a00],
-    pharmacy: [0x37d67a, 0xf2f2f2, 0x2a9df4], fashion: [0xff6ab0, 0x8a5aff, 0xffc832],
-    salon: [0xff6ab0, 0xf2f2f2, 0x2a9df4], electronics: [0x2a6fd8, 0x14181c, 0x37d67a],
-    jewellery: [0xffc832, 0xf2f2f2, 0xff7a1a], hardware: [0xc85a00, 0x8a8a92, 0x2a2a2a],
-    bakery: [0xd8a860, 0xf2e3c8, 0x8a5a30], toys: [0xff3b30, 0x2a9df4, 0xffc832],
-    books: [0x8a2a3a, 0x2a6fd8, 0xf2e3c8], flowers: [0xff6ab0, 0x37d67a, 0xffc832]
-  };
-  function paneMaterials(shopKind) {
-    // v7.5: reflective panes from facades.js — the set built once in
-    // buildWorld (three warm + three cool, each with its own sky/cloud
-    // reflection and mullion grid). addWindows picks one per pane, so
-    // no two panes share a reflection. The old flat sky-glass below
-    // stays as the fallback when facades.js is absent.
-    var set = PH._facadeGlass || null;
-    var warm = set ? set.warm : new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(true), roughness: 0.12, metalness: 0.55 });
-    var cool = set ? set.cool : new THREE.MeshStandardMaterial({ map: PH.skyGlassTexture(false), roughness: 0.12, metalness: 0.55 });
-    var dark = new THREE.MeshStandardMaterial({ color: 0x141c26, roughness: 0.18, metalness: 0.5 });
-    var lit = new THREE.MeshStandardMaterial({ color: 0xffc860, emissive: 0xffb030, emissiveIntensity: 0.9, roughness: 0.4 });
-    // v7.5: the neon panes ride along in the set (facades.js) — a few
-    // 'lit' shop windows catch a neon streak instead of a warm glow.
-    return { skyWarm: warm, skyCool: cool, dark: dark, lit: lit, neon: set ? set.neon : null, shopKind: shopKind };
-  }
-  function addWindows(group, w, h, d, face, shopKind) {
-    var floors = Math.max(1, Math.floor((h - 3.2) / 4.2));
-    var cols = Math.max(2, Math.floor(w / 3.4));
-    var mats = paneMaterials(shopKind || 'grocery');
-    var frameMat = mat(0x1c222c, 0.9);
-    var sillMat = mat(0xd8d0c0, 0.9);
-    var curtainMat = mat(0xf2e3c8, 0.95);
-    var winGeo = new THREE.BoxGeometry(1.5, 1.9, 0.14);
-    var zf = face === 'front' ? d / 2 + 0.08 : -d / 2 - 0.08;
-    var zDir = face === 'front' ? 1 : -1;
-    for (var f = 0; f < floors; f++) {
-      for (var c = 0; c < cols; c++) {
-        var x = -w / 2 + (c + 0.5) * (w / cols);
-        var y = 3.2 + f * 4.2 + 1.4;
-        if (y + 1 > h - 0.6) continue;
-        var roll = PH.R();
-        var kind = roll < 0.30 ? 'skyWarm' : (roll < 0.52 ? 'skyCool' : (roll < 0.68 ? 'dark' : (roll < 0.86 ? 'lit' : 'shop')));
-        var frame = new THREE.Mesh(winGeo, frameMat);
-        frame.position.set(x, y, zf);
-        group.add(frame);
-        // sill + lintel: the bay reads as a framed opening, not a sticker
-        var sill = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.22), sillMat);
-        sill.position.set(x, y - 1.0, zf + zDir * 0.04);
-        group.add(sill);
-        var lintel = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.16, 0.16), sillMat);
-        lintel.position.set(x, y + 1.02, zf);
-        group.add(lintel);
-        // v7.5: when facades.js gave a set, the warm/cool entry is a
-        // list of variants — pick one per pane, so a facade's windows
-        // vary the way real reflections vary.
-        var warmMat = Array.isArray(mats.skyWarm) ? mats.skyWarm[Math.floor(PH.R() * mats.skyWarm.length)] : mats.skyWarm;
-        var coolMat = Array.isArray(mats.skyCool) ? mats.skyCool[Math.floor(PH.R() * mats.skyCool.length)] : mats.skyCool;
-        // v7.5: a third of the 'lit' shop windows catch a neon streak
-        // (pink or cyan, facades.js) instead of a warm interior glow —
-        // the street has neon, and the glass shows it.
-        var neonMat = mats.neon ? mats.neon[Math.floor(PH.R() * mats.neon.length)] : null;
-        var litMat = (neonMat && PH.R() < 0.33) ? neonMat : mats.lit;
-        var glassMat = kind === 'skyWarm' ? warmMat : (kind === 'skyCool' ? coolMat : (kind === 'lit' ? litMat : mats.dark));
-        var glass = new THREE.Mesh(new THREE.BoxGeometry(1.25, 1.65, 0.06), glassMat);
-        glass.position.set(x, y, zf + zDir * 0.05);
-        group.add(glass);
-        if (kind === 'shop') {
-          // interior diorama: a shallow room box + shelf goods in the
-          // shop's palette, seen through the glass
-          var room = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.6, 0.5),
-            new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 1 }));
-          room.position.set(x, y, zf - zDir * 0.28);
-          group.add(room);
-          var palette = SHOP_INTERIORS[mats.shopKind] || SHOP_INTERIORS.grocery;
-          for (var s = 0; s < 3; s++) {
-            var goods = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.2),
-              mat(palette[s % palette.length], 0.7));
-            goods.position.set(x - 0.35 + s * 0.35, y - 0.5, zf - zDir * 0.12);
-            group.add(goods);
-          }
-          var shelf = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.06, 0.3), mat(0x6a4a20, 0.9));
-          shelf.position.set(x, y - 0.62, zf - zDir * 0.12);
-          group.add(shelf);
-        }
-        // curtain: full, half-drawn, or open — rolled per pane
-        var cr = PH.R();
-        if (cr < 0.35) {
-          var curt = new THREE.Mesh(new THREE.BoxGeometry(1.2, cr < 0.18 ? 1.6 : 0.8, 0.05), curtainMat);
-          curt.position.set(x, y + (cr < 0.18 ? 0 : 0.4), zf + zDir * 0.09);
-          group.add(curt);
-        }
-        // rain streak under some sills
-        if (PH.R() < 0.3) {
-          var streak = new THREE.Mesh(new THREE.PlaneGeometry(0.14, PH.rand(0.8, 1.8)),
-            new THREE.MeshBasicMaterial({ color: 0x2a2a2a, transparent: true, opacity: 0.35 }));
-          streak.position.set(x + PH.rand(-0.4, 0.4), y - 1.6, zf + zDir * 0.1);
-          group.add(streak);
-        }
-      }
-    }
-  }
-
-  // Ground-floor storefront: big glass, glass door + chrome handle,
-  // divider posts, striped awning and a name board.
-  function addStorefront(group, w, d, name, signBg) {
-    var zf = d / 2;
-    // v7.5: the big storefront glass reflects the sky (facades.js —
-    // a wide reflection with a diagonal sun streak); the old flat blue
-    // glass stays as the fallback.
-    var storeGlass = PH.storefrontGlassMaterial ? PH.storefrontGlassMaterial(!!PH._sunsetMode) : new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.55 });
-    var glass = new THREE.Mesh(new THREE.BoxGeometry(w * 0.86, 2.6, 0.1), storeGlass);
-    glass.position.set(0, 1.5, zf + 0.06);
-    group.add(glass);
-    // divider posts
-    for (var i = -2; i <= 2; i++) {
-      group.add(box(0.14, 2.6, 0.14, 0x2a2a2a, i * w * 0.2, 1.5, zf + 0.1, 0.5, 0.6));
-    }
-    // glass door + chrome handle
-    var door = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.5, 0.08),
-      new THREE.MeshStandardMaterial({ color: 0xbfe0ee, roughness: 0.1, metalness: 0.6, transparent: true, opacity: 0.5 }));
-    door.position.set(w * 0.28, 1.45, zf + 0.12);
-    group.add(door);
-    group.add(box(0.07, 0.9, 0.07, 0xc0c8d0, w * 0.28 + 0.55, 1.45, zf + 0.2, 0.3, 0.9));
-    // striped awning
-    var awn = PH.canvasTex(256, 64, function (g, ww, hh) {
-      for (var s = 0; s < 8; s++) { g.fillStyle = s % 2 ? '#f2f2f2' : signBg; g.fillRect(s * 32, 0, 32, hh); }
-    });
-    var aw = new THREE.Mesh(new THREE.BoxGeometry(w * 0.94, 0.12, 1.1),
-      new THREE.MeshStandardMaterial({ map: awn, roughness: 0.8 }));
-    aw.position.set(0, 3.15, zf + 0.55);
-    group.add(aw);
-    // name board
-    var sign = new THREE.Mesh(new THREE.BoxGeometry(Math.min(w * 0.9, 9), 1.5, 0.18),
-      new THREE.MeshStandardMaterial({ map: PH.signTexture(name, signBg), roughness: 0.7 }));
-    sign.position.set(0, 4.1, zf + 0.12);
-    group.add(sign);
-  }
-
-  // Solid door entrance with two stone steps + chrome handle.
-  function addDoorEntrance(group, w, d) {
-    var zf = d / 2;
-    group.add(box(1.6, 0.35, 1.2, 0x8a8a92, 0, 0.18, zf + 0.6, 0.9));
-    group.add(box(1.6, 0.35, 0.9, 0x9a9aa2, 0, 0.5, zf + 0.45, 0.9));
-    group.add(box(1.7, 2.6, 0.14, 0x2c3844, 0, 1.9, zf + 0.08, 0.7));
-    group.add(box(0.07, 0.9, 0.07, 0xc0c8d0, 0.6, 1.5, zf + 0.2, 0.3, 0.9));
-  }
-
-  function addRoofProps(group, w, h, d, antennaLights) {
-    var n = 1 + Math.floor(PH.R() * 2);
-    for (var i = 0; i < n; i++) {
-      group.add(box(1.6, 0.8, 1.2, 0x6a7078, PH.rand(-w / 4, w / 4), h + 0.4, PH.rand(-d / 4, d / 4), 0.9));
-    }
-    group.add(box(0.5, 1.0, 0.5, 0x8a8a92, PH.rand(-w / 3, w / 3), h + 0.5, PH.rand(-d / 3, d / 3), 0.9));
-    // crown: cornice band + parapet lip, so the roofline is not a raw cut
-    var cornice = box(w + 0.5, 0.35, d + 0.5, 0x3a3f46, 0, h - 0.2, 0, 0.9);
-    group.add(cornice);
-    var lip = box(w + 0.3, 0.25, d + 0.3, 0x3a3f46, 0, h + 0.12, 0, 0.9);
-    group.add(lip);
-    // antenna with a small red beacon on the taller buildings
-    if (h > 20 && PH.R() < 0.6) {
-      var ant = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 3.2, 6), mat(0x2a2a2a, 0.6, 0.6));
-      ant.position.set(PH.rand(-w / 4, w / 4), h + 1.7, PH.rand(-d / 4, d / 4));
-      group.add(ant);
-      var beacon = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6),
-        new THREE.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff1010, emissiveIntensity: 2 }));
-      beacon.position.set(ant.position.x, h + 3.35, ant.position.z);
-      group.add(beacon);
-      if (antennaLights) antennaLights.push(beacon);
-    }
-  }
-
-  // Ground-floor grammar (v7.4): a building rolls one of three ground
-  // floors — a stoop with steps, a lobby with double glass doors, or a
-  // loading dock — so neighbours never share the same base.
-  function addGroundFloor(group, w, d, style) {
-    var zf = d / 2;
-    // v7.5: dark contact shadow around the building's foot (facades.js)
-    // — the wall meets the pavement in shade, so the facade is
-    // grounded instead of floating on the sidewalk.
-    if (PH.facadeBaseAO) group.add(PH.facadeBaseAO(w, d));
-    if (style === 'stoop') {
-      group.add(box(2.4, 0.3, 1.4, 0x8a8a92, 0, 0.15, zf + 0.7, 0.9));
-      group.add(box(2.0, 0.3, 1.0, 0x9a9aa2, 0, 0.45, zf + 0.5, 0.9));
-      group.add(box(1.7, 2.6, 0.14, 0x2c3844, 0, 1.9, zf + 0.08, 0.7));
-      group.add(box(0.07, 0.9, 0.07, 0xc0c8d0, 0.6, 1.5, zf + 0.2, 0.3, 0.9));
-      [-1.1, 1.1].forEach(function (x) {
-        var rail = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.0, 6), mat(0x333333, 0.5, 0.7));
-        rail.position.set(x, 0.7, zf + 1.1); rail.rotation.x = 0.5; group.add(rail);
-      });
-    } else if (style === 'lobby') {
-      // v7.5: lobby glass reflects the sky too (facades.js).
-      var lobbyGlass = PH.storefrontGlassMaterial ? PH.storefrontGlassMaterial(!!PH._sunsetMode) : new THREE.MeshStandardMaterial({ color: 0x9fc4d8, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.55 });
-      var glass = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.8, 0.1), lobbyGlass);
-      glass.position.set(0, 1.6, zf + 0.06);
-      group.add(glass);
-      group.add(box(0.12, 2.8, 0.12, 0x2a2a2a, 0, 1.6, zf + 0.12, 0.5, 0.6));
-      group.add(box(3.4, 0.25, 0.5, 0x3a3f46, 0, 3.15, zf + 0.2, 0.9));
-    } else {
-      // loading dock: raised platform + roller shutter + crates
-      group.add(box(4.0, 1.0, 1.6, 0x6a6a72, 0, 0.5, zf + 0.8, 0.95));
-      var shutter = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.2, 0.1), mat(0x8a8a92, 0.7, 0.4));
-      shutter.position.set(0, 2.1, zf + 0.08);
-      group.add(shutter);
-      for (var s = 0; s < 5; s++) {
-        group.add(box(2.6, 0.05, 0.06, 0x5a5a62, 0, 1.3 + s * 0.4, zf + 0.14, 0.7));
-      }
-      group.add(box(0.8, 0.8, 0.8, 0x8a6a42, 2.4, 1.4, zf + 0.8, 0.95));
-    }
-  }
-
-  // Wall dressing for a flank the street camera sees (v7.4): a faded
-  // painted sign, a drain pipe and a small awning break up the blank
-  // side wall that shot 2 showed as bare tan plaster.
-  function addWallDressing(group, w, h, d, signIdx) {
-    var side = d / 2 + 0.06;
-    var posterNames = ['TACOS', 'SURF', 'HOTEL', 'PIZZA', 'COFFEE', 'GYM'];
-    var poster = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 3.2),
-      new THREE.MeshStandardMaterial({ map: PH.posterTexture(posterNames[signIdx % posterNames.length], '#c8b898', '#4a3a2a'), roughness: 0.95 }));
-    poster.position.set(0, Math.min(h - 2, 7), side);
-    poster.rotation.y = 0;
-    group.add(poster);
-    var pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, h - 1, 8), mat(0x5a6a72, 0.6, 0.5));
-    pipe.position.set(w / 2 - 0.8, (h - 1) / 2, side + 0.05);
-    group.add(pipe);
-    var awn = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.12, 1.0), mat(0x2a4a3a, 0.9));
-    awn.position.set(-w / 4, 3.4, side + 0.5);
-    group.add(awn);
-  }
-
-  // Contact AO strip (v7.4): a dark gradient hugging the wall base on
-  // the street side, darkest at the wall, gone a metre out.
-  function addWallAO(group, w, d) {
-    var tex = PH.wallShadowTexture();
-    var strip = new THREE.Mesh(new THREE.PlaneGeometry(w + 0.6, 1.2),
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.85, depthWrite: false }));
-    strip.rotation.x = -Math.PI / 2;
-    strip.rotation.z = 0;
-    strip.position.set(0, 0.11, d / 2 + 0.6);
-    group.add(strip);
-  }
-
-  // Round 2 facade styles: a residential front with balconies (slab +
-  // rail + a chair and a plant per balcony), a vertical neon blade
-  // sign for shops, a rooftop garden (planters + tiny trees) and a
-  // stepped setback crown for the taller towers — four more ways a
-  // building can differ from its neighbour.
-  function addBalconies(group, w, h, d) {
-    var floors = Math.max(1, Math.floor((h - 3.2) / 4.2));
-    var zf = d / 2;
-    for (var f = 0; f < floors; f++) {
-      var y = 3.2 + f * 4.2 + 0.4;
-      if (y + 1 > h - 0.6) continue;
-      var slab = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.14, 1.0), mat(0xd8d0c0, 0.9));
-      slab.position.set(-w / 4, y, zf + 0.5);
-      slab.castShadow = true;
-      group.add(slab);
-      var rail = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.7, 0.06), mat(0x2a2a2a, 0.5, 0.6));
-      rail.position.set(-w / 4, y + 0.5, zf + 0.95);
-      group.add(rail);
-      var chair = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), mat(PH.pick([0xff3b30, 0x2a9df4, 0xffc832]), 0.8));
-      chair.position.set(-w / 4 - 0.5, y + 0.35, zf + 0.4);
-      group.add(chair);
-      var plant = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), mat(0x37a05a, 0.9));
-      plant.position.set(-w / 4 + 0.7, y + 0.35, zf + 0.5);
-      group.add(plant);
-      var pot = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.25, 8), mat(0xc85a00, 0.9));
-      pot.position.set(-w / 4 + 0.7, y + 0.15, zf + 0.5);
-      group.add(pot);
-    }
-  }
-  function addNeonBlade(group, w, h, d, name, signBg) {
-    var blade = new THREE.Mesh(new THREE.BoxGeometry(0.18, 4.2, 1.1),
-      new THREE.MeshStandardMaterial({ map: PH.signTexture(name, signBg), emissive: 0xffffff, emissiveIntensity: 0.25, roughness: 0.6 }));
-    blade.position.set(w / 2 + 0.3, 5.4, d / 2 + 0.4);
-    group.add(blade);
-    var arm = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.08, 0.08), mat(0x2a2a2a, 0.5, 0.6));
-    arm.position.set(w / 2 + 0.1, 7.4, d / 2 + 0.4);
-    group.add(arm);
-    var glow = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6),
-      new THREE.MeshStandardMaterial({ color: 0xffc832, emissive: 0xffb030, emissiveIntensity: 1.6 }));
-    glow.position.set(w / 2 + 0.3, 7.4, d / 2 + 0.4);
-    group.add(glow);
-  }
-  function addRooftopGarden(group, w, h, d) {
-    for (var i = 0; i < 3; i++) {
-      var planter = box(1.6, 0.5, 0.8, 0x6a4a20, -w / 4 + i * (w / 4), h + 0.35, PH.rand(-d / 4, d / 4), 0.95);
-      group.add(planter);
-      var bush = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), mat(0x37a05a, 0.9));
-      bush.position.set(planter.position.x, h + 0.85, planter.position.z);
-      bush.castShadow = true;
-      group.add(bush);
-    }
-    var tree = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.2, 6), mat(0x7a5a38, 0.95));
-    tree.position.set(w / 4, h + 0.8, -d / 4);
-    group.add(tree);
-    var crown = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), mat(0x2e8a3e, 0.85));
-    crown.position.set(w / 4, h + 1.8, -d / 4);
-    crown.castShadow = true;
-    group.add(crown);
-  }
-  function addSetbackCrown(group, w, h, d) {
-    // a stepped top: two smaller boxes stacked, so a tower ends in
-    // steps instead of a flat cut
-    var step1 = box(w * 0.7, 1.2, d * 0.7, 0x3a3f46, 0, h + 0.6, 0, 0.9);
-    group.add(step1);
-    var step2 = box(w * 0.45, 1.0, d * 0.45, 0x4a4f56, 0, h + 1.7, 0, 0.9);
-    group.add(step2);
-    var beacon = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6),
-      new THREE.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff1010, emissiveIntensity: 2 }));
-    beacon.position.set(0, h + 2.3, 0);
-    group.add(beacon);
-  }
-
-  function makeBuilding(x, z, w, d, h, faceNorth, isShop, signIdx, antennaLights) {
-    var g = new THREE.Group();
-    g.position.set(x, 0, z);
-    var roll = styleRoll((x * 31 + z * 17 + signIdx * 7) >>> 0);
-    var facade = PH.pick(FACADE_COLORS);
-    var brick = PH.brickTexture('#' + facade.toString(16).padStart(6, '0'));
-    brick.wrapS = brick.wrapT = THREE.RepeatWrapping;
-    brick.repeat.set(Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(h / 8)));
-    var bodyMat = new THREE.MeshStandardMaterial({ map: brick, roughness: 0.9 });
-    var body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
-    body.position.y = h / 2;
-    body.castShadow = true; body.receiveShadow = true;
-    g.add(body);
-    var shopKinds = ['grocery', 'cafe', 'pharmacy', 'fashion', 'salon', 'electronics', 'jewellery', 'hardware', 'bakery', 'toys', 'books', 'flowers'];
-    var shopKind = shopKinds[signIdx % shopKinds.length];
-    var face = faceNorth ? 'front' : 'front';
-    // windows on front (facing the street) and back
-    addWindows(g, w, h, d, 'front', shopKind);
-    var back = new THREE.Group();
-    back.rotation.y = Math.PI;
-    addWindows(back, w, h, d, 'front', shopKind);
-    g.add(back);
-    // side windows: the street cameras often see a building's flank,
-    // and a blank flank reads as an empty wall (v7.2 rev 1, shot 2).
-    var sideL = new THREE.Group();
-    sideL.rotation.y = -Math.PI / 2;
-    addWindows(sideL, d, h, w, 'front', shopKind);
-    g.add(sideL);
-    var sideR = new THREE.Group();
-    sideR.rotation.y = Math.PI / 2;
-    addWindows(sideR, d, h, w, 'front', shopKind);
-    g.add(sideR);
-    // v7.4: flank dressing on the street-facing side so shot 2's tan
-    // wall carries a sign, a pipe and an awning instead of bare plaster
-    addWallDressing(sideR, d, h, w, signIdx);
-    addWallAO(g, w, d);
-    if (isShop) {
-      var name = SHOP_NAMES[signIdx % SHOP_NAMES.length];
-      addStorefront(g, w, d, name, PH.pick(SIGN_COLORS));
-    } else {
-      var styles = ['stoop', 'lobby', 'dock'];
-      addGroundFloor(g, w, d, styles[Math.floor(roll() * 3)]);
-    }
-    addRoofProps(g, w, h, d, antennaLights);
-    // round 2: one extra style per building, rolled from its seed —
-    // balconies on homes, a neon blade on shops, a rooftop garden on
-    // some flats, a setback crown on the tall towers
-    var style2 = roll();
-    if (!isShop && style2 < 0.3) addBalconies(g, w, h, d);
-    else if (isShop && style2 < 0.35) addNeonBlade(g, w, h, d, SHOP_NAMES[signIdx % SHOP_NAMES.length], PH.pick(SIGN_COLORS));
-    else if (style2 < 0.55) addRooftopGarden(g, w, h, d);
-    else if (h > 30) addSetbackCrown(g, w, h, d);
-    if (!faceNorth) g.rotation.y = Math.PI;
-    return g;
-  }
-
-  function makePalm(x, z) {
-    var g = new THREE.Group();
-    g.position.set(x, 0, z);
-    var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, 9, 7), mat(0x7a5a38, 0.95));
-    trunk.position.y = 4.5; trunk.castShadow = true;
-    trunk.rotation.z = PH.rand(-0.06, 0.06);
-    g.add(trunk);
-    var leafMat = mat(0x2e8a3e, 0.85);
-    for (var i = 0; i < 9; i++) {
-      var leaf = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 3.4), leafMat);
-      var a = (i / 9) * Math.PI * 2;
-      leaf.position.set(Math.cos(a) * 1.5, 9.1 - Math.abs(Math.sin(a)) * 0.4, Math.sin(a) * 1.5);
-      leaf.rotation.y = -a;
-      leaf.rotation.x = 0.55;
-      leaf.castShadow = true;
-      g.add(leaf);
-    }
-    var nutMat = mat(0x6a4a20, 0.9);
-    for (var j = 0; j < 4; j++) {
-      var nut = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), nutMat);
-      nut.position.set(Math.cos(j * 1.7) * 0.45, 8.55, Math.sin(j * 1.7) * 0.45);
-      g.add(nut);
-    }
-    return g;
-  }
-
-  // Clouds (v7.4): volumetric sunset clouds. Each cloud is built from
-  // many puffs in three layers — a wide flat base, a mid body, and
-  // small round cauliflower puffs on top — with the whole crown sheared
-  // a little downwind from the base so the cloud reads 3D. Puffs on the
-  // sun side are warm gold-orange, puffs underneath and on the far side
-  // are cool violet-grey; ragged wisps of tiny puffs fray the thin
-  // edges instead of a smooth round outline. `density` (0..1) drives
-  // how dark the ground shadow under the cloud is.
-  function makeCloud(scale, opacity, sunset) {
-    var g = new THREE.Group();
-    var pal = sunset ? PH.CLOUD_PALETTE.sunset : PH.CLOUD_PALETTE.day;
-    var sunSide = new THREE.MeshBasicMaterial({ color: pal.sun, transparent: true, opacity: opacity == null ? 0.94 : opacity, fog: true });
-    var topMat = new THREE.MeshBasicMaterial({ color: pal.top, transparent: true, opacity: opacity == null ? 0.94 : opacity, fog: true });
-    var shadeMat = new THREE.MeshBasicMaterial({ color: pal.shade, transparent: true, opacity: opacity == null ? 0.92 : opacity, fog: true });
-    var baseMat = new THREE.MeshBasicMaterial({ color: pal.base, transparent: true, opacity: opacity == null ? 0.92 : opacity, fog: true });
-    var density = 0.55 + PH.R() * 0.45;
-    g.userData.density = density;
-    // wind shear: the crown drifts downwind (+X, toward the sea breeze)
-    var shear = PH.rand(1.5, 3.5);
-    // base layer: wide, flat puffs
-    var nb = 3 + Math.floor(PH.R() * 2);
-    for (var b = 0; b < nb; b++) {
-      var bp = new THREE.Mesh(new THREE.SphereGeometry(PH.rand(5, 7), 10, 8), baseMat);
-      bp.scale.y = 0.3;
-      bp.position.set(PH.rand(-9, 9), -1.6, PH.rand(-4, 4));
-      g.add(bp);
-    }
-    // mid body: the bulk, sun-warm on the -X (sun) side, cool on +X
-    var nm = 5 + Math.floor(PH.R() * 3);
-    for (var i = 0; i < nm; i++) {
-      var px = PH.rand(-8, 8);
-      var m = px < -1 ? sunSide : (px > 3 ? shadeMat : topMat);
-      var s = new THREE.Mesh(new THREE.SphereGeometry(PH.rand(3.5, 6), 10, 8), m);
-      s.scale.y = 0.5;
-      s.position.set(px + shear * 0.35, PH.rand(-0.8, 1.2), PH.rand(-3.5, 3.5));
-      g.add(s);
-    }
-    // crown: small round cauliflower puffs, sheared furthest downwind
-    var nc = 4 + Math.floor(PH.R() * 3);
-    for (var j = 0; j < nc; j++) {
-      var cp = new THREE.Mesh(new THREE.SphereGeometry(PH.rand(2, 3.4), 10, 8), topMat);
-      cp.position.set(PH.rand(-6, 6) + shear, PH.rand(1.2, 2.6), PH.rand(-3, 3));
-      g.add(cp);
-    }
-    // wisps: tiny puffs fraying the thin edges
-    for (var k = 0; k < 5; k++) {
-      var wisp = new THREE.Mesh(new THREE.SphereGeometry(PH.rand(0.8, 1.6), 8, 6),
-        PH.R() < 0.5 ? sunSide : shadeMat);
-      wisp.scale.y = 0.5;
-      var edge = PH.R() < 0.5 ? -1 : 1;
-      wisp.position.set(edge * PH.rand(9, 12), PH.rand(-1, 1.5), PH.rand(-4, 4));
-      g.add(wisp);
-    }
-    // soft warm halo behind the cluster at sunset
-    if (sunset) {
-      var halo = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: PH.sunTexture(), transparent: true, opacity: 0.3, fog: false, depthWrite: false
-      }));
-      halo.scale.set(34, 16, 1);
-      halo.position.z = -2;
-      g.add(halo);
-    }
-    g.scale.setScalar(scale);
-    return g;
-  }
-
-  // One soft ground shadow per cloud (v7.4): a big blurred dark ellipse
-  // on the ground that travels with its cloud, so streets and roofs
-  // drift in and out of shade. Opacity follows the cloud's density.
-  function makeCloudShadow(density) {
-    var sh = new THREE.Mesh(new THREE.PlaneGeometry(34, 22),
-      new THREE.MeshBasicMaterial({ map: PH.contactShadowTexture(), transparent: true, opacity: 0.10 + density * 0.14, depthWrite: false }));
-    sh.rotation.x = -Math.PI / 2;
-    sh.rotation.z = PH.rand(0, 3);
-    return sh;
-  }
-
-  PH.buildWorld = function (scene, mode) {
-    var sunset = mode === 'sunset';
-    // v7.5: the mode flag for the visual systems (facades.js reads it
-    // for warm/cool glass; wetroad.js for the wet-asphalt sheen).
-    PH._sunsetMode = sunset;
-    // v7.5: one reflective-glass set for the whole city, built once
-    // here (facades.js); paneMaterials() below picks one variant per
-    // pane from it, so the set is never rebuilt per building.
-    PH._facadeGlass = PH.facadeGlassSet ? PH.facadeGlassSet(sunset) : null;
-    var W = { clouds: [], cloudShadows: [], antennaLights: [], gulls: [], update: null, mode: mode };
-    var rng = PH.R;
-
-    // ---- sky dome (gradient vertex colours) ----
-    var skyGeo = new THREE.SphereGeometry(480, 24, 16);
-    var top = sunset ? new THREE.Color(0x1a2350) : new THREE.Color(0x1e6fd8);
-    var mid = sunset ? new THREE.Color(0x7a4a8a) : new THREE.Color(0x7ec3ee);
-    var bot = sunset ? new THREE.Color(0xffb347) : new THREE.Color(0xd8ecf7);
-    var cols = [];
-    var pos = skyGeo.attributes.position;
-    for (var i = 0; i < pos.count; i++) {
-      var y = pos.getY(i) / 480;
-      var c = y > 0.35 ? top.clone().lerp(mid, 1 - (y - 0.35) / 0.65) : mid.clone().lerp(bot, 1 - (y + 1) / 1.35);
-      cols.push(c.r, c.g, c.b);
-    }
-    skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-    var sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false }));
-    scene.add(sky);
-
-    // ---- fog + lights (v7.4: low sun, long shadows, horizon haze) ----
-    // One sun direction drives everything: the directional light, the
-    // sky gradient and the glare sprite below. At sunset the sun sits
-    // barely above the sea (Y 18 at X -260), so shadows stretch long
-    // across the road. The fog colour matches the horizon band, so
-    // distant buildings dissolve into the sunset instead of being cut
-    // by grey fog. The shaded side of every facade is lit by the cool
-    // sky hemisphere, never dead black.
-    scene.fog = new THREE.Fog(sunset ? 0xff9a5a : 0xc8d8e8, 120, 520);
-    var hemi = new THREE.HemisphereLight(sunset ? 0xffd9a0 : 0xbfdfff, sunset ? 0x5a3a6a : 0x4a6a4a, 0.9);
-    scene.add(hemi);
-    var sun = new THREE.DirectionalLight(sunset ? 0xffc080 : 0xfff2dd, sunset ? 2.8 : 2.0);
-    sun.position.set(sunset ? -260 : 90, sunset ? 18 : 190, sunset ? -60 : 60);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -160; sun.shadow.camera.right = 160;
-    sun.shadow.camera.top = 160; sun.shadow.camera.bottom = -160;
-    sun.shadow.camera.far = 700;
-    sun.shadow.bias = -0.0005;
-    scene.add(sun);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.18));
-    W.sun = sun;
-    // warm bounce light from the sea side, so shadow faces are not dead
-    var bounce = new THREE.DirectionalLight(sunset ? 0xff8a50 : 0x9fc4e8, 0.5);
-    bounce.position.set(200, 40, 0);
-    scene.add(bounce);
-    // cool sky fill from above-behind, so shaded facades read blue-grey
-    var skyFill = new THREE.DirectionalLight(sunset ? 0x8a7ab8 : 0xbfd8ff, 0.35);
-    skyFill.position.set(120, 180, 140);
-    scene.add(skyFill);
-
-    // ---- sun disc sprite + glare (v7.4) ----
-    // v7.5: sky.js draws its own sun (disc + starburst + glare), so the
-    // old sun sprite + glare are skipped when it is loaded. The sea
-    // glitter below stays — it is water, not sun.
-    if (!PH.buildSunsetSky) {
-    var sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: PH.sunTexture(), transparent: true, fog: false, depthWrite: false
-    }));
-    if (sunset) { sunSprite.position.set(-150, 24, -420); sunSprite.scale.set(90, 90, 1); }
-    else { sunSprite.position.set(30, 160, -420); sunSprite.scale.set(80, 80, 1); }
-    scene.add(sunSprite);
-    // big soft radial glare exactly at the sun, only at sunset — one
-    // glow, no second light source anywhere in the scene
-    if (sunset) {
-      var glareSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: PH.sunGlareTexture(), transparent: true, fog: false, depthWrite: false, opacity: 0.55
-      }));
-      glareSprite.position.set(-150, 24, -415);
-      glareSprite.scale.set(260, 260, 1);
-      scene.add(glareSprite);
-    }
-    // horizontal glare streak across the sun at sunset (canvas texture)
-    if (sunset) {
-      var glareTex = PH.canvasTex(512, 64, function (g, w, h) {
-        var grad = g.createLinearGradient(0, 0, w, 0);
-        grad.addColorStop(0, 'rgba(255,180,80,0)');
-        grad.addColorStop(0.5, 'rgba(255,220,140,0.9)');
-        grad.addColorStop(1, 'rgba(255,180,80,0)');
-        g.fillStyle = grad; g.fillRect(0, h / 2 - 4, w, 8);
-        g.fillStyle = 'rgba(255,240,200,0.9)';
-        g.beginPath(); g.arc(w / 2, h / 2, 14, 0, Math.PI * 2); g.fill();
-      });
-      var glare = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: glareTex, transparent: true, fog: false, depthWrite: false, opacity: 0.85
-      }));
-      glare.position.set(-150, 24, -410);
-      glare.scale.set(220, 28, 1);
-      scene.add(glare);
-    }
-    } // v7.5: the old sun (sprite + glare + streak) ends here
-    if (sunset) {
-      // sun path glitter on the sea: a warm streak of flat quads
-      var glitterMat = new THREE.MeshBasicMaterial({ color: 0xffc860, transparent: true, opacity: 0.5 });
-      for (var gi = 0; gi < 14; gi++) {
-        var gl = new THREE.Mesh(new THREE.PlaneGeometry(10 + gi * 2, 1.2), glitterMat);
-        gl.rotation.x = -Math.PI / 2;
-        gl.position.set(-150 + gi * 3, 0.06, 40 + gi * 6);
-        scene.add(gl);
-      }
-    }
-
-    // ---- ground: city slab, sand, sea ----
-    var city = new THREE.Mesh(new THREE.PlaneGeometry(300, 360),
-      new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.95 }));
-    city.rotation.x = -Math.PI / 2; city.position.set(30, 0, 0);
-    city.receiveShadow = true;
-    scene.add(city);
-
-    var sandTex = PH.sandTexture();
-    sandTex.wrapS = sandTex.wrapT = THREE.RepeatWrapping; sandTex.repeat.set(6, 20);
-    var sand = new THREE.Mesh(new THREE.PlaneGeometry(80, 340),
-      new THREE.MeshStandardMaterial({ map: sandTex, roughness: 1 }));
-    sand.rotation.x = -Math.PI / 2; sand.position.set(-68, 0.05, 0);
-    sand.receiveShadow = true;
-    scene.add(sand);
-
-    // v7.5: two-tone sea from waterfx.js (deep blue far out, turquoise
-    // in the shallows, warm sun-path at sunset); the old flat blue
-    // stays as the fallback.
-    var seaMat = PH.seaMaterial ? PH.seaMaterial(sunset) : new THREE.MeshStandardMaterial({ color: 0x1a6a9a, roughness: 0.25, metalness: 0.2, transparent: true, opacity: 0.85 });
-    var sea = new THREE.Mesh(new THREE.PlaneGeometry(200, 360), seaMat);
-    sea.rotation.x = -Math.PI / 2; sea.position.set(-205, 0.02, 0);
-    scene.add(sea);
-
-    // foam lines drifting on the shore
-    var foamMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
-    var foams = [];
-    for (var fi = 0; fi < 4; fi++) {
-      var foam = new THREE.Mesh(new THREE.PlaneGeometry(3, 340), foamMat);
-      foam.rotation.x = -Math.PI / 2;
-      foam.position.set(-102 + fi * 4.5, 0.06 + fi * 0.01, 0);
-      scene.add(foam); foams.push(foam);
-    }
-    W.foams = foams;
-    // v7.5: drifting foam patches out in the bay (waterfx.js) — foam
-    // left behind by boats that already passed, and foam where the
-    // swell breaks near the sand. Updated from W.update below.
-    W.driftFoam = PH.makeDriftingFoam ? PH.makeDriftingFoam(scene) : null;
-    // v7.5: harbour buoys down the boat lane (waterfx.js) — orange
-    // cones that bob with the swell and mark the race line.
-    W.buoys = PH.makeBuoys ? PH.makeBuoys(scene) : null;
-
-    // ---- roads ----
-    // v7.5: wet asphalt from wetroad.js (glossy, so the sun and the
-    // lamps smear across it); the old matte asphalt stays the fallback.
-    var roadMat = PH.wetAsphalt ? PH.wetAsphalt(sunset) : mat(0x23262c, 0.95);
-    function road(x, z, w, d) {
-      var r = new THREE.Mesh(new THREE.PlaneGeometry(w, d), roadMat);
-      r.rotation.x = -Math.PI / 2; r.position.set(x, 0.08, z);
-      r.receiveShadow = true; scene.add(r);
-    }
-    road(-20, 0, 14, 340); // Sunset Blvd
-    [-120, -80, -40, 0, 40, 80, 120].forEach(function (z) { road(80.5, z, 179, 12); });
-    // sidewalks
-    var walkMat = mat(0x9aa0a8, 0.95);
-    [-29, -11].forEach(function (x) {
-      var w = new THREE.Mesh(new THREE.PlaneGeometry(4, 340), walkMat);
-      w.rotation.x = -Math.PI / 2; w.position.set(x, 0.09, 0);
-      w.receiveShadow = true; scene.add(w);
-    });
-    // centre line dashes on Sunset Blvd
-    var dashMat = new THREE.MeshBasicMaterial({ color: 0xe8c832 });
-    for (var dz = -165; dz <= 165; dz += 8) {
-      var dash = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 3.5), dashMat);
-      dash.rotation.x = -Math.PI / 2; dash.position.set(-20, 0.1, dz);
-      scene.add(dash);
-    }
-    // zebra crossings at every cross street (v7.5: stripes the right
-    // way round — each stripe LONG across the road (11 in X) and NARROW
-    // along the direction of travel (0.5 in Z), with gaps between
-    // stripes. The v7.4 bars ran the wrong way (0.6 wide in X, 4 long
-    // in Z), so they read as wide white blocks lying along the road in
-    // shot 4 instead of a crossing a pedestrian would walk on.)
-    var zebraMat = new THREE.MeshBasicMaterial({ color: 0xf2f2f2 });
-    [-120, -80, -40, 0, 40, 80, 120].forEach(function (z) {
-      for (var zo = -2.4; zo <= 2.4; zo += 1.2) {
-        var zb = new THREE.Mesh(new THREE.PlaneGeometry(11, 0.5), zebraMat);
-        zb.rotation.x = -Math.PI / 2; zb.position.set(-20, 0.1, z + zo);
-        scene.add(zb);
-      }
-    });
-
-    // ---- buildings ----
-    var signIdx = 0;
-    // Sunset Blvd shop row, x = 2, facing west
-    [-150, -110, -70, -30, 10, 50, 90, 130].forEach(function (z) {
-      var h = PH.rand(10, 26);
-      var b = makeBuilding(2, z, 16, 16, h, false, true, signIdx++, W.antennaLights);
-      scene.add(b);
-    });
-    // second row, z+20
-    [-130, -90, -50, -10, 30, 70, 110, 150].forEach(function (z) {
-      var h2 = PH.rand(8, 18);
-      var b2 = makeBuilding(2, z, 14, 14, h2, false, PH.R() < 0.7, signIdx++, W.antennaLights);
-      scene.add(b2);
-    });
-    // downtown grid
-    for (var gx = 26; gx <= 146; gx += 40) {
-      for (var gz = -150; gz <= 130; gz += 40) {
-        if (PH.R() < 0.18) continue; // open lot
-        var w = PH.rand(14, 20), d = PH.rand(12, 18), h = PH.rand(12, 38);
-        var b3 = makeBuilding(gx, gz, w, d, h, PH.R() < 0.5, PH.R() < 0.5, signIdx++, W.antennaLights);
-        scene.add(b3);
-      }
-    }
-    // landmark towers
-    [[66, -100, 22, 20, 52], [106, 60, 24, 22, 60], [26, 110, 20, 18, 44]].forEach(function (t) {
-      scene.add(makeBuilding(t[0], t[1], t[2], t[3], t[4], true, false, signIdx++, W.antennaLights));
-    });
-
-    // ---- street props ----
-    var lampMat = mat(0x2c2f34, 0.6, 0.5);
-    var lampHeadMat = new THREE.MeshStandardMaterial({ color: 0xffe6a0, emissive: sunset ? 0xffc860 : 0x000000, emissiveIntensity: sunset ? 1.2 : 0 });
-    for (var lz = -165; lz <= 165; lz += 30) {
-      [-29.5, -10.5].forEach(function (lx) {
-        // v7.3: skip the lamp at (-10.5, 0) — it stands half a unit
-        // from the shot-2 camera and reads as a black bar in frame.
-        if (lx === -10.5 && lz === 0) return;
-        var g = new THREE.Group();
-        g.position.set(lx, 0, lz);
-        var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 7, 8), lampMat);
-        pole.position.y = 3.5; pole.castShadow = true; g.add(pole);
-        var arm = box(1.4, 0.12, 0.12, 0x2c2f34, lx < -20 ? 0.7 : -0.7, 6.9, 0, 0.6, 0.5);
-        g.add(arm);
-        var head = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.25, 0.4), lampHeadMat);
-        head.position.set(lx < -20 ? 1.35 : -1.35, 6.85, 0);
-        g.add(head);
-        scene.add(g);
-      });
-    }
-    // hydrants
-    [[-12.5, -60], [-12.5, 20], [-12.5, 100], [-28.5, -20], [-28.5, 80]].forEach(function (p) {
-      var g = new THREE.Group(); g.position.set(p[0], 0, p[1]);
-      var body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.9, 8), mat(0xc02020, 0.6));
-      body.position.y = 0.45; body.castShadow = true; g.add(body);
-      var cap = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), mat(0xc02020, 0.6));
-      cap.position.y = 0.95; g.add(cap);
-      scene.add(g);
-    });
-    // benches
-    [[-28, -100], [-28, 60], [-12.5, -140], [-12.5, 140]].forEach(function (p) {
-      var g = new THREE.Group(); g.position.set(p[0], 0, p[1]);
-      g.add(box(2.2, 0.12, 0.6, 0x7a5a30, 0, 0.55, 0, 0.9));
-      g.add(box(2.2, 0.7, 0.1, 0x7a5a30, 0, 1.0, -0.28, 0.9));
-      g.add(box(0.12, 0.55, 0.5, 0x333333, -0.9, 0.28, 0, 0.6, 0.5));
-      g.add(box(0.12, 0.55, 0.5, 0x333333, 0.9, 0.28, 0, 0.6, 0.5));
-      scene.add(g);
-    });
-    // traffic lights, BOTH sides of Sunset Blvd, round 2: a real head
-    // with a yellow-bordered backplate, a visor hood over every lamp
-    // and bright lamps — the old bare head read as a black block from
-    // behind (shot 4) and a bare pole from the side (shot 1). The west
-    // heads face east (toward the road), the east heads face west.
-    function makeTrafficLight(x, z, faceEast) {
-      var g = new THREE.Group(); g.position.set(x, 0, z);
-      var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 5.5, 8), lampMat);
-      pole.position.y = 2.75; pole.castShadow = true; g.add(pole);
-      var base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.4, 8), mat(0x8a8a92, 0.7));
-      base.position.y = 0.2; g.add(base);
-      // backplate: a dark slab with a yellow border, bigger than the
-      // head, so the light reads as a traffic light from ANY side
-      var plate = box(0.9, 2.1, 0.08, 0xffc832, faceEast ? 0.55 : -0.55, 5.2, 0, 0.6);
-      g.add(plate);
-      var headBox = box(0.7, 1.9, 0.5, 0x14181c, faceEast ? 0.55 : -0.55, 5.2, 0, 0.6);
-      g.add(headBox);
-      var cols3 = [0xff2a20, 0xffc832, 0x2aff5a];
-      cols3.forEach(function (c, i) {
-        var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6),
-          new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: i === 0 ? 1.6 : 0.2 }));
-        lamp.position.set(faceEast ? 0.55 : -0.55, 5.8 - i * 0.6, 0.26);
-        g.add(lamp);
-        // visor hood over each lamp, so the lamp reads as a lamp and
-        // not a coloured dot on a black slab
-        var visor = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.3, 8, 1, false, 0, Math.PI),
-          mat(0x14181c, 0.6));
-        visor.rotation.z = Math.PI / 2;
-        visor.rotation.y = faceEast ? 0 : Math.PI;
-        visor.position.set(faceEast ? 0.55 : -0.55, 5.95 - i * 0.6, 0.26);
-        g.add(visor);
-      });
-      // small "WALK" pedestrian box on the pole, low down
-      var walkBox = box(0.4, 0.5, 0.2, 0x14181c, faceEast ? 0.3 : -0.3, 2.2, 0, 0.6);
-      g.add(walkBox);
-      var walkLamp = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.05),
-        new THREE.MeshStandardMaterial({ color: 0x2aff5a, emissive: 0x20ff40, emissiveIntensity: 1.2 }));
-      walkLamp.position.set(faceEast ? 0.42 : -0.42, 2.2, 0.11);
-      g.add(walkLamp);
-      scene.add(g);
-    }
-    [[-26.5, -41], [-26.5, -1], [-26.5, 39], [-26.5, 79]].forEach(function (p) {
-      makeTrafficLight(p[0], p[1], true);
-      makeTrafficLight(-13.5, p[1] + 4, false);
-    });
-    // v7.5: wet-road reflections (wetroad.js) — light ribbons on the
-    // asphalt under the lamps, the traffic lights and the neon signs.
-    // The ribbons are laid once here; main.js strengthens or weakens
-    // them every frame from the camera height.
-    if (PH.layWetReflections && PH.wetRoadSpots) PH.layWetReflections(scene, PH.wetRoadSpots());
-    // v7.5: puddles (wetroad.js) — deeper pools that mirror the sky
-    // itself, along the kerbs and one mid-lane at the crossing.
-    if (PH.layPuddles) PH.layPuddles(scene, sunset);
-    // v7.5: curb sheen (wetroad.js) — a faint band of reflected sky
-    // along each kerb, so the street reads as wet from a distance.
-    if (PH.layCurbSheen) PH.layCurbSheen(scene, sunset);
-
-    // ---- street market stalls (v7.3): the east sidewalk in shot 2
-    // was a blank wall — now it is a row of stalls with striped
-    // awnings, crates, fruit and a vendor NPC each, so the right side
-    // of the frame has life instead of empty facade.
-    function makeMarketStall(x, z, awnColor, goodsColor) {
-      var g = new THREE.Group();
-      g.position.set(x, 0, z);
-      var counter = box(2.4, 1.0, 1.2, 0x7a5a30, 0, 0.5, 0, 0.9);
-      g.add(counter);
-      var awnTex = PH.canvasTex(256, 64, function (ctx, ww, hh) {
-        for (var s = 0; s < 8; s++) { ctx.fillStyle = s % 2 ? '#f2f2f2' : awnColor; ctx.fillRect(s * 32, 0, 32, hh); }
-      });
-      var awn = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.1, 1.6),
-        new THREE.MeshStandardMaterial({ map: awnTex, roughness: 0.8 }));
-      awn.position.set(0, 2.4, 0); awn.rotation.x = 0.15; g.add(awn);
-      [-1.1, 1.1].forEach(function (px) {
-        var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 6), mat(0x4a4a4a, 0.6, 0.5));
-        pole.position.set(px, 1.2, 0.6); g.add(pole);
-      });
-      // fruit, tidied into crates and a basket on the counter (v7.4:
-      // the v7.3 loose scatter read as fruit spilled across the street)
-      var crateCols = [0x8a6a42, 0x6a4a20];
-      for (var ci = 0; ci < 2; ci++) {
-        var fc = box(0.8, 0.4, 0.6, crateCols[ci], -0.6 + ci * 1.2, 1.2, 0, 0.95);
-        g.add(fc);
-        for (var fi = 0; fi < 4; fi++) {
-          var fruit = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), mat(goodsColor, 0.5));
-          fruit.position.set(-0.85 + ci * 1.2 + (fi % 2) * 0.5, 1.42, (fi < 2 ? -0.15 : 0.15));
-          g.add(fruit);
-        }
-      }
-      var crate = box(0.7, 0.7, 0.7, 0x8a6a42, 1.8, 0.35, 0.4, 0.95);
-      g.add(crate);
-      var sign = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.5, 0.1),
-        new THREE.MeshStandardMaterial({ map: PH.signTexture('FRESH', awnColor), roughness: 0.7 }));
-      sign.position.set(0, 2.0, 0.75); g.add(sign);
-      return g;
-    }
-    var stallCols = ['#c81e1e', '#0e7a7a', '#c85a00', '#6a2a8a'];
-    var stallGoods = [0xff7a1a, 0xff3b30, 0xffc832, 0x37d67a];
-    [-32, -18, 14, 28].forEach(function (z, i) {
-      // v7.3: no stall at z -2 — it stood 1.5 units from the shot-2
-      // camera and its FRESH sign filled the whole frame.
-      scene.add(makeMarketStall(-8.6, z, stallCols[i % 4], stallGoods[i % 4]));
-    });
-
-    // ---- palms ----
-    for (var pz = -155; pz <= 155; pz += 26) scene.add(makePalm(-33.5, pz));
-    [[40, -100], [80, 20], [120, -60], [60, 100], [140, 40]].forEach(function (p) { scene.add(makePalm(p[0], p[1])); });
-
-    // ---- pier (Z 40, X -28 to -88, deck Y 1.35) ----
-    var pier = new THREE.Group();
-    var deck = box(60, 0.4, 9, 0x8a6a42, -58, 1.15, 40, 0.95);
-    pier.add(deck);
-    // deck planks
-    for (var px = -86; px <= -30; px += 3) {
-      pier.add(box(0.25, 0.06, 9, 0x6a4e2e, px, 1.38, 40, 0.95));
-    }
-    // posts + rails + lamps + benches
-    for (var px2 = -86; px2 <= -30; px2 += 7) {
-      pier.add(box(0.4, 2.4, 0.4, 0x5a4026, px2, 0.2, 35.8, 0.95));
-      pier.add(box(0.4, 2.4, 0.4, 0x5a4026, px2, 0.2, 44.2, 0.95));
-      pier.add(box(0.4, 2.4, 0.4, 0x5a4026, px2, 0.2, 35.8, 0.95));
-    }
-    [-86, -72, -58, -44, -30].forEach(function (x) {
-      pier.add(box(0.14, 0.1, 9, 0x7a5a30, x, 2.4, 40, 0.9));
-    });
-    [-80, -68, -40].forEach(function (x) {
-      // v7.3: the middle lamp moved from -60 to -68 — at -60 its bulb
-      // hung directly above Kira's head in shot 3 (the white ball).
-      var lp = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 2.6, 8), lampMat);
-      lp.position.set(x, 2.6, 36); lp.castShadow = true; pier.add(lp);
-      var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6),
-        new THREE.MeshStandardMaterial({ color: 0xffe6a0, emissive: 0xffc860, emissiveIntensity: 1.2 }));
-      bulb.position.set(x, 4.0, 36); pier.add(bulb);
-    });
-    [-70, -50].forEach(function (x) {
-      pier.add(box(2.2, 0.12, 0.6, 0x7a5a30, x, 1.9, 43.4, 0.9));
-    });
-    // PIER BAIT shack at X -40, red cone roof, own sign
-    var shack = new THREE.Group(); shack.position.set(-40, 1.35, 40);
-    shack.add(box(5, 3.2, 4.5, 0xe8dcc0, 0, 1.6, 0, 0.9));
-    var cone = new THREE.Mesh(new THREE.ConeGeometry(3.6, 2.2, 4), mat(0xb02020, 0.8));
-    cone.position.y = 4.3; cone.rotation.y = Math.PI / 4; cone.castShadow = true;
-    shack.add(cone);
-    var shackSign = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1.1, 0.16),
-      new THREE.MeshStandardMaterial({ map: PH.signTexture('PIER BAIT', '#b02020'), roughness: 0.7 }));
-    shackSign.position.set(0, 2.9, 2.35); shack.add(shackSign);
-    pier.add(shack);
-    // ---- pier dressing (v7.4): the v7.3 deck was bare wood. Now it
-    // carries stacked crates, coiled rope, a tackle box, buckets, rods
-    // leaning on the rail and two fishers working at the rail, so the
-    // deck reads as a working pier instead of an empty plank floor.
-    function pierCrate(x, z, s) {
-      var c = box(s, s, s, 0x8a6a42, x, 1.35 + s / 2, z, 0.95);
-      c.rotation.y = PH.rand(0, 1);
-      pier.add(c);
-      var lid = box(s + 0.06, 0.08, s + 0.06, 0x6a4a20, x, 1.35 + s + 0.04, z, 0.95);
-      lid.rotation.y = c.rotation.y;
-      pier.add(lid);
-    }
-    pierCrate(-64, 36.8, 0.9);
-    // stacked pair: the second crate sits ON the first (v7.4 rev 2 —
-    // rev 1 placed two crates at the same spot, z-fighting)
-    pierCrate(-63.1, 36.8, 0.7);
-    var stackTop = box(0.7, 0.7, 0.7, 0x6a4a20, -63.1, 1.35 + 0.7 + 0.35, 36.8, 0.95);
-    stackTop.rotation.y = 0.4;
-    pier.add(stackTop);
-    pierCrate(-48, 43.2, 0.9); pierCrate(-52, 36.8, 0.7); pierCrate(-78, 43.4, 0.8);
-    // east end of the deck (the foreground in shot 3): one more crate
-    // + a rope coil so the near corner is not bare wood
-    pierCrate(-70, 43.4, 0.8);
-    var ringE = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.07, 6, 14), mat(0xc8a860, 0.95));
-    ringE.rotation.x = Math.PI / 2;
-    ringE.position.set(-66, 1.38, 43.2);
-    pier.add(ringE);
-    // coiled rope: flat torus rings on the deck
-    [[-58, 37], [-68, 43], [-44, 37.2]].forEach(function (p) {
-      for (var ri = 0; ri < 3; ri++) {
-        var ring = new THREE.Mesh(new THREE.TorusGeometry(0.5 - ri * 0.1, 0.07, 6, 14), mat(0xc8a860, 0.95));
-        ring.rotation.x = Math.PI / 2;
-        ring.position.set(p[0], 1.38 + ri * 0.07, p[1]);
-        pier.add(ring);
-      }
-    });
-    // tackle box + buckets + rods leaning on the rail
-    pier.add(box(0.9, 0.4, 0.5, 0x2a6fd8, -56, 1.55, 43.2, 0.7));
-    [[-60, 42.8], [-46, 36.9], [-76, 37]].forEach(function (p) {
-      var bk = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.2, 0.45, 10), mat(0xc02020, 0.7));
-      bk.position.set(p[0], 1.58, p[1]); pier.add(bk);
-    });
-    [[-62, 36.2], [-54, 43.6]].forEach(function (p) {
-      var rod = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 2.8, 6), mat(0x4a2a10, 0.8));
-      rod.position.set(p[0], 2.6, p[1]); rod.rotation.x = 0.5; rod.rotation.z = 0.2;
-      pier.add(rod);
-    });
-    // two fishers working at the rail (fish pose, rods in hand)
-    [[-66, 36.6, -Math.PI / 2], [-50, 43.6, Math.PI / 2]].forEach(function (f) {
-      var angler = PH.makePerson({ shirt: 0x0e7a7a, pants: 0x2a3a4a, hat: true });
-      angler.group.position.set(f[0], 1.35, f[1]);
-      angler.group.rotation.y = f[2];
-      angler.setPose('fish', 0, 5);
-      pier.add(angler.group);
-    });
-    // round 2 — west deck-end dressing: the bare-wood corner that
-    // filled shot 3's bottom-right now carries lobster pots, a life
-    // ring post, a cooler and a fish-cleaning table with a catch
-    [[-84, 43.2], [-82.6, 43.2], [-83.3, 43.2]].forEach(function (p, i) {
-      var pot = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.5, 10),
-        mat(i % 2 ? 0x6a4a20 : 0x8a6a42, 0.95));
-      pot.position.set(p[0], 1.35 + 0.25 + (i === 2 ? 0.5 : 0), p[1]);
-      pot.castShadow = true;
-      pier.add(pot);
-      var potRim = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.05, 6, 14), mat(0x2a2a2a, 0.7));
-      potRim.rotation.x = Math.PI / 2;
-      potRim.position.set(p[0], 1.35 + 0.5 + (i === 2 ? 0.5 : 0), p[1]);
-      pier.add(potRim);
-    });
-    var ringPost = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.6, 6), mat(0xf2f2f2, 0.7));
-    ringPost.position.set(-86, 2.15, 36.8);
-    pier.add(ringPost);
-    var lifeRing = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.11, 8, 16), mat(0xff3b30, 0.7));
-    lifeRing.position.set(-86, 2.7, 36.8);
-    pier.add(lifeRing);
-    var ringBand = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.115, 8, 16, Math.PI / 2), mat(0xf2f2f2, 0.7));
-    ringBand.position.set(-86, 2.7, 36.8);
-    pier.add(ringBand);
-    var cooler = box(1.0, 0.6, 0.6, 0x2a9df4, -72, 1.65, 43.4, 0.6);
-    pier.add(cooler);
-    var coolerLid = box(1.04, 0.12, 0.64, 0xf2f2f2, -72, 2.0, 43.4, 0.6);
-    pier.add(coolerLid);
-    // fish-cleaning table: a board on legs with two silver fish on it
-    pier.add(box(1.6, 0.1, 0.7, 0x8a6a42, -76, 2.3, 43.5, 0.9));
-    [[-76.5, 43.3], [-75.5, 43.7]].forEach(function (p) {
-      var legT = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6), mat(0x4a4a4a, 0.6, 0.5));
-      legT.position.set(p[0], 1.85, p[1]);
-      pier.add(legT);
-    });
-    [-0.3, 0.3].forEach(function (dx) {
-      var fish = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.5, 6), mat(0xc0c8d0, 0.4, 0.8));
-      fish.rotation.z = Math.PI / 2;
-      fish.position.set(-76 + dx, 2.4, 43.5);
-      pier.add(fish);
-    });
-    // seagulls circling the pier end (white bodies, dark wingtips)
-    var gullMat = mat(0xf2f2f2, 0.8);
-    var gullTipMat = mat(0x2a2a2a, 0.8);
-    for (var gi2 = 0; gi2 < 5; gi2++) {
-      var gull = new THREE.Group();
-      var gbody = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.7, 6), gullMat);
-      gbody.rotation.x = Math.PI / 2;
-      gull.add(gbody);
-      [-1, 1].forEach(function (s) {
-        var wing = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.04, 0.35), gullMat);
-        wing.position.set(s * 0.5, 0.05, 0); wing.rotation.z = s * 0.25;
-        gull.add(wing);
-        var tip = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.36), gullTipMat);
-        tip.position.set(s * 0.95, 0.16, 0); tip.rotation.z = s * 0.25;
-        gull.add(tip);
-      });
-      gull.position.set(-88 + gi2 * 3, 6 + gi2 * 0.8, 40 + (gi2 % 2 ? 6 : -6));
-      scene.add(gull);
-      W.gulls.push({ g: gull, phase: gi2 * 1.3, r: 6 + gi2 * 1.5, h: 6 + gi2 * 0.8, cx: -88, cz: 40 });
-    }
-    scene.add(pier);
-    W.pier = pier;
-
-    // ---- beach props ----
-    var umbrellaColors = [0xff3b30, 0xffc832, 0x2a9df4, 0xff6ab0, 0x37d67a, 0xff7a1a, 0x8a5aff, 0x2ee6c8];
-    var umbrellas = [];
-    for (var u = 0; u < 12; u++) {
-      var ux = PH.rand(-95, -40), uz = PH.rand(-140, 140);
-      var ug = new THREE.Group(); ug.position.set(ux, 0, uz);
-      var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.6, 6), mat(0xd8d0c0, 0.7));
-      pole.position.y = 1.3; ug.add(pole);
-      var canopy = new THREE.Mesh(new THREE.ConeGeometry(2.1, 0.9, 10), mat(umbrellaColors[u % umbrellaColors.length], 0.7));
-      canopy.position.y = 2.8; canopy.castShadow = true; ug.add(canopy);
-      scene.add(ug); umbrellas.push(ug);
-      // towel beside
-      var towel = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.0),
-        mat(umbrellaColors[(u + 3) % umbrellaColors.length], 0.95));
-      towel.rotation.x = -Math.PI / 2; towel.rotation.z = PH.rand(0, 3);
-      towel.position.set(ux + PH.rand(1.5, 3), 0.08, uz + PH.rand(-1, 1));
-      scene.add(towel);
-    }
-    W.umbrellas = umbrellas;
-    // 5 extra towels
-    for (var t = 0; t < 5; t++) {
-      var tw = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 2.0), mat(PH.pick(umbrellaColors), 0.95));
-      tw.rotation.x = -Math.PI / 2; tw.rotation.z = PH.rand(0, 3);
-      tw.position.set(PH.rand(-95, -40), 0.08, PH.rand(-140, 140));
-      scene.add(tw);
-    }
-    // 4 surfboards stuck in sand
-    for (var sb = 0; sb < 4; sb++) {
-      var board = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.55, 2.6, 8), mat(PH.pick(umbrellaColors), 0.5));
-      board.scale.z = 0.28;
-      board.position.set(PH.rand(-90, -50), 1.1, PH.rand(-100, 100));
-      board.rotation.z = PH.rand(-0.2, 0.2);
-      board.castShadow = true;
-      scene.add(board);
-    }
-    // lifeguard tower at the waterline (x -110, z 30): four splayed
-    // legs, a striped cabin, a roof and a red rescue buoy on the rail
-    // — round 2: it stood at (-106,44), dead on the shot-3 sightline,
-    // and filled the frame; now it anchors the frame's right edge
-    // instead of covering the boat
-    var tower = new THREE.Group(); tower.position.set(-110, 0, 30);
-    [[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]].forEach(function (p) {
-      var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 3.4, 6), mat(0xf2f2f2, 0.8));
-      leg.position.set(p[0] * 1.2, 1.7, p[1] * 1.2);
-      leg.rotation.z = -p[0] * 0.12; leg.rotation.x = p[1] * 0.12;
-      leg.castShadow = true;
-      tower.add(leg);
-    });
-    var cabTex = PH.canvasTex(128, 64, function (ctx, ww, hh) {
-      for (var s = 0; s < 8; s++) { ctx.fillStyle = s % 2 ? '#f2f2f2' : '#ff3b30'; ctx.fillRect(s * 16, 0, 16, hh); }
-    });
-    var cabin = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 2.0),
-      new THREE.MeshStandardMaterial({ map: cabTex, roughness: 0.8 }));
-    cabin.position.y = 4.0; cabin.castShadow = true; tower.add(cabin);
-    var cabRoof = new THREE.Mesh(new THREE.ConeGeometry(2.0, 0.9, 4), mat(0xff3b30, 0.8));
-    cabRoof.position.y = 5.25; cabRoof.rotation.y = Math.PI / 4; tower.add(cabRoof);
-    var buoy = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.1, 8, 16), mat(0xff3b30, 0.7));
-    buoy.position.set(0, 4.6, 1.05); tower.add(buoy);
-    var ramp = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.08, 2.2), mat(0x8a6a42, 0.9));
-    ramp.position.set(0, 2.2, 2.0); ramp.rotation.x = 0.7; tower.add(ramp);
-    scene.add(tower);
-    // footprints along the wet sand: two staggered trails of small dark
-    // ellipses from the tower toward the pier, so the sand is walked-on
-    var fpMat = new THREE.MeshBasicMaterial({ color: 0x8a6a42, transparent: true, opacity: 0.55 });
-    for (var fp = 0; fp < 26; fp++) {
-      var print = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.34), fpMat);
-      print.rotation.x = -Math.PI / 2;
-      print.rotation.z = PH.rand(-0.3, 0.3);
-      print.position.set(-104 + fp * 0.55 + (fp % 2 ? 0.35 : -0.35), 0.07, 46 - fp * 0.35);
-      scene.add(print);
-    }
-    // volleyball court at (-58,-8): posts + net + bouncing ball
-    var vc = new THREE.Group(); vc.position.set(-58, 0, -8);
-    vc.add(box(0.12, 2.6, 0.12, 0xd8d8d8, -4, 1.3, 0, 0.5, 0.6));
-    vc.add(box(0.12, 2.6, 0.12, 0xd8d8d8, 4, 1.3, 0, 0.5, 0.6));
-    var net = new THREE.Mesh(new THREE.PlaneGeometry(8, 1.1),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.65, side: THREE.DoubleSide }));
-    net.position.y = 2.0; vc.add(net);
-    var vball = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
-    vball.position.set(0, 2.5, 0); vball.castShadow = true; vc.add(vball);
-    scene.add(vc);
-    W.volleyball = vball;
-    // 3 sandcastles
-    for (var sc = 0; sc < 3; sc++) {
-      var castle = new THREE.Group();
-      var cxp = PH.rand(-90, -50), czp = PH.rand(-120, 120);
-      castle.position.set(cxp, 0, czp);
-      var base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, 0.9, 8), mat(0xd8b878, 1));
-      base.position.y = 0.45; castle.add(base);
-      var tower = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.2, 8), mat(0xd8b878, 1));
-      tower.position.set(0.3, 1.0, 0.2); castle.add(tower);
-      var flag = box(0.05, 0.7, 0.05, 0x8a5a20, 0.3, 1.9, 0.2, 0.8);
-      castle.add(flag);
-      scene.add(castle);
-    }
-
-    // ---- clouds: random + 6 fixed hero clouds (v7.4: lower, bigger,
-    // volumetric) — every cloud now casts a soft moving ground shadow
-    // in BOTH modes, not only by day, because the shadow is the cue
-    // that makes a cloud read as a solid thing in the sky.
-    // v7.5: sky.js builds the clouds now (layered cumulus: lit-orange
-    // base, gold sun side, dark crown, gold rim, plus its own sun +
-    // sunbeams). The old blobs below are skipped when it is loaded,
-    // and the cirrus deck after them keeps running either way.
-    if (!PH.buildSunsetSky) {
-    var nClouds = sunset ? 10 : 16;
-    for (var ci = 0; ci < nClouds; ci++) {
-      var cl = makeCloud(PH.rand(1.8, 3.0), null, sunset);
-      cl.position.set(PH.rand(-220, 220), PH.rand(28, 58), PH.rand(-220, 220));
-      scene.add(cl); W.clouds.push(cl);
-      var sh = makeCloudShadow(cl.userData.density);
-      sh.position.set(cl.position.x * 0.5, 0.12, cl.position.z * 0.5);
-      scene.add(sh); W.cloudShadows.push(sh);
-    }
-    [[-60, 38, -190], [60, 42, -210], [-45, 30, 170], [-62, 32, 190], [-195, 38, 30], [-200, 42, -40]].forEach(function (p, i) {
-      var hc = makeCloud(2.6 + (i % 3) * 0.4, null, sunset);
-      hc.position.set(p[0], p[1], p[2]);
-      scene.add(hc); W.clouds.push(hc);
-      var hs = makeCloudShadow(hc.userData.density);
-      hs.position.set(p[0] * 0.5, 0.12, p[2] * 0.5);
-      scene.add(hs); W.cloudShadows.push(hs);
-    });
-    // sky-dome cloud field, denser toward the sun (v7.4): a ring of
-    // small lit puffs low on the dome around the sun azimuth, so the
-    // horizon glows with cloud instead of empty gradient
-    if (sunset) {
-      for (var di = 0; di < 14; di++) {
-        var ang = Math.PI + PH.rand(-0.7, 0.7); // around the sun side (-X)
-        var dist = 430;
-        var dc = makeCloud(PH.rand(1.2, 2.0), 0.9, true);
-        dc.position.set(Math.cos(ang) * dist, PH.rand(18, 55), Math.sin(ang) * dist * 0.7);
-        scene.add(dc);
-        W.clouds.push(dc);
-      }
-    }
-    } else {
-      // v7.5: layered sunset clouds + sun + sunbeams from sky.js; they
-      // land in W.clouds / W.cloudShadows, so the drift update below
-      // keeps working unchanged.
-      PH.buildSunsetSky(scene, sunset, W);
-    }
-    // round 2: a high thin cirrus deck — flat wide streaks that drift
-    // faster than the cumulus below, so the sky has two speeds of cloud
-    W.cirrus = [];
-    for (var cir = 0; cir < 8; cir++) {
-      var streak = new THREE.Group();
-      var streakMat = new THREE.MeshBasicMaterial({
-        color: sunset ? 0xffd9a0 : 0xffffff, transparent: true, opacity: 0.5, fog: true
-      });
-      for (var sp = 0; sp < 4; sp++) {
-        var puff = new THREE.Mesh(new THREE.SphereGeometry(PH.rand(4, 7), 8, 6), streakMat);
-        puff.scale.set(2.2, 0.25, 0.7);
-        puff.position.set(sp * PH.rand(7, 10) - 14, PH.rand(-0.5, 0.5), PH.rand(-2, 2));
-        streak.add(puff);
-      }
-      streak.position.set(PH.rand(-220, 220), PH.rand(70, 95), PH.rand(-220, 220));
-      scene.add(streak);
-      W.cirrus.push(streak);
-    }
-
-    W.update = function (dt, t) {
-      // foam drift
-      W.foams.forEach(function (f, i) {
-        f.position.x = -102 + i * 4.5 + Math.sin(t * 0.25 + i * 1.3) * 1.6;
-        f.material.opacity = 0.4 + 0.2 * Math.sin(t * 0.4 + i);
-      });
-      // v7.5: drifting foam patches out in the bay (waterfx.js)
-      if (W.driftFoam) W.driftFoam.update(t);
-      // v7.5: harbour buoys bobbing with the swell (waterfx.js)
-      if (W.buoys) W.buoys.update(t);
-      // clouds drift east, wrap at the edge — and their ground shadows
-      // travel with them, half-speed, so the shade slides over streets
-      W.clouds.forEach(function (c, i) {
-        c.position.x += dt * (1.2 + (i % 3) * 0.4);
-        if (c.position.x > 240) c.position.x = -240;
-        var shd = W.cloudShadows[i];
-        if (shd) {
-          shd.position.x = c.position.x * 0.5;
-          shd.position.z = c.position.z * 0.5;
-          shd.material.opacity = (0.10 + c.userData.density * 0.14) * (0.85 + 0.15 * Math.sin(t * 0.3 + i));
-        }
-      });
-      // antenna beacons blink slowly
-      W.antennaLights.forEach(function (b, i) {
-        b.material.emissiveIntensity = (Math.sin(t * 1.5 + i * 2) > 0) ? 2.2 : 0.15;
-      });
-      // gulls circle the pier end
-      W.gulls.forEach(function (gl) {
-        var a = t * 0.25 + gl.phase;
-        gl.g.position.set(gl.cx + Math.cos(a) * gl.r, gl.h + Math.sin(t * 0.8 + gl.phase) * 0.8, gl.cz + Math.sin(a) * gl.r);
-        gl.g.rotation.y = -a;
-      });
-      // cirrus streaks drift east faster than the cumulus below
-      W.cirrus.forEach(function (st, i) {
-        st.position.x += dt * (3.0 + (i % 3) * 0.8);
-        if (st.position.x > 240) st.position.x = -240;
-      });
-      // volleyball bounce
-      if (W.volleyball) {
-        var bt = (t % 1.2) / 1.2;
-        W.volleyball.position.y = 0.5 + Math.abs(Math.sin(bt * Math.PI)) * 2.2;
-        W.volleyball.position.x = Math.sin(t * 1.4) * 2.5;
-      }
+  function mulberry32(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    return W;
+  }
+
+  PH.world = {
+    roadRects: [],
+    tallBuildings: [],
+    signs: [],
+    spawns: {
+      heroCar: { x: -18, z: 0, heading: Math.PI / 2 },   // on Sunset Blvd, facing east (+X)
+      kira: { x: 0, z: 152 },                            // mid-pier, on the deck
+      boat: { x: 8, z: 152 },                            // moored beside the pier, within boarding reach
+      boatTarget: { x: -155, z: 198 },                   // far end of the bridge causeway
+      playerStart: { x: -14, z: 3, heading: Math.PI / 2 }
+    },
+
+    groundHeight: function (x, z) {
+      if (x > -5.4 && x < 5.4 && z > 104 && z < 166) return 1.2;      // pier deck
+      if (x > -160.5 && x < -149.5 && z > 104 && z < 211) return 0.3; // bridge causeway deck
+      return 0;
+    },
+
+    build: function () {
+      var scene = PH.scene;
+      var rnd = mulberry32(8821);
+      var i, j;
+
+      // ----- ground base (dry warm ground under the whole city; sea plane sits above it) -----
+      var ground = new THREE.Mesh(new THREE.PlaneGeometry(520, 520),
+        new THREE.MeshStandardMaterial({ color: 0x7d6f55, roughness: 1 }));
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.set(0, -0.12, 40);
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      // ----- road texture helper: asphalt + lane paint, repeated along the segment -----
+      function roadTexture(width, dashes, yellow) {
+        return PH.makeCanvas(128, 128, function (g, w, h) {
+          g.fillStyle = '#26262d'; g.fillRect(0, 0, w, h); // darker asphalt: sun-bleached no more
+          g.fillStyle = 'rgba(255,255,255,0.06)';
+          for (i = 0; i < 60; i++) g.fillRect(rnd() * w, rnd() * h, 3, 3);
+          g.fillStyle = 'rgba(255,255,255,0.10)';
+          for (i = 0; i < 24; i++) g.fillRect(rnd() * w, rnd() * h, 5, 2);
+          g.fillStyle = '#d8d8d8';
+          g.fillRect(0, 0, 3, h); g.fillRect(w - 3, 0, 3, h);
+          if (yellow) {
+            g.fillStyle = '#d8a832';
+            g.fillRect(w / 2 - 6, 0, 4, h); g.fillRect(w / 2 + 2, 0, 4, h);
+          } else if (dashes) {
+            g.fillStyle = '#e8e8e8';
+            g.fillRect(w / 2 - 2, 8, 4, 40);
+          }
+        });
+      }
+      function addRoad(x0, z0, x1, z1, yellow) {
+        var w = x1 - x0, d = z1 - z0;
+        var alongX = w >= d;
+        var tex = roadTexture(Math.min(w, d), true, yellow);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(alongX ? Math.max(1, Math.round(w / 16)) : 1, alongX ? 1 : Math.max(1, Math.round(d / 16)));
+        var mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, d),
+          new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 }));
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set((x0 + x1) / 2, 0.02, (z0 + z1) / 2);
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+        PH.world.roadRects.push({ x0: x0, z0: z0, x1: x1, z1: z1 });
+        // sidewalks: pale strips just outside the asphalt
+        var sw = PH.stdMat(0x9a938a, 0.95, 0);
+        var s1, s2;
+        if (alongX) {
+          s1 = PH.box(w, 0.14, 2.6, 0x9a938a, 0.95, 0); s1.position.set((x0 + x1) / 2, 0.07, z0 - 1.3);
+          s2 = PH.box(w, 0.14, 2.6, 0x9a938a, 0.95, 0); s2.position.set((x0 + x1) / 2, 0.07, z1 + 1.3);
+        } else {
+          s1 = PH.box(2.6, 0.14, d, 0x9a938a, 0.95, 0); s1.position.set(x0 - 1.3, 0.07, (z0 + z1) / 2);
+          s2 = PH.box(2.6, 0.14, d, 0x9a938a, 0.95, 0); s2.position.set(x1 + 1.3, 0.07, (z0 + z1) / 2);
+        }
+        s1.receiveShadow = true; s2.receiveShadow = true;
+        scene.add(s1); scene.add(s2);
+        return mesh;
+      }
+
+      // ----- CONNECTED road grid: every street links to the next, no dead grey ground -----
+      addRoad(-150, -7, 150, 7, true);                       // Sunset Boulevard (14 wide, main)
+      var crossX = [-110, -60, -10, 40, 90, 140];
+      for (i = 0; i < crossX.length; i++) addRoad(crossX[i] - 5, -90, crossX[i] + 5, 95, false);
+      var resZ = [-70, -35, 35, 70];
+      for (i = 0; i < resZ.length; i++) addRoad(-140, resZ[i] - 4.5, 145, resZ[i] + 4.5, false);
+      addRoad(-140, 95.5, 145, 104.5, false);                // beachfront road
+      addRoad(-160, 104, -150, 211, false);                  // bridge causeway approach + deck
+
+      // ----- beach sand -----
+      var sand = new THREE.Mesh(new THREE.PlaneGeometry(330, 22),
+        new THREE.MeshStandardMaterial({ color: 0xd9b380, roughness: 1 }));
+      sand.rotation.x = -Math.PI / 2;
+      sand.position.set(0, 0.03, 115);
+      sand.receiveShadow = true;
+      scene.add(sand);
+      // umbrellas
+      var umbColors = [0xff6b4a, 0x2fb8a6, 0xffd94a, 0x4a7bff, 0xff4a8a];
+      for (i = 0; i < 9; i++) {
+        var ux = -120 + i * 30 + rnd() * 8, uz = 108 + rnd() * 12;
+        var pole = new THREE.Mesh(PH.cylGeo(0.06, 0.06, 2.4, 6), PH.stdMat(0xeeeeee, 0.6, 0.2));
+        pole.position.set(ux, 1.2, uz); scene.add(pole);
+        var top = new THREE.Mesh(new THREE.ConeGeometry(1.9, 0.7, 8),
+          PH.stdMat(umbColors[i % umbColors.length], 0.7, 0));
+        top.position.set(ux, 2.6, uz); top.castShadow = true; scene.add(top);
+      }
+
+      // ----- pier: wooden deck on supports, railings, end platform -----
+      var pierDeck = PH.box(10, 0.5, 62, 0x8a6a48, 0.9, 0);
+      pierDeck.position.set(0, 0.95, 135);
+      pierDeck.receiveShadow = true; pierDeck.castShadow = true;
+      scene.add(pierDeck);
+      for (i = 0; i < 7; i++) {
+        var pz = 108 + i * 9;
+        var supL = new THREE.Mesh(PH.cylGeo(0.5, 0.6, 2.6, 8), PH.stdMat(0x5a4632, 0.9, 0));
+        supL.position.set(-4.2, 0, pz); scene.add(supL);
+        var supR = supL.clone(); supR.position.x = 4.2; scene.add(supR);
+        PH.addCollider(-4.2, pz, 0.7, 0.7); PH.addCollider(4.2, pz, 0.7, 0.7);
+      }
+      // railings (colliders keep the player on the deck)
+      var railMat = PH.stdMat(0x6b4a2e, 0.8, 0.1);
+      var r1 = PH.box(0.3, 1.1, 62, 0x6b4a2e, 0.8, 0.1); r1.position.set(-4.9, 1.75, 135); scene.add(r1);
+      var r2 = r1.clone(); r2.position.x = 4.9; scene.add(r2);
+      PH.addCollider(-4.9, 135, 0.3, 31); PH.addCollider(4.9, 135, 0.3, 31);
+      var r3 = PH.box(10, 1.1, 0.3, 0x6b4a2e, 0.8, 0.1); r3.position.set(0, 1.75, 165.5); scene.add(r3);
+      PH.addCollider(0, 165.5, 5, 0.3);
+      // bollards across the pier mouth: cars cannot drive onto the wooden pier,
+      // pedestrians walk between them (1.4-unit gaps, car is 3.4 wide)
+      var bollardXs = [-4.8, -2.4, 0, 2.4, 4.8];
+      for (i = 0; i < bollardXs.length; i++) {
+        var bol = new THREE.Mesh(PH.cylGeo(0.28, 0.34, 1.1, 8),
+          new THREE.MeshStandardMaterial({ color: 0xd8a832, roughness: 0.5, metalness: 0.4 }));
+        bol.position.set(bollardXs[i], 0.55, 104);
+        bol.castShadow = true; scene.add(bol);
+        PH.addCarCollider(bollardXs[i], 104, 0.5);
+      }
+      // pier lamps + bait shack at the end
+      for (i = 0; i < 4; i++) {
+        var lamp = PH.box(0.18, 3.2, 0.18, 0x222222, 0.6, 0.4);
+        lamp.position.set(-4.4, 2.8, 112 + i * 16); scene.add(lamp);
+        var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6),
+          new THREE.MeshStandardMaterial({ color: 0xffe9a8, emissive: 0xffc860, emissiveIntensity: 1.4 }));
+        bulb.position.set(-4.4, 4.5, 112 + i * 16); scene.add(bulb);
+      }
+      var shack = PH.box(6, 3.4, 5, 0x7a5a3a, 0.9, 0);
+      shack.position.set(0, 2.9, 161); shack.castShadow = true; scene.add(shack);
+      PH.addCollider(0, 161, 3.2, 2.7);
+      var shackSign = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 1.1),
+        new THREE.MeshBasicMaterial({ map: PH.labelTexture('BAIT & TACKLE', { bg: '#24344a', fg: '#ffd94a', size: 52 }) }));
+      shackSign.position.set(0, 3.4, 158.4); shackSign.rotation.y = Math.PI; scene.add(shackSign);
+
+      // ----- harbor: containers + crane (east side) -----
+      var contColors = [0xc0392b, 0x2471a3, 0x229954, 0xd4ac0d, 0x7d3c98];
+      var contSpots = [[128, 112], [138, 112], [133, 118], [146, 118], [126, 120], [142, 108]];
+      for (i = 0; i < contSpots.length; i++) {
+        var cx = contSpots[i][0], cz = contSpots[i][1];
+        var cont = PH.box(6, 2.6, 2.6, contColors[i % contColors.length], 0.7, 0.3);
+        cont.position.set(cx, 1.3, cz);
+        cont.rotation.y = (i % 2) * 0.12;
+        cont.castShadow = true; scene.add(cont);
+        PH.addCollider(cx, cz, 3.2, 1.6);
+      }
+      var craneLeg1 = PH.box(1.2, 22, 1.2, 0xd4ac0d, 0.6, 0.4); craneLeg1.position.set(150, 11, 108); scene.add(craneLeg1);
+      var craneLeg2 = craneLeg1.clone(); craneLeg2.position.set(150, 11, 122); scene.add(craneLeg2);
+      var craneBeam = PH.box(1.4, 1.4, 26, 0xd4ac0d, 0.6, 0.4); craneBeam.position.set(150, 22, 115); scene.add(craneBeam);
+      var craneArm = PH.box(16, 1.1, 1.1, 0xd4ac0d, 0.6, 0.4); craneArm.position.set(142, 22.5, 115); scene.add(craneArm);
+      PH.addCollider(150, 108, 1, 1); PH.addCollider(150, 122, 1, 1);
+
+      // ----- Sunset Bay Bridge: low causeway deck over the sea (west edge) -----
+      var deck = PH.box(10, 0.6, 107, 0x6a6f78, 0.9, 0);
+      deck.position.set(-155, 0.05, 157.5); deck.receiveShadow = true; scene.add(deck);
+      for (i = 0; i < 6; i++) {
+        var bz = 112 + i * 18;
+        var pil = new THREE.Mesh(PH.cylGeo(0.9, 1.1, 4, 8), PH.stdMat(0x555a63, 0.9, 0));
+        pil.position.set(-158.5, -1, bz); scene.add(pil);
+        var pil2 = pil.clone(); pil2.position.x = -151.5; scene.add(pil2);
+        PH.addCollider(-158.5, bz, 1.1, 1.1); PH.addCollider(-151.5, bz, 1.1, 1.1);
+      }
+      var bridgeSign = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.6),
+        new THREE.MeshBasicMaterial({ map: PH.labelTexture('SUNSET BAY BRIDGE', { bg: '#1d5f4a', fg: '#ffffff', size: 44 }) }));
+      bridgeSign.position.set(-155, 4.2, 106); scene.add(bridgeSign);
+      var bPost1 = PH.box(0.3, 4, 0.3, 0x333333, 0.6, 0.3); bPost1.position.set(-159.5, 2, 106); scene.add(bPost1);
+      var bPost2 = bPost1.clone(); bPost2.position.x = -150.5; scene.add(bPost2);
+
+      // ----- buildings: blocks between the streets, real windows + shop signs -----
+      var xBands = [[-140, -115], [-105, -65], [-55, -15], [-5, 35], [45, 85], [95, 135]];
+      var zBands = [[-90, -74.5], [-65.5, -39.5], [-30.5, -7], [7, 30.5], [39.5, 65.5], [74.5, 95]];
+      var wallPals = ['#c98a5a', '#b0703f', '#8a9a8a', '#a8876a', '#7a8aa0', '#c2a06a', '#9a6a7a', '#6a7a8a'];
+      var shopNames = ['SUNSET TACOS', 'BAY BURGER', 'MANGO MART', 'WAVE RECORDS', 'PIER DONUTS',
+        'PALM MOTEL', 'GOLDEN HOUR GYM', 'TIDE & TACKLE', 'REEF CAFE', 'SUNSET LIQUOR', 'NEON PALMS HOTEL'];
+      var shopIdx = 0;
+      var winTexes = [
+        PH.windowTexture('#c98a5a', '#ffd27a', 6, 5),
+        PH.windowTexture('#8a9a8a', '#ffe9a8', 8, 6),
+        PH.windowTexture('#7a8aa0', '#ffb36b', 10, 6),
+        PH.windowTexture('#a8876a', '#fff0c0', 5, 4)
+      ];
+      for (i = 0; i < xBands.length; i++) for (j = 0; j < zBands.length; j++) {
+        var bx0 = xBands[i][0] + 3, bx1 = xBands[i][1] - 3;
+        var bz0 = zBands[j][0] + 3, bz1 = zBands[j][1] - 3;
+        if (rnd() < 0.14) continue; // empty lot / parking
+        var bw = bx1 - bx0, bd = bz1 - bz0;
+        var tall = rnd() < 0.22;
+        var bh = tall ? PH.rand(22, 34) : PH.rand(7, 16);
+        var nB = (bw > 26 && bd > 18 && rnd() < 0.5) ? 2 : 1;
+        for (var k = 0; k < nB; k++) {
+          var w2 = nB === 2 ? bw / 2 - 2 : bw;
+          var d2 = nB === 2 ? bd : bd;
+          var cx2 = nB === 2 ? bx0 + w2 / 2 + k * (w2 + 4) : (bx0 + bx1) / 2;
+          var cz2 = (bz0 + bz1) / 2;
+          var tex = winTexes[Math.floor(rnd() * winTexes.length)];
+          tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+          var bmat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 });
+          var b = new THREE.Mesh(new THREE.BoxGeometry(w2, bh, d2), bmat);
+          b.position.set(cx2, bh / 2, cz2);
+          b.castShadow = true; b.receiveShadow = true;
+          scene.add(b);
+          PH.addCollider(cx2, cz2, w2 / 2, d2 / 2);
+          if (tall) PH.world.tallBuildings.push(b);
+          // dark base at the foot of tall buildings
+          if (bh > 20) {
+            var base = PH.box(w2 + 0.4, 1.2, d2 + 0.4, 0x2a2320, 0.95, 0);
+            base.position.set(cx2, 0.6, cz2); scene.add(base);
+          }
+          // shop sign on boulevard-facing buildings
+          if (Math.abs(cz2) < 32 && rnd() < 0.6) {
+            var name = shopNames[shopIdx++ % shopNames.length];
+            var sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(11, w2 * 0.8), 1.5),
+              new THREE.MeshBasicMaterial({ map: PH.labelTexture(name, { bg: '#1d1a24', fg: '#ffb347', border: '#ffb347', size: 46 }) }));
+            sign.position.set(cx2, 4.6, cz2 + (cz2 > 0 ? d2 / 2 + 0.15 : -d2 / 2 - 0.15));
+            if (cz2 < 0) sign.rotation.y = Math.PI;
+            scene.add(sign);
+            PH.world.signs.push(sign);
+          }
+          // rooftop box on some buildings
+          if (rnd() < 0.4) {
+            var roof = PH.box(w2 * 0.3, 1.6, d2 * 0.3, 0x5a5148, 0.9, 0);
+            roof.position.set(cx2 + rnd() * 4 - 2, bh + 0.8, cz2 + rnd() * 4 - 2);
+            scene.add(roof);
+          }
+        }
+      }
+
+      // ----- palms along the boulevard + beachfront -----
+      function palm(x, z) {
+        var trunk = new THREE.Mesh(PH.cylGeo(0.22, 0.34, 6.5, 7), PH.stdMat(0x7a5a3a, 0.95, 0));
+        trunk.position.set(x, 3.25, z); trunk.castShadow = true; scene.add(trunk);
+        var frondMat = PH.stdMat(0x3f8a4a, 0.85, 0);
+        for (var f = 0; f < 5; f++) {
+          var fr = new THREE.Mesh(new THREE.ConeGeometry(0.55, 3.4, 4), frondMat);
+          var a = (f / 5) * Math.PI * 2;
+          fr.position.set(x + Math.cos(a) * 1.1, 6.9, z + Math.sin(a) * 1.1);
+          fr.rotation.z = Math.cos(a) * 1.1; fr.rotation.x = -Math.sin(a) * 1.1;
+          scene.add(fr);
+        }
+        PH.addCollider(x, z, 0.45, 0.45);
+      }
+      for (i = 0; i < 12; i++) {
+        palm(-135 + i * 24, -10.2);
+        palm(-123 + i * 24, 10.2);
+      }
+      for (i = 0; i < 6; i++) palm(-120 + i * 48, 107.5);
+
+      // ----- street lamps + traffic lights on the boulevard -----
+      function lampPost(x, z) {
+        var p = PH.box(0.16, 5.4, 0.16, 0x222222, 0.6, 0.4);
+        p.position.set(x, 2.7, z); scene.add(p);
+        var head = PH.box(0.9, 0.18, 0.3, 0x222222, 0.6, 0.4);
+        head.position.set(x, 5.4, z + (z > 0 ? -0.4 : 0.4)); scene.add(head);
+        var glow = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6),
+          new THREE.MeshStandardMaterial({ color: 0xffe9a8, emissive: 0xffc860, emissiveIntensity: 1.2 }));
+        glow.position.set(x, 5.3, z + (z > 0 ? -0.8 : 0.8)); scene.add(glow);
+      }
+      for (i = 0; i < 10; i++) { lampPost(-130 + i * 28, -9.4); lampPost(-116 + i * 28, 9.4); }
+      function trafficLight(x, z) {
+        var pole = PH.box(0.22, 6, 0.22, 0x1a1a1a, 0.6, 0.4);
+        pole.position.set(x, 3, z); scene.add(pole);
+        var box = PH.box(0.5, 1.5, 0.5, 0x111111, 0.6, 0.2);
+        box.position.set(x, 6.2, z); scene.add(box);
+        var colors = [0xff3b30, 0xffcc00, 0x34c759];
+        for (var l = 0; l < 3; l++) {
+          var dot = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6),
+            new THREE.MeshStandardMaterial({ color: colors[l], emissive: colors[l], emissiveIntensity: l === 2 ? 1.6 : 0.25 }));
+          dot.position.set(x, 6.7 - l * 0.5, z + 0.28); scene.add(dot);
+        }
+        PH.addCollider(x, z, 0.4, 0.4);
+      }
+      trafficLight(-112, -8.5); trafficLight(-62, 8.5); trafficLight(-12, -8.5);
+      trafficLight(38, 8.5); trafficLight(88, -8.5); trafficLight(138, 8.5);
+
+      // ----- benches + hydrants -----
+      for (i = 0; i < 8; i++) {
+        var bx = -120 + i * 34, bz = (i % 2 === 0) ? -9.8 : 9.8;
+        var bench = PH.box(2.2, 0.5, 0.7, 0x6b4a2e, 0.9, 0);
+        bench.position.set(bx, 0.5, bz); scene.add(bench);
+        PH.addCollider(bx, bz, 1.2, 0.5);
+      }
+
+      // ----- waterfront edge barrier: no falling into the sea from the beach road -----
+      // Two segments with a gap at the pier mouth (x -6..6) so the pier stays walkable.
+      var edgeL = PH.box(140, 1.0, 0.5, 0x8a8578, 0.9, 0);
+      edgeL.position.set(-76, 0.5, 105.2); scene.add(edgeL);
+      var edgeR = PH.box(140, 1.0, 0.5, 0x8a8578, 0.9, 0);
+      edgeR.position.set(76, 0.5, 105.2); scene.add(edgeR);
+      PH.addCollider(-76, 105.2, 70, 0.4); PH.addCollider(76, 105.2, 70, 0.4);
+
+      PH.minimap.buildBase();
+    }
   };
 })();

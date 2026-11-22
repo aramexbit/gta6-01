@@ -1,71 +1,73 @@
-// PIER HEAT — Sunset Bay v7.5. Tiny static server for local testing.
-// Serves the game/ folder at the root: http://localhost:8080/ opens the
-// game. Only files under game/ are served; anything else is a 404, no
-// directory listing, no cache. Model files are gone in v7.3, so a
-// request for one is answered 410 (gone) instead of a silent 404.
-// v7.4 also serves /shots.json (the screenshot manifest) from the repo
-// root and answers HEAD, so capture scripts can check the game is up
-// before screenshotting.
-//
-//   node serve.ts --port 8095
+// A tiny static server for game/ (Node 22, standard library only), so an entry can be played
+// locally without a build step: `node serve.ts` serves game/ on http://localhost:8080.
+// It sends the MIME types a browser game needs, refuses any path outside game/, and otherwise
+// does nothing clever: this is a development convenience, not a web server for the internet.
+// PIER HEAT — Sunset Bay v8.0. Use `--port <n>` to serve on another port.
+import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { join, normalize, extname } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const root = join(here, 'game');
+const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
 const args = process.argv.slice(2);
-let port = 8080;
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--port' && args[i + 1]) port = Number(args[i + 1]);
-}
-const MIME = {
+const portIndex = args.indexOf('--port');
+const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
+const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
+
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.glb': 'model/gltf-binary',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
-  '.ico': 'image/x-icon',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json',
+  '.bin': 'application/octet-stream',
+  '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
-createServer(async (req, res) => {
+createServer((request, response) => {
+  const url = new URL(request.url ?? '/', 'http://localhost');
+  let pathname: string;
   try {
-    const url = new URL(req.url, 'http://localhost');
-    let p = decodeURIComponent(url.pathname);
-    if (p === '/') p = '/index.html';
-    // v7.4: model files were removed from the game — say so explicitly.
-    if (/\.(glb|gltf|fbx|obj)$/i.test(p)) {
-      res.writeHead(410); res.end('gone in v7.4: characters are procedural'); return;
-    }
-    // v7.4: the screenshot manifest lives at the repo root, not game/.
-    if (p === '/shots.json') {
-      const data = await readFile(join(here, 'shots.json'));
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(data); return;
-    }
-    const file = normalize(join(root, p));
-    if (!file.startsWith(root + '/') && file !== root) {
-      res.writeHead(404); res.end('not found'); return;
-    }
-    const data = await readFile(file);
-    if (req.method === 'HEAD') {
-      res.writeHead(200, {
-        'content-type': MIME[extname(file)] || 'application/octet-stream',
-        'content-length': data.length, 'cache-control': 'no-store',
-      });
-      res.end(); return;
-    }
-    res.writeHead(200, {
-      'content-type': MIME[extname(file)] || 'application/octet-stream',
-      'cache-control': 'no-store',
-    });
-    res.end(data);
+    pathname = decodeURIComponent(url.pathname);
   } catch {
-    console.error('404', req.url);
-    res.writeHead(404); res.end('not found');
+    response.writeHead(400).end('bad request');
+    return;
   }
-}).listen(port, () => console.log('pier heat v7.5 — serving game/ at http://localhost:' + port + '/ (shots.json at /shots.json)'));
+  if (pathname.endsWith('/')) pathname += 'index.html';
+  const file = resolve(join(root, normalize(pathname)));
+  if (file !== root && !file.startsWith(root + sep)) {
+    response.writeHead(403).end('forbidden');
+    return;
+  }
+  let size: number;
+  try {
+    const stats = statSync(file);
+    if (!stats.isFile()) throw new Error('not a file');
+    size = stats.size;
+  } catch {
+    response.writeHead(404).end('not found');
+    return;
+  }
+  response.writeHead(200, {
+    'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'content-length': size,
+    'cache-control': 'no-store',
+  });
+  createReadStream(file).pipe(response);
+}).listen(port, '127.0.0.1', () => {
+  console.log(`game/ is on http://localhost:${port}`);
+});
